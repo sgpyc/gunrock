@@ -20,6 +20,7 @@
 
 // Utilities and correctness-checking
 #include <gunrock/util/test_utils.cuh>
+#include <gunrock/util/circular_queue.cuh>
 
 // Graph construction utils
 #include <gunrock/graphio/market.cuh>
@@ -704,8 +705,28 @@ void RunTests(
 * Main
 ******************************************************************************/
 
+void process_cq(CircularQueue<int, int, true> *cq)
+{
+    int a[60];
+    std::thread::id t_id = std::this_thread::get_id();
+    for (int i=0; i<10; i++)
+    {
+        int x = rand();
+        int len = rand() % 50 + 1;
+        for (int j=0; j<len; j++)
+            a[j] = x;
+        
+        cq->Push(len, a);
+    }
+}
+
 int main( int argc, char** argv)
 {
+    srand(time(NULL));
+    CircularQueue<int, int, true> cq;
+    cq.Init(100);
+
+    
     CommandLineArgs  args(argc, argv);
     int              num_gpus     = 0;
     int             *gpu_idx      = NULL;
@@ -763,9 +784,9 @@ int main( int argc, char** argv)
     // Construct graph and perform search(es)
     //
 
-    typedef VertexId;                   // Use as the node identifier
+    typedef int VertexId;                   // Use as the node identifier
     typedef int Value;                      // Use as the value type
-    typedef long long SizeT;                      // Use as the graph size type
+    typedef int SizeT;                      // Use as the graph size type
     Csr<VertexId, Value, SizeT> csr(false); // default for stream_from_host
     if (graph_args < 1) { Usage(); return 1; }
 

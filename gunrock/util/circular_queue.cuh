@@ -14,7 +14,10 @@
 
 #pragma once
 
+#include <list>
 #include <mutex>
+#include <chrono>
+#include <thread>
 #include <string>
 #include <gunrock/util/basic_utils.h>
 #include <gunrock/util/error_utils.cuh>
@@ -29,8 +32,10 @@ template <
     bool AUTO_RESIZE = true>
 struct CircularQueue
 {
+public:
 
-    struct CqEvent{
+    //template <typename SizeT_>
+    class CqEvent{
     public:
         int   status;
         SizeT offset, length;
@@ -53,11 +58,11 @@ private:
     unsigned int allocated;
     Array1D<SizeT, Value> array;
     SizeT        head_a, head_b, tail_a, tail_b;
-    list<CqEvent> events[2]; // 0 for in events, 1 for out events
+    std::list<CqEvent > events[2]; // 0 for in events, 1 for out events
     cudaEvent_t  *gpu_events;
     SizeT        num_events;
-    mutex        queue_mutex;
-    int          waiting_resize;
+    std::mutex        queue_mutex;
+    int          wait_resize;
 
     CircularQueue() :
         name      (""  ),
@@ -106,8 +111,10 @@ private:
             if (retval = cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming)) return retval;
         }
 
-        list[0].clear();
-        list[1].clear();
+        events[0].clear();
+        events[1].clear();
+
+        return retval;
     }
 
     cudaError_t Release()
@@ -121,8 +128,10 @@ private:
         if (retval = array.Release()) return retval;
         
         delete[] gpu_events; gpu_events = NULL;
-        list[0].clear();
-        list[1].clear();
+        events[0].clear();
+        events[1].clear();
+
+        return retval;
     }
 
     SizeT GetSize()
@@ -178,7 +187,7 @@ private:
         SizeT offsets[2] = {0, 0};
         SizeT lens   [2] = {0, 0};
         
-        if (retval = ReduceSize(min_length, max_length, offset, lens)) return retval;
+        if (retval = ReduceSize(min_length, max_length, offsets, lens)) return retval;
 
         if (allocated == HOST)
         {
@@ -193,7 +202,9 @@ private:
             }
         } else if (allocated == DEVICE)
         {
-        } 
+        }
+
+        return retval; 
     }
 
     cudaError_t AddSize(SizeT length, SizeT *offsets, SizeT* lens, bool in_critical = false)
@@ -203,7 +214,7 @@ private:
         // in critical sectioin
         //lock_guard<mutex> lock(queue_mutex);
         while (wait_resize != 0)
-            this_thread::sleep_for(chrono::microseconds(10));
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
         if (!in_critical) queue_mutex.lock();        
 
         if (length + size > capacity) 
@@ -218,7 +229,7 @@ private:
             } else {
                 if (length > capacity)
                 { // too large for the queue
-                    retval = util::GRError(cudaErrorLaunchOutOfResource, 
+                    retval = util::GRError(cudaErrorLaunchOutOfResources, 
                         (name + " oversize ").c_str(), __FILE__, __LINE__);
                     if (!in_critical) queue_mutex.unlock();
                     return retval;
@@ -238,7 +249,7 @@ private:
                             }
                         }
                         if (!got_space) {
-                            this_thread::sleep_for(chrono::microseconds(10));
+                            std::this_thread::sleep_for(std::chrono::microseconds(10));
                         }
                     }
                 }
@@ -276,7 +287,7 @@ private:
         // in critial section
         //lock_guard<mutex> lock(queue_mutex);
         while (wait_resize != 0)
-            this_thread::sleep_for(chrono::microseconds(10));
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
         if (!in_critical) queue_mutex.lock();
         
         if (size < min_length)
@@ -296,12 +307,12 @@ private:
                     }
                 }
                 if (!got_content) {
-                    this_thread::sleep_for(chrono::microseconds(10));
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
                 }
             }
         }
 
-        length = size > max_size ? size : max_size;
+        length = size > max_length ? size : max_length;
         if (tail_a + length > capacity)
         { // splict
             offsets[0] = tail_a;
@@ -336,7 +347,7 @@ private:
             wait_resize = 1;
             while ((!events[0].empty()) || (!events[1].empty()))
             {
-                this_thread::sleep_for(chrono::microseconds(10));
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
             }
 
             Array1D<SizeT, Value> temp_array;
@@ -368,14 +379,14 @@ private:
                     {
                         memcpy(array + capacity, temp_array, sizeof(Value) * (capacity_-capacity));
                         memcpy(array, temp_array + (capacity_ - capacity), sizeof(Value) * (head_a - (capacity_ - capacity)));
-                    } else (allocated == DEVICE)
+                    } else if (allocated == DEVICE)
                     {
                     } 
                 } else {
                     if (allocated == HOST)
                     {
                         memcpy(array + capacity, temp_array, sizeof(Value) * head_a);
-                    } else (allocated == DEVICE)
+                    } else if (allocated == DEVICE)
                     {
                     }
                 }
@@ -400,10 +411,10 @@ private:
     {
     }
 
-    void EventFinish(int dierction, SizeT offset, SizeT length, bool in_critical = false)
+    void EventFinish(int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
         if (!in_critical) queue_mutex.lock();
-        list<CqEvent>::iterator it;
+        typename std::list<CqEvent>::iterator it = events[direction].begin();
         for (it  = events[direction].begin(); 
              it != events[direction].end(); it ++)
         {
@@ -443,7 +454,7 @@ private:
         }
         if (!in_critical) queue_mutex.unlock();
     }
-} // end of struct CircularQueue
+}; // end of struct CircularQueue
 
 } // namespace util
 } // namespace gunrock

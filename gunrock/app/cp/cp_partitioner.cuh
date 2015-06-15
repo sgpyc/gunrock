@@ -128,9 +128,9 @@ struct ClusterPartitioner : PartitionerBase<VertexId,SizeT,Value,ENABLE_BACKWARD
         cudaError_t retval = cudaSuccess;
         int*        tpartition_table=this->partition_tables[0];
         SizeT       nodes  = this->graph->nodes;
-        sort_node<SizeT> *sort_list = new sort_node<SizeT>[nodes];
-        VertexId    *t_queue = new VertexId[nodes];
-        VertexId    *marker = new VertexId[nodes];
+        sort_node<SizeT> *sort_list = new sort_node<SizeT>[this->graph->nodes];
+        VertexId    *t_queue = new VertexId[this->graph->nodes];
+        VertexId    *marker = new VertexId[this->graph->nodes];
         SizeT       total_count = 0, current=0, tail = 0, level = 0, target_level;
         SizeT       *counter = new SizeT[this->num_gpus+1];
         SizeT       n1 = 1, n2 = 1;
