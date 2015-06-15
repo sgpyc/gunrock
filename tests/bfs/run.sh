@@ -36,7 +36,7 @@ done
 
 #put OS and Device type here
 SUFFIX="ubuntu12.04.k40cx4_brp0.5_dsize3"
-EXCUTION="./bin/test_bfs_6.5_x86_64"
+EXCUTION="./bin/test_bfs_7.0_x86_64"
 DATADIR="/data/gunrock_dataset/large"
 
 mkdir -p eval/$SUFFIX

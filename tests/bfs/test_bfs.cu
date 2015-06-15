@@ -763,9 +763,9 @@ int main( int argc, char** argv)
     // Construct graph and perform search(es)
     //
 
-    typedef int VertexId;                   // Use as the node identifier
+    typedef VertexId;                   // Use as the node identifier
     typedef int Value;                      // Use as the value type
-    typedef int SizeT;                      // Use as the graph size type
+    typedef long long SizeT;                      // Use as the graph size type
     Csr<VertexId, Value, SizeT> csr(false); // default for stream_from_host
     if (graph_args < 1) { Usage(); return 1; }
 
