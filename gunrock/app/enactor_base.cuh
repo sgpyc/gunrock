@@ -446,7 +446,7 @@ cudaError_t Check_Size(
             char temp_str[]=" oversize", str[256];
             memcpy(str, name, sizeof(char) * strlen(name));
             memcpy(str + strlen(name), temp_str, sizeof(char) * strlen(temp_str));
-            str[strlen(name)+strlen(temp_str)]='0';
+            str[strlen(name)+strlen(temp_str)]='\0';
             retval = util::GRError(cudaErrorLaunchOutOfResources, str, __FILE__, __LINE__);
         }
     }

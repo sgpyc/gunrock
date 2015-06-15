@@ -270,7 +270,8 @@ struct CpuTimer
     }
     */
 
-    boost::timer::cpu_timer::cpu_timer cpu_t;
+    //boost::timer::cpu_timer::cpu_timer cpu_t;
+    boost::timer::cpu_timer cpu_t;
 
     void Start()
     {
