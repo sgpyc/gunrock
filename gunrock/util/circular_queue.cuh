@@ -54,7 +54,8 @@ public:
 private:
     std::string  name;
     SizeT        capacity;
-    SizeT        size;
+    SizeT        size_occu; // occuplied size
+    SizeT        size_soli; // size of the fixed part
     unsigned int allocated;
     Array1D<SizeT, Value> array;
     SizeT        head_a, head_b, tail_a, tail_b;
@@ -64,10 +65,12 @@ private:
     std::mutex        queue_mutex;
     int          wait_resize;
 
+public:
     CircularQueue() :
         name      (""  ),
         capacity  (0   ),
-        size      (0   ),
+        size_occu (0   ),
+        size_soli (0   ),
         allocated (NONE),
         head_a    (0   ),
         head_b    (0   ),
@@ -77,6 +80,7 @@ private:
         num_events(0   ),
         wait_resize(0  )
     {
+        SetName("cq");
     }
 
     ~CircularQueue()
@@ -98,11 +102,13 @@ private:
         cudaError_t retval = cudaSuccess;
 
         this->capacity = capacity;
-        if (retval = array.Allocate(size, target)) return retval;
+        printf("Allocating %d on %d\n", capacity, target);
+        if (retval = array.Allocate(capacity, target)) return retval;
         allocated = target;
-        head_a = 0; head_b = 0;
-        tail_a = 0; tail_b = 0;
-        size   = 0; wait_resize = 0;
+        head_a    = 0; head_b = 0;
+        tail_a    = 0; tail_b = 0;
+        size_occu = 0; size_soli = 0;
+        wait_resize = 0;
         
         gpu_events = new cudaEvent_t[num_events];
         this -> num_events = num_events;
@@ -134,14 +140,30 @@ private:
         return retval;
     }
 
-    SizeT GetSize()
+    void GetSize(SizeT &size_occu, SizeT &size_soli)
     {
-        return size;
+        size_soli = this->size_soli;
+        size_occu = this->size_occu;
     }
 
     SizeT GetCapacity()
     {
         return capacity;
+    }
+
+    void ShowDebugInfo(
+        std::string function_name,
+        int         direction,
+        SizeT       start,
+        SizeT       end,
+        SizeT       dsize,
+        Value       value = -1)
+    {
+        printf("%s\t %s\t %d\t %d\t ~ %d\t %d\t %d\t %d\t %d\t %d\t %d\t %d\n",
+            function_name.c_str(), direction == 0? "->" : "<-",
+            value, start, end, dsize, size_occu, size_soli,
+            head_a, head_b, tail_a, tail_b);
+        //fflush(stdout);
     }
 
     cudaError_t Push(SizeT length, Value* ptr, cudaStream_t stream = 0)
@@ -154,16 +176,16 @@ private:
 
         if (allocated == HOST)
         {
-            memcpy(array + offsets[0], ptr, sizeof(Value) * lens[0]);
-            // in_event finish
-            EventFinish(0, offsets[0], lens[0]);
-            if (lens[1] != 0)
+            SizeT sum = 0;
+            for (int i=0; i<2; i++)
+            if (lens[i] != 0) 
             {
-                memcpy(array + offsets[1], ptr + lens[0], sizeof(Value) * lens[1]);
+                ShowDebugInfo("Push", 0, offsets[i], offsets[i]+lens[i], lens[i], ptr[0]);
+                memcpy(array + offsets[i], ptr + sum, sizeof(Value) * lens[i]);
                 // in_event finish
-                EventFinish(0,offsets[1], lens[1]);
+                EventFinish(0, offsets[i], lens[i]);
+                sum += lens[i];
             }
-               
         } else if (allocated == DEVICE)
         {
             /*MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
@@ -181,7 +203,7 @@ private:
         return retval;
     }
 
-    cudaError_t Pop(SizeT min_length, SizeT max_length, Value* ptr, cudaStream_t stream = 0)
+    cudaError_t Pop(SizeT min_length, SizeT max_length, Value* ptr, SizeT &len, cudaStream_t stream = 0)
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
@@ -191,15 +213,17 @@ private:
 
         if (allocated == HOST)
         {
-            memcpy(ptr, array + offsets[0], sizeof(Value) * lens[0]);
-            // out_event finish
-            EventFinish(1, offsets[0], lens[0]);
-            if (lens[1] != 0)
+            SizeT sum = 0;
+            for (int i=0; i<2; i++)
+            if (lens[i] != 0)
             {
-                memcpy(ptr + lens[0], array + offsets[1], sizeof(Value) * lens[1]);
+                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
+                memcpy(ptr + sum, array + offsets[i], sizeof(Value) * lens[i]);
                 // out_event finish
-                EventFinish(1, offsets[1], lens[1]);
+                EventFinish(1, offsets[i], lens[i]);
+                sum += lens[i];
             }
+            len = sum;
         } else if (allocated == DEVICE)
         {
         }
@@ -215,13 +239,24 @@ private:
         //lock_guard<mutex> lock(queue_mutex);
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
-        if (!in_critical) queue_mutex.lock();        
+        if (!in_critical) queue_mutex.lock();
+        bool past_wait = false;
+        while (!past_wait)
+        {
+            if (wait_resize == 0) {past_wait = true; break;}
+            else {
+                queue_mutex.unlock();
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+                queue_mutex.lock();
+            }
+        }
+                
 
-        if (length + size > capacity) 
+        if (length + size_occu > capacity) 
         { // queue full
             if (AUTO_RESIZE)
             {
-                if (retval = EnsureCapacity(length + size, true)) 
+                if (retval = EnsureCapacity(length + size_occu, true)) 
                 {
                     if (!in_critical) queue_mutex.unlock();
                     return retval;
@@ -238,10 +273,10 @@ private:
                     bool got_space = false;
                     while (!got_space)
                     {
-                        if (length + size < capacity)
+                        if (length + size_occu < capacity)
                         {
                             queue_mutex.lock();
-                            if (length + size < capacity)
+                            if (length + size_occu < capacity)
                             {
                                 got_space = true;
                             } else {
@@ -274,8 +309,9 @@ private:
             head_a += length;
             if (head_a == capacity) head_a = 0;
         }
-        size += length;
+        size_occu += length;
 
+        ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
         if (!in_critical) queue_mutex.unlock();
         return retval;
     }
@@ -290,16 +326,23 @@ private:
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         if (!in_critical) queue_mutex.lock();
         
-        if (size < min_length)
+        //if (((head_b + capacity - tail_a)%capacity) < min_length &&
+        //    !((head_b == tail_a)&&(size>0)))
+        if (size_soli < min_length)
         { // too small
             queue_mutex.unlock();
             bool got_content = false;
             while (!got_content)
             {
-                if (size >= min_length)
+                //if (((head_b + capacity - tail_a)%capacity) >= min_length ||
+                //    ((head_b == tail_a) &&(size>0)))
+                if (size_soli >= min_length)
                 {
                     queue_mutex.lock();
-                    if (size >= min_length)
+                    //if (size >= min_length)
+                    //if (((head_b + capacity - tail_a)%capacity) >= min_length ||
+                    //    ((head_b == tail_a) && (size>0)))
+                    if (size_soli >= min_length)
                     {
                         got_content = true;
                     } else {
@@ -312,7 +355,9 @@ private:
             }
         }
 
-        length = size > max_length ? size : max_length;
+        //length = head_b + capacity - tail_a;
+        //if (length == 0 && size != 0) length = capacity;
+        length = size_soli < max_length ? size_soli : max_length;
         if (tail_a + length > capacity)
         { // splict
             offsets[0] = tail_a;
@@ -331,8 +376,9 @@ private:
             tail_a += length;
             if (tail_a == capacity) tail_a = 0;
         }
-        size -= length;
+        size_soli -= length;
 
+        ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
         if (!in_critical) queue_mutex.unlock();
         return retval;
     }
@@ -342,16 +388,19 @@ private:
         cudaError_t retval = cudaSuccess;
 
         if (!in_critical) queue_mutex.lock();
+        printf("capacity -> %d\n", capacity_);
         if (capacity_ > capacity)
         {
             wait_resize = 1;
             while ((!events[0].empty()) || (!events[1].empty()))
             {
+                queue_mutex.unlock(); 
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
+                queue_mutex.lock();
             }
 
             Array1D<SizeT, Value> temp_array;
-            if (tail_a + size > capacity)
+            if (tail_a + size_occu > capacity)
             { // content corss end point
                 if (retval = temp_array.Allocate(head_a, allocated))
                 {
@@ -360,7 +409,8 @@ private:
                 }
                 if (allocated == HOST) 
                 {
-                    memcpy(temp_array, array, sizeof(Value) * head_a);
+                    memcpy(temp_array.GetPointer(util::HOST), 
+                           array.GetPointer(util::HOST), sizeof(Value) * head_a);
                 } else {
                 }
             }
@@ -371,21 +421,21 @@ private:
                 return retval;
             }
 
-            if (tail_a + size > capacity)
+            if (tail_a + size_occu > capacity)
             {
-                if (tail_a + size > capacity_)
+                if (tail_a + size_occu > capacity_)
                 { // splict new array
                     if (allocated == HOST)
                     {
-                        memcpy(array + capacity, temp_array, sizeof(Value) * (capacity_-capacity));
-                        memcpy(array, temp_array + (capacity_ - capacity), sizeof(Value) * (head_a - (capacity_ - capacity)));
+                        memcpy(array + capacity, temp_array.GetPointer(util::HOST), sizeof(Value) * (capacity_-capacity));
+                        memcpy(array.GetPointer(util::HOST), temp_array + (capacity_ - capacity), sizeof(Value) * (head_a - (capacity_ - capacity)));
                     } else if (allocated == DEVICE)
                     {
                     } 
                 } else {
                     if (allocated == HOST)
                     {
-                        memcpy(array + capacity, temp_array, sizeof(Value) * head_a);
+                        memcpy(array + capacity, temp_array.GetPointer(util::HOST), sizeof(Value) * head_a);
                     } else if (allocated == DEVICE)
                     {
                     }
@@ -393,7 +443,10 @@ private:
             }
 
             capacity = capacity_;
-            head_a = (tail_a + size) % capacity;
+            head_a = (tail_a + size_occu) % capacity;
+            head_b = head_a;
+            printf("EnsureCapacity: capacity -> %d, head_a -> %d\n", capacity, head_a);
+            //fflush(stdout);
             wait_resize = 0;
         }
         if (!in_critical) queue_mutex.unlock();
@@ -403,6 +456,7 @@ private:
     void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
         if (!in_critical) queue_mutex.lock();
+        printf("Event %d,%d,%d starts\n", direction, offset, length);//fflush(stdout);
         events[direction].push_back(CqEvent(offset, length));
         if (!in_critical) queue_mutex.unlock();
     }
@@ -420,6 +474,7 @@ private:
         {
             if ((offset == (*it).offset) && (length == (*it).length)) // matched event
             {
+                printf("Event %d,%d,%d finishes\n", direction, offset, length);//fflush(stdout);
                 (*it).status = 2;
                 break;
             }
@@ -427,24 +482,26 @@ private:
 
         while (!events[direction].empty())
         {
-            it = events[direction].front();
+            it = events[direction].begin();
+            //printf("Event %d, %d, %d, status = %d\n", direction, (*it).offset, (*it).length, (*it).status);fflush(stdout);
             if ((*it).status == 2) // finished event
             {
                 if (direction == 0)
                 { // in event
-                    if (offset == head_b)
+                    if ((*it).offset == head_b)
                     {
                         head_b += (*it).length;
                         if (head_b >= capacity) head_b -= capacity;
                         (*it).status = 3;
+                        size_soli += (*it).length;
                     } 
                 } else { // out event
-                    if (offset == tail_b)
+                    if ((*it).offset == tail_b)
                     {
                         tail_b += (*it).length;
                         if (tail_b >= capacity) tail_b -= capacity;
                         (*it).status = 3;
-                        size -= (*it).length;
+                        size_occu -= (*it).length;
                     }
                 }
                 events[direction].pop_front();
@@ -452,6 +509,8 @@ private:
                 break;
             }
         }
+
+        ShowDebugInfo("EventF", direction, offset, -1, length);
         if (!in_critical) queue_mutex.unlock();
     }
 }; // end of struct CircularQueue
