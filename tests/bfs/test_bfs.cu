@@ -705,29 +705,71 @@ void RunTests(
 * Main
 ******************************************************************************/
 
-void process_cq(CircularQueue<int, int, true> *cq)
+void process_cq(CircularQueue<int, int, true> *cq, int t_id)
 {
-    int a[60];
-    std::thread::id t_id = std::this_thread::get_id();
-    for (int i=0; i<10; i++)
+    int *a = new int[100];
+    int counter = 0;
+
+    //std::thread::id t_id = std::this_thread::get_id();
+    for (int i=0; i<100; i++)
     {
-        int x = rand();
-        int len = rand() % 50 + 1;
+        int x = rand() % 10000;
+        int len = rand() % 50 + 10;
         for (int j=0; j<len; j++)
             a[j] = x;
         
+        printf("thread %d pushing %d x %d\n", t_id, x, len);
+        //fflush(stdout);
         cq->Push(len, a);
+        counter += len;
+
+        int t = rand() % 4;
+        std::this_thread::sleep_for(std::chrono::microseconds(t));
+        len = rand() % 40 + 10;
+        printf("thread %d getting %d+-5\n", t_id, len);
+        //fflush(stdout);
+        cq->Pop(len-5, len+5, a, len);
+        counter -= len;
+        //char str[]="thread %d poped %d elements:";
+        //util::cpu_mt::PrintCPUArray("", a, len, t_id, len);
+
+        t = rand() % 4;
+        std::this_thread::sleep_for(std::chrono::microseconds(t));
+    }
+
+    if (counter >0) 
+    {
+        if (counter > 100) a = new int[counter];
+        printf("thread %d getting %d\n", t_id, counter);
+        //fflush(stdout);
+        cq->Pop(counter, counter, a, counter);
+    } else if (counter < 0) {
+        counter = 0-counter;
+        if (counter > 100) a= new int[counter];
+        printf("thread %d pushing %d\n", t_id, counter);
+        //fflush(stdout);
+        cq->Push(counter, a);
     }
 }
 
 int main( int argc, char** argv)
 {
+    printf("Funct\tDirect\tValue\tStart\tEnd\tdSize\tSize_occu\tSize_soli\thead_a\thead_b\ttail_a\ttail_b\n");
     srand(time(NULL));
     CircularQueue<int, int, true> cq;
     cq.Init(100);
 
-    
-    CommandLineArgs  args(argc, argv);
+    std::thread threads[20];
+    for (int i=0; i<20; i++)
+        threads[i] = std::thread(process_cq, &cq, i);
+    for (int i=0; i<20; i++)
+        threads[i].join();
+
+    int size_occu = -1, size_soli = -1;
+    cq.GetSize(size_occu, size_soli);
+    std::cout<<"capacity = "<<cq.GetCapacity()<<" size_occu = "<<size_occu<<" size_soli = "<<size_soli<<std::endl;
+ 
+    /*CommandLineArgs  args(argc, argv);
     int              num_gpus     = 0;
     int             *gpu_idx      = NULL;
     ContextPtr      *context      = NULL;
@@ -891,7 +933,7 @@ int main( int argc, char** argv)
     }
 
     csr.PrintHistogram();
-    RunTests(&csr, args, num_gpus, context, gpu_idx, streams);
+    RunTests(&csr, args, num_gpus, context, gpu_idx, streams);*/
 
     return 0;
 }
