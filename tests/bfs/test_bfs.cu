@@ -752,17 +752,75 @@ void process_cq(CircularQueue<int, int, true> *cq, int t_id)
     }
 }
 
+void process_cq_gpu(CircularQueue<int, int, true> *cq, int t_id, util::Array1D<int, int>* array, cudaStream_t* streams)
+{
+    util::Array1D<int, int> *a = &array[t_id];
+    cudaStream_t stream = streams[t_id];
+    int counter = 0;
+
+    //std::thread::id t_id = std::this_thread::get_id();
+    for (int i=0; i<20; i++)
+    {
+        int x = rand() % 10000;
+        int len = rand() % 50 + 10;
+        //for (int j=0; j<len; j++)
+        //    a[j] = x;
+        util::MemsetKernel<<<128, 128, 0, stream>>>
+            (a->GetPointer(util::DEVICE), x, len);
+        
+        printf("thread %d pushing %d x %d\n", t_id, x, len);
+        //fflush(stdout);
+        cq->Push(len, a->GetPointer(util::DEVICE),stream);
+        counter += len;
+
+        int t = rand() % 4;
+        std::this_thread::sleep_for(std::chrono::microseconds(t));
+        len = rand() % 40 + 10;
+        printf("thread %d getting %d+-5\n", t_id, len);
+        //fflush(stdout);
+        cq->Pop(len-5, len+5, a->GetPointer(util::DEVICE), len, stream);
+        counter -= len;
+        //char str[]="thread %d poped %d elements:";
+        //util::cpu_mt::PrintCPUArray("", a, len, t_id, len);
+
+        t = rand() % 4;
+        std::this_thread::sleep_for(std::chrono::microseconds(t));
+    }
+
+    if (counter >0) 
+    {
+        if (counter > 100) a->EnsureSize(counter);
+        printf("thread %d getting %d\n", t_id, counter);
+        //fflush(stdout);
+        cq->Pop(counter, counter, a->GetPointer(util::DEVICE), counter);
+    } else if (counter < 0) {
+        counter = 0-counter;
+        if (counter > 100) a->EnsureSize(counter);
+        printf("thread %d pushing %d\n", t_id, counter);
+        //fflush(stdout);
+        cq->Push(counter, a->GetPointer(util::DEVICE));
+    }
+}
+
 int main( int argc, char** argv)
 {
     printf("Funct\tDirect\tValue\tStart\tEnd\tdSize\tSize_occu\tSize_soli\thead_a\thead_b\ttail_a\ttail_b\n");
     srand(time(NULL));
     CircularQueue<int, int, true> cq;
-    cq.Init(100);
+    cq.Init(100, util::DEVICE);
+    int num_threads = 5;
 
-    std::thread threads[20];
-    for (int i=0; i<20; i++)
-        threads[i] = std::thread(process_cq, &cq, i);
-    for (int i=0; i<20; i++)
+    std::thread threads[num_threads];
+    util::Array1D<int, int> *arrays = new util::Array1D<int, int>[num_threads];
+    cudaStream_t *streams = new cudaStream_t[num_threads];
+    for (int i=0; i<num_threads; i++)
+    {
+        arrays[i].Allocate(100, util::DEVICE);
+        cudaStreamCreate(streams + i);
+    }
+    for (int i=0; i<num_threads; i++)
+        threads[i] = std::thread(process_cq_gpu, &cq, i, arrays, streams);
+    for (int i=0; i<num_threads; i++)
         threads[i].join();
 
     int size_occu = -1, size_soli = -1;
