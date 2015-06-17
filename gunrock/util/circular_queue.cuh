@@ -34,7 +34,6 @@ struct CircularQueue
 {
 public:
 
-    //template <typename SizeT_>
     class CqEvent{
     public:
         int   status;
@@ -60,9 +59,10 @@ private:
     Array1D<SizeT, Value> array;
     SizeT        head_a, head_b, tail_a, tail_b;
     std::list<CqEvent > events[2]; // 0 for in events, 1 for out events
-    cudaEvent_t  *gpu_events;
+    std::list<cudaEvent_t> empty_gpu_events;
+    cudaEvent_t *gpu_events;
     SizeT        num_events;
-    std::mutex        queue_mutex;
+    std::mutex   queue_mutex;
     int          wait_resize;
 
 public:
@@ -102,19 +102,22 @@ public:
         cudaError_t retval = cudaSuccess;
 
         this->capacity = capacity;
-        printf("Allocating %d on %d\n", capacity, target);
         if (retval = array.Allocate(capacity, target)) return retval;
         allocated = target;
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
         size_occu = 0; size_soli = 0;
         wait_resize = 0;
-        
-        gpu_events = new cudaEvent_t[num_events];
-        this -> num_events = num_events;
-        for (SizeT i=0; i<num_events; i++)
-        {
-            if (retval = cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming)) return retval;
+       
+        if (target == DEVICE)
+        { 
+            gpu_events = new cudaEvent_t[num_events];
+            this -> num_events = num_events;
+            for (SizeT i=0; i<num_events; i++)
+            {
+                if (retval = cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming)) return retval;
+                empty_gpu_events.push_back(gpu_events[i]);
+            }
         }
 
         events[0].clear();
@@ -127,13 +130,17 @@ public:
     {
         cudaError_t retval = cudaSuccess;
 
-        for (SizeT i=0; i<num_events; i++)
+        if (allocated == DEVICE)
         {
-            if (retval = cudaEventDestroy(gpu_events[i])) return retval;
+            for (SizeT i=0; i<num_events; i++)
+            {
+                if (retval = cudaEventDestroy(gpu_events[i])) return retval;
+            }
+            delete[] gpu_events; gpu_events = NULL;
+            empty_gpu_events.clear();
         }
+
         if (retval = array.Release()) return retval;
-        
-        delete[] gpu_events; gpu_events = NULL;
         events[0].clear();
         events[1].clear();
 
@@ -188,17 +195,18 @@ public:
             }
         } else if (allocated == DEVICE)
         {
-            /*MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
-                array.GetPointer(util::DEVICE) + offsets[0],
-                ptr, lens[0]);
-            // Add in_event
-            if (lens[1] != 0)
+            SizeT sum = 0;
+            for (int i=0; i<2; i++)
+            if (lens[i] != 0)
             {
+                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lens[i], lens[i]);
                 MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
-                    array.GetPointer(util::DEVICE),
-                    ptr + lens[0], lens[1]);
-                // Add in_event
-            }*/
+                    array.GetPointer(DEVICE) + offsets[i],
+                    ptr + sum, lens[i]);
+                // set in_event
+                EventSet(0, offsets[i], lens[i], stream);
+                sum += lens[i];
+            }
         } 
         return retval;
     }
@@ -226,6 +234,18 @@ public:
             len = sum;
         } else if (allocated == DEVICE)
         {
+            SizeT sum = 0;
+            for (int i=0; i<2; i++)
+            if (lens[i] != 0)
+            {
+                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
+                MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
+                    ptr + sum, array.GetPointer(DEVICE) + offsets[i], lens[i]);
+                // set out_event
+                EventSet(1, offsets[i], lens[i], stream);
+                sum += lens[i];
+            }
+            len = sum;
         }
 
         return retval; 
@@ -236,7 +256,6 @@ public:
         cudaError_t retval = cudaSuccess;
 
         // in critical sectioin
-        //lock_guard<mutex> lock(queue_mutex);
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         if (!in_critical) queue_mutex.lock();
@@ -250,8 +269,16 @@ public:
                 queue_mutex.lock();
             }
         }
-                
-
+       
+        if (allocated == DEVICE)
+        {
+            if (retval = EventCheck(1, true))
+            {
+                if (!in_critical) queue_mutex.unlock();
+                return retval;
+            }
+        }
+         
         if (length + size_occu > capacity) 
         { // queue full
             if (AUTO_RESIZE)
@@ -321,27 +348,28 @@ public:
         cudaError_t retval = cudaSuccess;
         SizeT length = 0;
         // in critial section
-        //lock_guard<mutex> lock(queue_mutex);
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         if (!in_critical) queue_mutex.lock();
+
+        if (allocated == DEVICE)
+        {
+            if (retval = EventCheck(0, true))
+            {
+                if (!in_critical) queue_mutex.unlock();
+                return retval;
+            }
+        }
         
-        //if (((head_b + capacity - tail_a)%capacity) < min_length &&
-        //    !((head_b == tail_a)&&(size>0)))
         if (size_soli < min_length)
         { // too small
             queue_mutex.unlock();
             bool got_content = false;
             while (!got_content)
             {
-                //if (((head_b + capacity - tail_a)%capacity) >= min_length ||
-                //    ((head_b == tail_a) &&(size>0)))
                 if (size_soli >= min_length)
                 {
                     queue_mutex.lock();
-                    //if (size >= min_length)
-                    //if (((head_b + capacity - tail_a)%capacity) >= min_length ||
-                    //    ((head_b == tail_a) && (size>0)))
                     if (size_soli >= min_length)
                     {
                         got_content = true;
@@ -355,8 +383,6 @@ public:
             }
         }
 
-        //length = head_b + capacity - tail_a;
-        //if (length == 0 && size != 0) length = capacity;
         length = size_soli < max_length ? size_soli : max_length;
         if (tail_a + length > capacity)
         { // splict
@@ -397,6 +423,12 @@ public:
                 queue_mutex.unlock(); 
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
                 queue_mutex.lock();
+                for (int i=0; i<2; i++)
+                if (retval = EventCheck(i, true))
+                {
+                    queue_mutex.unlock();
+                    return retval;
+                }
             }
 
             Array1D<SizeT, Value> temp_array;
@@ -409,9 +441,12 @@ public:
                 }
                 if (allocated == HOST) 
                 {
-                    memcpy(temp_array.GetPointer(util::HOST), 
-                           array.GetPointer(util::HOST), sizeof(Value) * head_a);
+                    memcpy(temp_array.GetPointer(HOST), 
+                           array.GetPointer(HOST), sizeof(Value) * head_a);
                 } else {
+                    MemsetCopyVectorKernel<<<128, 128>>>(
+                        temp_array.GetPointer(DEVICE),
+                        array.GetPointer(DEVICE), head_a);
                 }
             }
 
@@ -427,17 +462,35 @@ public:
                 { // splict new array
                     if (allocated == HOST)
                     {
-                        memcpy(array + capacity, temp_array.GetPointer(util::HOST), sizeof(Value) * (capacity_-capacity));
-                        memcpy(array.GetPointer(util::HOST), temp_array + (capacity_ - capacity), sizeof(Value) * (head_a - (capacity_ - capacity)));
+                        memcpy(array + capacity, 
+                            temp_array.GetPointer(HOST), 
+                            sizeof(Value) * (capacity_-capacity));
+                        memcpy(array.GetPointer(HOST), 
+                            temp_array + (capacity_ - capacity), 
+                            sizeof(Value) * (head_a - (capacity_ - capacity)));
                     } else if (allocated == DEVICE)
                     {
+                        MemsetCopyVectorKernel<<<128, 128>>>(
+                            array.GetPointer(DEVICE) + capacity,
+                            temp_array.GetPointer(DEVICE),
+                            capacity_ - capacity);
+                        MemsetCopyVectorKernel<<<128, 128>>>(
+                            array.GetPointer(DEVICE),
+                            temp_array.GetPointer(DEVICE) + (capacity_ - capacity),
+                            head_a - (capacity_ - capacity));
                     } 
                 } else {
                     if (allocated == HOST)
                     {
-                        memcpy(array + capacity, temp_array.GetPointer(util::HOST), sizeof(Value) * head_a);
+                        memcpy(array + capacity, 
+                            temp_array.GetPointer(util::HOST), 
+                            sizeof(Value) * head_a);
                     } else if (allocated == DEVICE)
                     {
+                        MemsetCopyVectorKernel<<<128, 128>>>(
+                            array.GetPointer(DEVICE) + capacity,
+                            temp_array.GetPointer(DEVICE),
+                            head_a);
                     }
                 }
             }
@@ -445,6 +498,7 @@ public:
             capacity = capacity_;
             head_a = (tail_a + size_occu) % capacity;
             head_b = head_a;
+            temp_array.Release();
             printf("EnsureCapacity: capacity -> %d, head_a -> %d\n", capacity, head_a);
             //fflush(stdout);
             wait_resize = 0;
@@ -461,8 +515,41 @@ public:
         if (!in_critical) queue_mutex.unlock();
     }
 
-    void EventSet(   int direction, SizeT offset, SizeT length)
+    cudaError_t EventSet(   int direction, SizeT offset, SizeT length, cudaStream_t stream = 0, bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        
+        if (empty_gpu_events.empty())
+        {
+            retval = util::GRError(cudaErrorLaunchOutOfResources,
+                (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
+            if (!in_critical) queue_mutex.unlock();
+            return retval;    
+        }
+        cudaEvent_t event = empty_gpu_events.front();
+        empty_gpu_events.pop_front();
+        if (retval = cudaEventRecord(event, stream))
+        {
+            if (!in_critical) queue_mutex.unlock();
+            return retval;
+        }
+
+        typename std::list<CqEvent>::iterator it = events[direction].begin();
+        for (it  = events[direction].begin(); 
+             it != events[direction].end(); it ++)
+        {
+            if ((offset == (*it).offset) && (length == (*it).length)) // matched event
+            {
+                printf("Event %d,%d,%d sets\n", direction, offset, length);//fflush(stdout);
+                (*it).event = event;
+                (*it).status = 1;
+                break;
+            }
+        }
+        EventCheck(direction, true);
+        if (!in_critical) queue_mutex.unlock();
+        return retval;
     }
 
     void EventFinish(int direction, SizeT offset, SizeT length, bool in_critical = false)
@@ -479,7 +566,45 @@ public:
                 break;
             }
         }
+        SizeCheck(direction, true);
+        ShowDebugInfo("EventF", direction, offset, -1, length);
+        if (!in_critical) queue_mutex.unlock();
+    }
 
+    cudaError_t EventCheck(int direction, bool in_critical = false)
+    {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+
+        typename std::list<CqEvent>::iterator it = events[direction].begin();
+        for (it  = events[direction].begin();
+             it != events[direction].end(); it++)
+        {
+            if ((*it).status == 1)
+            {
+                retval = cudaEventQuery((*it).event);
+                if (retval == cudaSuccess)
+                {
+                    (*it).status = 2;
+                    printf("Event %d,%d,%d finishes\n", direction, (*it).offset, (*it).length);
+                    empty_gpu_events.push_back((*it).event);
+                } else if (retval != cudaErrorNotReady) {
+                    if (!in_critical) queue_mutex.unlock();
+                    return retval;
+                }
+            }
+        }
+        SizeCheck(direction, true);
+        ShowDebugInfo("EventC", direction, -1, -1, -1);
+        if (!in_critical) queue_mutex.unlock();
+        return retval; 
+    }
+
+    void SizeCheck(int direction, bool in_critical = false)
+    {
+        if (!in_critical) queue_mutex.lock();
+        typename std::list<CqEvent>::iterator it = events[direction].begin();
+       
         while (!events[direction].empty())
         {
             it = events[direction].begin();
@@ -510,7 +635,6 @@ public:
             }
         }
 
-        ShowDebugInfo("EventF", direction, offset, -1, length);
         if (!in_critical) queue_mutex.unlock();
     }
 }; // end of struct CircularQueue
