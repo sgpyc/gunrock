@@ -54,12 +54,14 @@ struct EnactorStats
     cudaError_t                      retval              ;
     clock_t                          start_time          ;
 
-    EnactorStats()
+    EnactorStats() :
+        iteration        (0),
+        total_lifetimes  (0),
+        total_runtimes   (0),
+        advance_grid_size(0),
+        filter_grid_size (0),
+        retval           (cudaSuccess)
     {
-        iteration       = 0;
-        total_lifetimes = 0;
-        total_runtimes  = 0;
-        retval          = cudaSuccess;
         node_locks    .SetName("node_locks"    );
         node_locks_out.SetName("node_locks_out");
         total_queued  .SetName("total_queued");
@@ -90,22 +92,27 @@ struct FrontierAttribute
     gunrock::oprtr::advance::TYPE
                  advance_type ;
 
-    FrontierAttribute()
+    FrontierAttribute() :
+        queue_length (0    ),
+        queue_index  (0    ),
+        queue_offset (0    ),
+        selector     (0    ),
+        queue_reset  (false),
+        current_label(0    ),
+        has_incoming (false)
     {
-        queue_length  = 0;
-        queue_index   = 0;
-        queue_offset  = 0;
-        selector      = 0;
-        queue_reset   = false;
-        has_incoming  = false;
         output_length.SetName("output_length");
     }
 };
 
+/**
+ * @brief Structure for per-thread variables used in sub-threads.
+ */
 class ThreadSlice
 {    
 public:
     int           thread_num ;
+    int           gpu_num    ;
     int           init_size  ;
     CUTThread     thread_Id  ;
     int           stats      ;
@@ -115,15 +122,15 @@ public:
     util::cpu_mt::CPUBarrier
                  *cpu_barrier;
 
-    ThreadSlice()
+    ThreadSlice() :
+        thread_num (0   ),
+        init_size  (0   ),
+        stats      (-2  ),
+        problem    (NULL),
+        enactor    (NULL),
+        context    (NULL),
+        cpu_barrier(NULL)
     {    
-        problem     = NULL;
-        enactor     = NULL;
-        context     = NULL;
-        thread_num  = 0; 
-        init_size   = 0; 
-        stats       = -2;
-        cpu_barrier = NULL;
     }    
 
     virtual ~ThreadSlice()
@@ -133,7 +140,19 @@ public:
         context     = NULL;
         cpu_barrier = NULL;
     }    
-};   
+}; // end of ThreadSlice
+
+template <typename SizeT>
+struct PushRequest
+{
+public:
+    int   iteration;
+    int   peer     ;
+    int   status   ;
+    SizeT length   ;
+    SizeT num_vertex_associates;
+    SizeT num_value__associates;
+}; // end of PushRequest
 
 template <typename SizeT, typename DataSlice>
 bool All_Done(EnactorStats                    *enactor_stats,
@@ -390,6 +409,127 @@ cudaError_t Check_Record(
     return retval;
 }
 
+template<typename Enactor>
+void Push_Neibor_Thread(ThreadSlice *thread_data)
+{
+    typedef typename Enactor::Problem  Problem ;
+    typedef typename Problem::SizeT    SizeT   ;
+    typedef typename Problem::VertexId VertexId;
+    typedef typename Problem::Value    Value   ;
+    typedef typename Problem::DataSlice DataSlice;
+    typedef typename GraphSlice<SizeT, VertexId, Value> GraphSlice;
+
+    Problem *problem = (Problem*) thread_data->problem;
+    Enactor *enactor = (Enactor*) thread_data->enactor;
+     
+    int thread_num = thread_data -> thread_num;
+    int gpu_num    = thread_data -> gpu_num;
+    std::list<PushRequest>* request_queue = &enactor->request_queues[gpu_num];
+    std::mutex* rqueue_mutex = &enactor->rqueue_mutexes[gpu_num]; 
+    
+    while (thread_data -> status != 4)
+    {
+        if (!request_queue.empty())
+        {
+            rqueue_mutex->lock();
+            std::list<PushRequest>::iterator it_, it = request_queue->begin();
+            while (it != request_queue->end())
+            {
+                it_ = it; it++;
+                if ((*it_).status == 1) // requested
+                {
+                    if ((*it_).peer < num_gpus) // local peer
+                    {
+                        PushNeibor <Enactor::SIZE_CHECK, SizeT, VertexId, Value, GraphSlice, DataSlice> (
+                            gpu_num,
+                            (*it_).peer,
+                            (*it_).length,
+                            enactor_stats_, // need to change
+                            s_data_slice  [gpu_num    ].GetPointer(util::HOST),
+                            s_data_slice  [(*it_).peer].GetPointer(util::HOST),
+                            s_graph_slice [gpu_num    ],
+                            s_graph_slice [(*it_).peer],
+                            streams       [peer__     ]); // need to change
+                        Set_Record(data_slice, iteration, peer_, stages[peer__], streams[peer__]); // need to change
+                    } else { // remote peer
+                    }
+                } else if ((*it).status == 2) // pushed
+                { // check status
+                    if ((*it).peer < num_gpus) // local peer
+                    {
+                        cudaError_t tretval = cudaEventQuery((*it).event);
+                        if (tretval == cudaSuccess)
+                        { // push done
+                            request_queue->earse(it);
+                        } else if (tretval != cudaErrorNotReady) 
+                        { // error
+                            thread_data -> retval = tretval;
+                            break; 
+                        }
+                    } else { // remote peer
+                    }
+                }
+            }
+            rqueue_mutex->unlock();
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
+        }
+        if (thread_data -> retval) break;
+    }
+}
+
+void Receiving_Thread(ThreadSlice *thread_data)
+{
+    if (!(s_data_slice[peer]->events_set[iteration_][gpu_][0]))
+    {   to_show[peer__]=false;stages[peer__]--;break;}
+
+    s_data_slice[peer]->events_set[iteration_][gpu_][0]=false;
+    frontier_attribute_->queue_length = data_slice->in_length[iteration%2][peer_];
+    data_slice->in_length[iteration%2][peer_]=0;
+    if (frontier_attribute_->queue_length ==0)
+    {   stages[peer__]=3;break;}
+
+    offset = 0;
+    memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
+             data_slice -> vertex_associate_ins[iteration%2][peer_].GetPointer(util::HOST),
+              sizeof(SizeT*   ) * NUM_VERTEX_ASSOCIATES);
+    offset += sizeof(SizeT*   ) * NUM_VERTEX_ASSOCIATES ;
+    memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
+             data_slice -> value__associate_ins[iteration%2][peer_].GetPointer(util::HOST),
+              sizeof(VertexId*) * NUM_VALUE__ASSOCIATES);
+    offset += sizeof(VertexId*) * NUM_VALUE__ASSOCIATES ;
+    memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
+             data_slice -> vertex_associate_orgs.GetPointer(util::HOST),
+              sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES);
+    offset += sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES ;
+    memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
+             data_slice -> value__associate_orgs.GetPointer(util::HOST),
+              sizeof(Value*   ) * NUM_VALUE__ASSOCIATES);
+    offset += sizeof(Value*   ) * NUM_VALUE__ASSOCIATES ;
+    data_slice->expand_incoming_array[peer_].Move(util::HOST, util::DEVICE, offset, 0, streams[peer_]);
+
+    grid_size = frontier_attribute_->queue_length/256+1;
+    if (grid_size>512) grid_size=512;
+    cudaStreamWaitEvent(streams[peer_],
+        s_data_slice[peer]->events[iteration_][gpu_][0], 0);
+    Iteration::template Expand_Incoming<NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES> (
+        grid_size, 256, 
+        offset,
+        streams[peer_],
+        frontier_attribute_->queue_length,
+        data_slice ->keys_in[iteration%2][peer_].GetPointer(util::DEVICE),
+        &frontier_queue_->keys[selector^1],
+        offset,
+        data_slice ->expand_incoming_array[peer_].GetPointer(util::DEVICE),
+        data_slice);
+    frontier_attribute_->selector^=1;
+    frontier_attribute_->queue_index++;
+    if (!Iteration::HAS_SUBQ) {
+        Set_Record(data_slice, iteration, peer_, 2, streams[peer__]);
+        stages[peer__]=2;
+    }
+}
+
 template <
     int      NUM_VERTEX_ASSOCIATES,
     int      NUM_VALUE__ASSOCIATES,
@@ -534,68 +674,8 @@ void Iteration_Loop(
 
                     if (peer__<num_gpus)
                     { //wait and expand incoming
-                        if (!(s_data_slice[peer]->events_set[iteration_][gpu_][0]))
-                        {   to_show[peer__]=false;stages[peer__]--;break;}
-
-                        s_data_slice[peer]->events_set[iteration_][gpu_][0]=false;
-                        frontier_attribute_->queue_length = data_slice->in_length[iteration%2][peer_];
-                        data_slice->in_length[iteration%2][peer_]=0;
-                        if (frontier_attribute_->queue_length ==0)
-                        {   stages[peer__]=3;break;}
-
-                        offset = 0;
-                        memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
-                                 data_slice -> vertex_associate_ins[iteration%2][peer_].GetPointer(util::HOST),
-                                  sizeof(SizeT*   ) * NUM_VERTEX_ASSOCIATES);
-                        offset += sizeof(SizeT*   ) * NUM_VERTEX_ASSOCIATES ;
-                        memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
-                                 data_slice -> value__associate_ins[iteration%2][peer_].GetPointer(util::HOST),
-                                  sizeof(VertexId*) * NUM_VALUE__ASSOCIATES);
-                        offset += sizeof(VertexId*) * NUM_VALUE__ASSOCIATES ;
-                        memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
-                                 data_slice -> vertex_associate_orgs.GetPointer(util::HOST),
-                                  sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES);
-                        offset += sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES ;
-                        memcpy(&(data_slice -> expand_incoming_array[peer_][offset]),
-                                 data_slice -> value__associate_orgs.GetPointer(util::HOST),
-                                  sizeof(Value*   ) * NUM_VALUE__ASSOCIATES);
-                        offset += sizeof(Value*   ) * NUM_VALUE__ASSOCIATES ;
-                        data_slice->expand_incoming_array[peer_].Move(util::HOST, util::DEVICE, offset, 0, streams[peer_]);
-
-                        grid_size = frontier_attribute_->queue_length/256+1;
-                        if (grid_size>512) grid_size=512;
-                        cudaStreamWaitEvent(streams[peer_],
-                            s_data_slice[peer]->events[iteration_][gpu_][0], 0);
-                        Iteration::template Expand_Incoming<NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES> (
-                            grid_size, 256, 
-                            offset,
-                            streams[peer_],
-                            frontier_attribute_->queue_length,
-                            data_slice ->keys_in[iteration%2][peer_].GetPointer(util::DEVICE),
-                            &frontier_queue_->keys[selector^1],
-                            offset,
-                            data_slice ->expand_incoming_array[peer_].GetPointer(util::DEVICE),
-                            data_slice);
-                        frontier_attribute_->selector^=1;
-                        frontier_attribute_->queue_index++;
-                        if (!Iteration::HAS_SUBQ) {
-                            Set_Record(data_slice, iteration, peer_, 2, streams[peer__]);
-                            stages[peer__]=2;
-                        }
                     } else { //Push Neibor
-                        PushNeibor <Enactor::SIZE_CHECK, SizeT, VertexId, Value, GraphSlice, DataSlice,
-                                NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES> (
-                            thread_num,
-                            peer,
-                            data_slice->out_length[peer_],
-                            enactor_stats_,
-                            s_data_slice  [thread_num].GetPointer(util::HOST),
-                            s_data_slice  [peer]      .GetPointer(util::HOST),
-                            s_graph_slice [thread_num],
-                            s_graph_slice [peer],
-                            streams       [peer__]);
-                        Set_Record(data_slice, iteration, peer_, stages[peer__], streams[peer__]);
-                        stages[peer__]=3;
+                       stages[peer__]=3;
                     }
                     break;
 

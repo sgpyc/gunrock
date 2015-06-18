@@ -15,7 +15,7 @@
 #pragma once
 
 #include <metis.h>
-#include <gunrock/app/partitioner_base.cuh>
+#include <gunrock/partitioner/partitioner_base.cuh>
 
 namespace gunrock {
 namespace app {
