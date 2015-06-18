@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <vector>
 
-#include <gunrock/app/partitioner_base.cuh>
+#include <gunrock/partitioner/partitioner_base.cuh>
 #include <gunrock/util/memset_kernel.cuh>
 #include <gunrock/util/multithread_utils.cuh>
 

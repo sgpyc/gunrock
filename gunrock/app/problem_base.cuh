@@ -24,11 +24,11 @@
 #include <gunrock/util/io/modified_store.cuh>
 #include <gunrock/util/array_utils.cuh>
 #include <gunrock/util/test_utils.cuh>
-#include <gunrock/app/rp/rp_partitioner.cuh>
-#include <gunrock/app/cp/cp_partitioner.cuh>
-#include <gunrock/app/brp/brp_partitioner.cuh>
-#include <gunrock/app/metisp/metis_partitioner.cuh>
-#include <gunrock/app/sp/sp_partitioner.cuh>
+#include <gunrock/partitioner/random/random_partitioner.cuh>
+#include <gunrock/partitioner/cluster/cluster_partitioner.cuh>
+#include <gunrock/partitioner/biasrandom/biasrandom_partitioner.cuh>
+#include <gunrock/partitioner/metis/metis_partitioner.cuh>
+#include <gunrock/partitioner/static/static_partitioner.cuh>
 #include <vector>
 #include <string>
 
