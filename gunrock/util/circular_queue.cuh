@@ -28,7 +28,8 @@ namespace util {
 
 template <
     typename SizeT,
-    typename Value,
+    typename VertexId,
+    typename Value   = VertexId,
     bool AUTO_RESIZE = true>
 struct CircularQueue
 {
@@ -51,13 +52,17 @@ public:
     }; // end of CqEvent
 
 private:
-    std::string  name;
-    SizeT        capacity;
+    std::string  name;      // name of the queue
+    SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
-    unsigned int allocated;
-    Array1D<SizeT, Value> array;
-    SizeT        head_a, head_b, tail_a, tail_b;
+    unsigned int allocated; // where the data is allocated, HOST or DEVICE
+    Array1D<SizeT, VertexId>  array; // the main data
+    Array1D<SizeT, VertexId>* vertex_associates; // VertexId type associate values
+    Array1D<SizeT, Value   >* value__associates; // Value type associate values
+    SizeT        num_vertex_associates;
+    SizeT        num_value__associates;
+    SizeT        head_a, head_b, tail_a, tail_b; // head and tail offsets
     std::list<CqEvent > events[2]; // 0 for in events, 1 for out events
     std::list<cudaEvent_t> empty_gpu_events;
     cudaEvent_t *gpu_events;
@@ -72,6 +77,10 @@ public:
         size_occu (0   ),
         size_soli (0   ),
         allocated (NONE),
+        vertex_associates(NULL),
+        value__associates(NULL),
+        num_vertex_associates(0),
+        num_value__associates(0),
         head_a    (0   ),
         head_b    (0   ),
         tail_a    (0   ),
@@ -97,12 +106,34 @@ public:
     cudaError_t Init(
         SizeT        capacity, 
         unsigned int target   = HOST,
-        SizeT        num_events = 10)
+        SizeT        num_events = 10,
+        SizeT        num_vertex_associates = 0,
+        SizeT        num_value__associates = 0)
     {
         cudaError_t retval = cudaSuccess;
 
         this->capacity = capacity;
         if (retval = array.Allocate(capacity, target)) return retval;
+        if (num_vertex_associates != 0)
+        {
+            this -> num_vertex_associates = num_vertex_associates;
+            vertex_associates = new Array1D<SizeT, VertexId>[num_vertex_associates];
+            for (int i=0; i<num_vertex_associates; i++)
+            {
+                vertex_associates[i].SetName(this->name + "_vertex[]");
+                if (retval = vertex_associates[i].Allocate(capacity, target)) return retval;
+            } 
+        }
+        if (num_value__associates != 0)
+        {
+            this -> num_value__associates = num_value__associates;
+            value__associates = new Array1D<SizeT, Value>[num_value__associates];
+            for (int i=0; i<num_value__associates; i++)
+            {
+                value_assocites[i].SetName(this->name + "_value[]");
+                if (retval = value__associates[i].Allocate(capacity, target)) return retval;
+            } 
+        }
         allocated = target;
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
@@ -139,10 +170,26 @@ public:
             delete[] gpu_events; gpu_events = NULL;
             empty_gpu_events.clear();
         }
-
-        if (retval = array.Release()) return retval;
         events[0].clear();
         events[1].clear();
+
+        if (retval = array.Release()) return retval;
+        if (vertex_associates != NULL)
+        {
+            for (int i=0; i<num_vertex_associates; i++)
+            {
+                if (retval = vertex_associates[i].Release()) return retval;
+            }
+            delete[] vertex_associates; vertex_associates = NULL;
+        }
+        if (value__associates != NULL)
+        {
+            for (int i=0; i<num_value__associates; i++)
+            {
+                if (retval = value__associates[i].Release()) return retval;
+            }
+            delete[] value__associates; value__associates = NULL;
+        }
 
         return retval;
     }
@@ -156,6 +203,12 @@ public:
     SizeT GetCapacity()
     {
         return capacity;
+    }
+
+    cudaError_t Combined_Return(cudaError_t retval, bool in_critical)
+    {
+        if (!in_critical) queue_mutex.unlock();
+        return retval;
     }
 
     void ShowDebugInfo(
@@ -173,80 +226,91 @@ public:
         //fflush(stdout);
     }
 
-    cudaError_t Push(SizeT length, Value* ptr, cudaStream_t stream = 0)
+    cudaError_t Push(
+        SizeT         length, 
+        VertexId     *array, 
+        cudaStream_t  stream = 0,
+        SizeT         num_vertex_associates = 0, 
+        SizeT         num_value__associates = 0,
+        VertexId    **vertex_associates = NULL,
+        Value       **value__associates = NULL)
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
         SizeT lens   [2] = {0, 0};
-
+        SizeT sum        = 0;
         if (retval = AddSize(length, offsets, lens)) return retval;
 
-        if (allocated == HOST)
+        for (int i=0; i<2; i++)
         {
-            SizeT sum = 0;
-            for (int i=0; i<2; i++)
-            if (lens[i] != 0) 
+            if (lens[i] == 0) continue;
+            ShowDebugInfo("Push", 0, offsets[i], offsets[i]+lens[i], lens[i], ptr);
+            if (retval = this->array.Move_In(
+                allocated, allocated, array, lens[i], sum, offsets[i], stream)) return retval;
+            for (SizeT j=0; j<num_vertex_associates; j++)
             {
-                ShowDebugInfo("Push", 0, offsets[i], offsets[i]+lens[i], lens[i], ptr[0]);
-                memcpy(array + offsets[i], ptr + sum, sizeof(Value) * lens[i]);
-                // in_event finish
-                EventFinish(0, offsets[i], lens[i]);
-                sum += lens[i];
+                if (retval = this->vertex_associates[j].Move_In(
+                    allocated, allocated, vertex_associates[j], sum, offsets[i], stream))
+                    return retval;
             }
-        } else if (allocated == DEVICE)
-        {
-            SizeT sum = 0;
-            for (int i=0; i<2; i++)
-            if (lens[i] != 0)
+            for (SizeT j=0; j<num_value__associates; j++)
             {
-                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lens[i], lens[i]);
-                MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
-                    array.GetPointer(DEVICE) + offsets[i],
-                    ptr + sum, lens[i]);
-                // set in_event
+                if (retval = this->value__associates[j].Move_In(
+                    allocated, allocated, value__associates[j], sum, offsets[i], stream))
+                    return retval;
+            }
+
+            // in_event finish
+            if (allocated == HOST) EventFinish(0, offsets[i], lens[i]);
+            else if (allocated == DEVICE)
                 EventSet(0, offsets[i], lens[i], stream);
-                sum += lens[i];
-            }
+            sum += lens[i];
         } 
         return retval;
     }
 
-    cudaError_t Pop(SizeT min_length, SizeT max_length, Value* ptr, SizeT &len, cudaStream_t stream = 0)
+    cudaError_t Pop(
+        SizeT         min_length, 
+        SizeT         max_length, 
+        VertexId     *ptr, 
+        SizeT        &len, 
+        cudaStream_t  stream = 0,
+        SizeT         num_vertex_associates = 0,
+        SizeT         num_value__associates = 0,
+        VertexId    **vertex_associates = NULL,
+        Value       **value__associates = NULL)
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
         SizeT lens   [2] = {0, 0};
+        SizeT sum        = 0;
         
         if (retval = ReduceSize(min_length, max_length, offsets, lens)) return retval;
 
-        if (allocated == HOST)
+        for (int i=0; i<2; i++)
         {
-            SizeT sum = 0;
-            for (int i=0; i<2; i++)
-            if (lens[i] != 0)
+            if (lens[i] == 0) continue;
+            ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
+            if (retval = this->array.Move_Out(
+                allocated, allocated, array, lens[i], sum, offsets[i], stream)) return retval;
+            for (SizeT j=0; j<num_vertex_associates; j++)
             {
-                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
-                memcpy(ptr + sum, array + offsets[i], sizeof(Value) * lens[i]);
-                // out_event finish
-                EventFinish(1, offsets[i], lens[i]);
-                sum += lens[i];
+                if (retval = this->vertex_associates[j].Move_Out(
+                    allocated, allocated, vertex_associates[j], sum, offsets[i], stream))
+                    return retval;
             }
-            len = sum;
-        } else if (allocated == DEVICE)
-        {
-            SizeT sum = 0;
-            for (int i=0; i<2; i++)
-            if (lens[i] != 0)
+            for (SizeT j=0; j<num_value__associates; j++)
             {
-                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
-                MemsetCopyVectorKernel<<<128, 128, 0, stream>>>(
-                    ptr + sum, array.GetPointer(DEVICE) + offsets[i], lens[i]);
-                // set out_event
+                if (retval = this->value__associates[j].Move_Out(
+                    allocated, allocated, value__associates[j], sum, offsets[i], stream))
+                    return retval;
+            }
+            if (allocated == HOST) EventFinish(1, offsets[i], lens[i]);
+            else if (allocated == DEVICE)
                 EventSet(1, offsets[i], lens[i], stream);
-                sum += lens[i];
-            }
-            len = sum;
+            sum += lens[i];
         }
+        len = sum;
 
         return retval; 
     }
@@ -272,11 +336,8 @@ public:
        
         if (allocated == DEVICE)
         {
-            if (retval = EventCheck(1, true))
-            {
-                if (!in_critical) queue_mutex.unlock();
-                return retval;
-            }
+            if (retval = EventCheck(1, true)) 
+                return Combined_Return(retval, in_critical);
         }
          
         if (length + size_occu > capacity) 
@@ -284,17 +345,13 @@ public:
             if (AUTO_RESIZE)
             {
                 if (retval = EnsureCapacity(length + size_occu, true)) 
-                {
-                    if (!in_critical) queue_mutex.unlock();
-                    return retval;
-                }
+                    return Combined_Return(retval, in_critical);
             } else {
                 if (length > capacity)
                 { // too large for the queue
                     retval = util::GRError(cudaErrorLaunchOutOfResources, 
                         (name + " oversize ").c_str(), __FILE__, __LINE__);
-                    if (!in_critical) queue_mutex.unlock();
-                    return retval;
+                    return Combined_Return(retval, in_critical);
                 } else {
                     queue_mutex.unlock();
                     bool got_space = false;
@@ -339,8 +396,7 @@ public:
         size_occu += length;
 
         ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
-        if (!in_critical) queue_mutex.unlock();
-        return retval;
+        return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ReduceSize(SizeT min_length, SizeT max_length, SizeT *offsets, SizeT* lens, bool in_critical = false)
@@ -355,10 +411,7 @@ public:
         if (allocated == DEVICE)
         {
             if (retval = EventCheck(0, true))
-            {
-                if (!in_critical) queue_mutex.unlock();
-                return retval;
-            }
+                return Combined_Return(retval, in_critical);
         }
         
         if (size_soli < min_length)
@@ -405,8 +458,7 @@ public:
         size_soli -= length;
 
         ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
-        if (!in_critical) queue_mutex.unlock();
-        return retval;
+        return Combined_Return(retval, in_critical);
     }
 
     cudaError_t EnsureCapacity(SizeT capacity_, bool in_critical = false)
@@ -431,66 +483,88 @@ public:
                 }
             }
 
-            Array1D<SizeT, Value> temp_array;
-            if (tail_a + size_occu > capacity)
-            { // content corss end point
-                if (retval = temp_array.Allocate(head_a, allocated))
-                {
-                    if (!in_critical) queue_mutex.unlock();
-                    return retval;
-                }
-                if (allocated == HOST) 
-                {
-                    memcpy(temp_array.GetPointer(HOST), 
-                           array.GetPointer(HOST), sizeof(Value) * head_a);
-                } else {
-                    MemsetCopyVectorKernel<<<128, 128>>>(
-                        temp_array.GetPointer(DEVICE),
-                        array.GetPointer(DEVICE), head_a);
-                }
-            }
-
-            if (retval = array.EnsureSize(capacity_, true))
+            if (retval = array.EnsureSize(capacity_, true)) 
+                return Combined_Return(retval, in_critical);
+            for (SizeT i=0; i<num_vertex_associates; i++)
             {
-                if (!in_critical) queue_mutex.unlock();
-                return retval;
+                if (retval = vertex_associates[i].EnsureSize(capacity_, true))
+                    return Combined_Return(retval, in_critical);
+            }
+            for (SizeT i=0; i<num_value__associates; i++)
+            {
+                if (retval = value__associates[i].EnsureSize(capacity_, true))
+                    return Combined_Return(retval, in_critical);
             }
 
             if (tail_a + size_occu > capacity)
             {
                 if (tail_a + size_occu > capacity_)
-                { // splict new array
-                    if (allocated == HOST)
+                { // Content cross original and new end point
+                    SizeT first_length = capacity_ - capacity;
+                    Array1D<SizeT, VertexId> temp_vertex;
+                    Array1D<SizeT, Value   > temp_value ;
+
+                    if (retval = temp_vertex.Allocate(head_a - first_length, allocated))
+                        return Combined_Return(retval, in_critical);
+                    if (num_value__associates != 0)
+                    if (retval = temp_value .Allocate(head_a - first_length, allocated))
+                        return Combined_Return(retval, in_critical);
+
+                    if (retval = array.Move_Out(allocated, allocated,
+                        array       .GetPointer(allocated), first_length, 0, capacity))
+                        return Combined_Return(retval, in_critical);
+                    if (retval = array.Move_Out(allocated, allocated,
+                        temp_vertex .GetPointer(allocated), head_a - first_length, first_length, 0))
+                        return Combined_Return(retval, in_critical);
+                    if (retval = array.Move_In (allocated, allocated,
+                        temp_vertex .GetPointer(allocated), head_a - first_length, 0, 0))
+                        return Combined_Return(retval, in_critical);
+
+                    for (SizeT i=0; i<num_vertex_asspciates; i++)
                     {
-                        memcpy(array + capacity, 
-                            temp_array.GetPointer(HOST), 
-                            sizeof(Value) * (capacity_-capacity));
-                        memcpy(array.GetPointer(HOST), 
-                            temp_array + (capacity_ - capacity), 
-                            sizeof(Value) * (head_a - (capacity_ - capacity)));
-                    } else if (allocated == DEVICE)
+                        if (retval = vertex_associates[i].Move_Out(allocated, allocated,
+                            vertex_assocaites[i].GetPointer(allocated), first_length, 0, capacity))
+                            return Combined_Return(retval, in_critical);
+                        if (retval = vertex_associates[i].Move_Out(allocated, allocated,
+                            temp_vertex .GetPointer(allocated), head_a - first_length, first_length, 0))
+                            return Combined_Return(retval, in_critical);
+                        if (retval = vertex_associates[i].Move_In (allocated, allocated,
+                            temp_vertex .GetPointer(allocated), head_a - first_length, 0, 0))
+                            return Combined_Return(retval, in_critical);
+                    }
+                    for (SizeT i=0; i<num_value__asspciates; i++)
                     {
-                        MemsetCopyVectorKernel<<<128, 128>>>(
-                            array.GetPointer(DEVICE) + capacity,
-                            temp_array.GetPointer(DEVICE),
-                            capacity_ - capacity);
-                        MemsetCopyVectorKernel<<<128, 128>>>(
-                            array.GetPointer(DEVICE),
-                            temp_array.GetPointer(DEVICE) + (capacity_ - capacity),
-                            head_a - (capacity_ - capacity));
-                    } 
-                } else {
-                    if (allocated == HOST)
+                        if (retval = value__associates[i].Move_Out(allocated, allocated,
+                            value__assocaites[i].GetPointer(allocated), first_length, 0, capacity))
+                            return Combined_Return(retval, in_critical);
+                        if (retval = value__associates[i].Move_Out(allocated, allocated,
+                            temp_value  .GetPointer(allocated), head_a - first_length, first_length, 0))
+                            return Combined_Return(retval, in_critical);
+                        if (retval = value__associates[i].Move_In (allocated, allocated,
+                            temp_value .GetPointer(allocated), head_a - first_length, 0, 0))
+                            return Combined_Return(retval, in_critical);
+                    }
+                   
+                    if (retval = temp_vertex.Release(allocated))
+                        return Combined_Return(retval, in_critical);
+                    if (num_value__associates != 0)
+                    if (retval = temp_value .Release(allocated))
+                        return Combined_Return(retval, in_critical);
+                } else { // Content cross original end point, but not new end point
+                    if (retval = array.Move_Out(allocated, allocated, 
+                        array.GetPointer(allocated), head_a, 0, capacity)) 
+                        return Combined_Return(retval, in_critical);
+                    for (SizeT i=0; i<num_vertex_associates; i++)
                     {
-                        memcpy(array + capacity, 
-                            temp_array.GetPointer(util::HOST), 
-                            sizeof(Value) * head_a);
-                    } else if (allocated == DEVICE)
+                        if (retval = vertex_associates[i].Move_Out(allocated, allocated,
+                            vertex_associates[i].GetPointer(allocated), head_a, 0, capacity))
+                            return Combined_Return(retval, in_critical);
+                    }
+                    for (SizeT i=0; i<num_value__associates; i++)
                     {
-                        MemsetCopyVectorKernel<<<128, 128>>>(
-                            array.GetPointer(DEVICE) + capacity,
-                            temp_array.GetPointer(DEVICE),
-                            head_a);
+                        if (retval = value__associates[i].Move_Out(allocated, allocated,
+                            value__associates[i].GetPointer(allocated), head_a, 0, capacity))
+                            return Combined_Return(retval, in_critical);
                     }
                 }
             }
