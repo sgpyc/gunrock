@@ -142,16 +142,25 @@ public:
     }    
 }; // end of ThreadSlice
 
-template <typename SizeT>
+template <
+    typename SizeT,
+    typename VertexId,
+    typename Value,
+    SizeT    NUM_VERTEX_ASSOCIATES,
+    SizeT    NUM_VALUE__ASSOCIATES>
 struct PushRequest
 {
 public:
-    int   iteration;
-    int   peer     ;
-    int   status   ;
-    SizeT length   ;
-    SizeT num_vertex_associates;
-    SizeT num_value__associates;
+    int       iteration;
+    int       peer     ;
+    int       status   ;
+    SizeT     length   ;
+    SizeT     offset   ;
+    SizeT     num_vertex_associates;
+    SizeT     num_value__associates;
+    VertexId *vertices ;
+    VertexId *vertex_associates[NUM_VERTEX_ASSOCIATES];
+    Value    *value__associates[NUM_VALUE__ASSOCIATES];
 }; // end of PushRequest
 
 template <typename SizeT, typename DataSlice>
@@ -239,9 +248,7 @@ template <
     typename VertexId,
     typename Value,
     typename GraphSlice,
-    typename DataSlice,
-    SizeT    num_vertex_associate,
-    SizeT    num_value__associate>
+    typename DataSlice>
 void PushNeibor(
     int gpu,
     int peer,
@@ -409,7 +416,7 @@ cudaError_t Check_Record(
     return retval;
 }
 
-/*template<typename Enactor>
+template<typename Enactor>
 void Push_Neibor_Thread(ThreadSlice *thread_data)
 {
     typedef typename Enactor::Problem  Problem ;
@@ -418,21 +425,23 @@ void Push_Neibor_Thread(ThreadSlice *thread_data)
     typedef typename Problem::Value    Value   ;
     typedef typename Problem::DataSlice DataSlice;
     typedef typename GraphSlice<SizeT, VertexId, Value> GraphSlice;
-
+    typedef typename PushRequest<SizeT, VertexId, Value, 
+        Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES> PRequest;
+    typedef typename std::list<PRequest> PRList;
     Problem *problem = (Problem*) thread_data->problem;
     Enactor *enactor = (Enactor*) thread_data->enactor;
      
     int thread_num = thread_data -> thread_num;
     int gpu_num    = thread_data -> gpu_num;
-    std::list<PushRequest>* request_queue = &enactor->request_queues[gpu_num];
-    std::mutex* rqueue_mutex = &enactor->rqueue_mutexes[gpu_num]; 
+    PRList *request_queue = &enactor->request_queues[gpu_num];
+    std::mutex *rqueue_mutex = &enactor->rqueue_mutexes[gpu_num]; 
     
     while (thread_data -> status != 4)
     {
         if (!request_queue.empty())
         {
             rqueue_mutex->lock();
-            std::list<PushRequest>::iterator it_, it = request_queue->begin();
+            PRList::iterator it_, it = request_queue->begin();
             while (it != request_queue->end())
             {
                 it_ = it; it++;
@@ -440,17 +449,17 @@ void Push_Neibor_Thread(ThreadSlice *thread_data)
                 {
                     if ((*it_).peer < num_gpus) // local peer
                     {
-                        PushNeibor <Enactor::SIZE_CHECK, SizeT, VertexId, Value, GraphSlice, DataSlice> (
-                            gpu_num,
-                            (*it_).peer,
-                            (*it_).length,
-                            enactor_stats_, // need to change
-                            s_data_slice  [gpu_num    ].GetPointer(util::HOST),
-                            s_data_slice  [(*it_).peer].GetPointer(util::HOST),
-                            s_graph_slice [gpu_num    ],
-                            s_graph_slice [(*it_).peer],
-                            streams       [peer__     ]); // need to change
-                        Set_Record(data_slice, iteration, peer_, stages[peer__], streams[peer__]); // need to change
+                        PushNeibor <Enactor> (*it, problem);
+                            //gpu_num,
+                            //(*it_).peer,
+                            //(*it_).length,
+                            //enactor_stats_, // need to change
+                            //s_data_slice  [gpu_num    ].GetPointer(util::HOST),
+                            //s_data_slice  [(*it_).peer].GetPointer(util::HOST),
+                            //s_graph_slice [gpu_num    ],
+                            //s_graph_slice [(*it_).peer],
+                            //streams       [peer__     ]); // need to change
+                        //Set_Record(data_slice, iteration, peer_, stages[peer__], streams[peer__]); // need to change
                     } else { // remote peer
                     }
                 } else if ((*it).status == 2) // pushed
@@ -476,7 +485,7 @@ void Push_Neibor_Thread(ThreadSlice *thread_data)
         }
         if (thread_data -> retval) break;
     }
-}*/
+}
 
 /*void Receiving_Thread(ThreadSlice *thread_data)
 {
@@ -1010,6 +1019,7 @@ public:
     int           num_gpus;
     int          *gpu_idx;
     FrontierType  frontier_type;
+    std::mutex   *rqueue_mutex;
  
     //Device properties
     util::Array1D<SizeT, util::CudaProperties>          cuda_props        ;
