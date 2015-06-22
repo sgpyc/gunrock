@@ -208,7 +208,11 @@ public:
         return this->size;
     }
 
-    cudaError_t EnsureSize(SizeT size, bool keep = false, cudaStream_t stream = 0)
+    cudaError_t EnsureSize(
+        SizeT size, 
+        bool keep = false, 
+        cudaStream_t stream = 0, 
+        unsigned int target = HOST)
     {
         if (ARRAY_DEBUG)
         {
@@ -216,6 +220,7 @@ public:
         }
         if (this->size >= size) return cudaSuccess;
         else {
+            if (allocated == NONE) allocated = target; 
             //printf("Expanding %s : %d -> %d\n",name.c_str(),this->size,size);fflush(stdout);
             if (!keep) return Allocate(size, allocated);
             else {
@@ -397,9 +402,11 @@ public:
         if (size         == 0 ) 
             return retval;
         if (ARRAY_DEBUG) {
-            printf("%s Moving in from %d to %d, size = %lld, offset = %lld, stream = %p, d_pointer = %p, h_pointer = %p, src = %p\n", 
-                name.c_str(), source, target, (long long) size, (long long) offset, 
-                stream, d_pointer, h_pointer, src);fflush(stdout);}
+            printf("%s Moving in from %d to %d, size = %lld, source_offset = %lld, target_offset = %lld, stream = %p, d_pointer = %p, h_pointer = %p, src = %p\n", 
+                name.c_str(), source, target, (long long) size, (long long) source_offset, 
+                (long long) target_offset, stream, d_pointer, h_pointer, src);
+            fflush(stdout);
+        }
 
         if (source == HOST && target == DEVICE) 
         {
@@ -460,9 +467,11 @@ public:
         if (size         == 0 ) 
             return retval;
         if (ARRAY_DEBUG) {
-            printf("%s Moving out from %d to %d, size = %lld, offset = %lld, stream = %p, d_pointer = %p, h_pointer = %p, dest = %p\n", 
-                name.c_str(), source, target, (long long) size, (long long) offset, 
-                stream, d_pointer, h_pointer, dest);fflush(stdout);}
+            printf("%s Moving out from %d to %d, size = %lld, source_offset = %lld, target_offset = %lld, stream = %p, d_pointer = %p, h_pointer = %p, dest = %p\n", 
+                name.c_str(), source, target, (long long) size, (long long) source_offset, 
+                (long long) target_offset, stream, d_pointer, h_pointer, dest);
+            fflush(stdout);
+        }
 
         if (source == DEVICE && target == HOST) 
         {

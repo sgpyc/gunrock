@@ -705,7 +705,7 @@ void RunTests(
 * Main
 ******************************************************************************/
 
-void process_cq(CircularQueue<int, int, true> *cq, int t_id)
+/*void process_cq(CircularQueue<int, int, true> *cq, int t_id)
 {
     int *a = new int[100];
     int counter = 0;
@@ -800,11 +800,11 @@ void process_cq_gpu(CircularQueue<int, int, true> *cq, int t_id, util::Array1D<i
         //fflush(stdout);
         cq->Push(counter, a->GetPointer(util::DEVICE));
     }
-}
+}*/
 
 int main( int argc, char** argv)
 {
-    printf("Funct\tDirect\tValue\tStart\tEnd\tdSize\tSize_occu\tSize_soli\thead_a\thead_b\ttail_a\ttail_b\n");
+/*    printf("Funct\tDirect\tValue\tStart\tEnd\tdSize\tSize_occu\tSize_soli\thead_a\thead_b\ttail_a\ttail_b\n");
     srand(time(NULL));
     CircularQueue<int, int, true> cq;
     cq.Init(100, util::DEVICE);
@@ -826,8 +826,8 @@ int main( int argc, char** argv)
     int size_occu = -1, size_soli = -1;
     cq.GetSize(size_occu, size_soli);
     std::cout<<"capacity = "<<cq.GetCapacity()<<" size_occu = "<<size_occu<<" size_soli = "<<size_soli<<std::endl;
- 
-    /*CommandLineArgs  args(argc, argv);
+*/ 
+    CommandLineArgs  args(argc, argv);
     int              num_gpus     = 0;
     int             *gpu_idx      = NULL;
     ContextPtr      *context      = NULL;
@@ -991,7 +991,7 @@ int main( int argc, char** argv)
     }
 
     csr.PrintHistogram();
-    RunTests(&csr, args, num_gpus, context, gpu_idx, streams);*/
+    RunTests(&csr, args, num_gpus, context, gpu_idx, streams);
 
     return 0;
 }
