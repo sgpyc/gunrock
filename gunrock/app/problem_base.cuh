@@ -327,23 +327,23 @@ struct DataSliceBase
     int    num_value__associate; // Number of associate values in Value type for each vertex
     int    num_stages          ; // Number of stages
     SizeT  nodes               ; // Numver of vertices
-    util::Array1D<SizeT, VertexId    > **vertex_associate_in  [2]; // Incoming VertexId type associate values
-    util::Array1D<SizeT, VertexId*   >  *vertex_associate_ins [2]; // Device pointers to incoming VertexId type associate values
-    util::Array1D<SizeT, VertexId    > **vertex_associate_out    ; // Outgoing VertexId type associate values
-    util::Array1D<SizeT, VertexId*   >  *vertex_associate_outs   ; // Device pointers to outgoing VertexId type associate values
-    util::Array1D<SizeT, VertexId**  >   vertex_associate_outss  ; // Device pointers to device points to outgoing VertexId type associate values
+    //util::Array1D<SizeT, VertexId    > **vertex_associate_in  [2]; // Incoming VertexId type associate values
+    //util::Array1D<SizeT, VertexId*   >  *vertex_associate_ins [2]; // Device pointers to incoming VertexId type associate values
+    //util::Array1D<SizeT, VertexId    > **vertex_associate_out    ; // Outgoing VertexId type associate values
+    //util::Array1D<SizeT, VertexId*   >  *vertex_associate_outs   ; // Device pointers to outgoing VertexId type associate values
+    //util::Array1D<SizeT, VertexId**  >   vertex_associate_outss  ; // Device pointers to device points to outgoing VertexId type associate values
     util::Array1D<SizeT, VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
-    util::Array1D<SizeT, Value       > **value__associate_in  [2]; // Incoming Value type associate values
-    util::Array1D<SizeT, Value*      >  *value__associate_ins [2]; // Device pointers to incomnig Value type associate values
-    util::Array1D<SizeT, Value       > **value__associate_out    ; // Outgoing Value type associate values
-    util::Array1D<SizeT, Value*      >  *value__associate_outs   ; // Device pointers to outgoing Value type assocaite values
-    util::Array1D<SizeT, Value**     >   value__associate_outss  ; // Device pointers to device pointers to outgoing Value type associate values
+    //util::Array1D<SizeT, Value       > **value__associate_in  [2]; // Incoming Value type associate values
+    //util::Array1D<SizeT, Value*      >  *value__associate_ins [2]; // Device pointers to incomnig Value type associate values
+    //util::Array1D<SizeT, Value       > **value__associate_out    ; // Outgoing Value type associate values
+    //util::Array1D<SizeT, Value*      >  *value__associate_outs   ; // Device pointers to outgoing Value type assocaite values
+    //util::Array1D<SizeT, Value**     >   value__associate_outss  ; // Device pointers to device pointers to outgoing Value type associate values
     util::Array1D<SizeT, Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
     util::Array1D<SizeT, SizeT       >   out_length              ; // Number of outgoing vertices to peers  
-    util::Array1D<SizeT, SizeT       >   in_length            [2]; // Number of incoming vertices from peers
-    util::Array1D<SizeT, VertexId    >  *keys_in              [2]; // Incoming vertices
-    util::Array1D<SizeT, VertexId*   >   keys_outs               ; // Outgoing vertices
-    util::Array1D<SizeT, VertexId    >  *keys_out                ; // Device pointers to outgoing vertices
+    //util::Array1D<SizeT, SizeT       >   in_length            [2]; // Number of incoming vertices from peers
+    //util::Array1D<SizeT, VertexId    >  *keys_in              [2]; // Incoming vertices
+    //util::Array1D<SizeT, VertexId*   >   keys_outs               ; // Outgoing vertices
+    //util::Array1D<SizeT, VertexId    >  *keys_out                ; // Device pointers to outgoing vertices
     util::Array1D<SizeT, SizeT       >  *keys_marker             ; // Markers to separate vertices to peer GPUs
     util::Array1D<SizeT, SizeT*      >   keys_markers            ; // Device pointer to the markers
     util::Array1D<SizeT, cudaEvent_t*>   events               [4]; // GPU stream events arrays
@@ -361,6 +361,10 @@ struct DataSliceBase
     util::DoubleBuffer<SizeT, VertexId, Value>  *frontier_queues ; // frontier queues
     util::Array1D<SizeT, SizeT       >  *scanned_edges           ; // length / offsets for offsets of the frontier queues
 
+    util::CircularQueue<SizeT, VertexId, Value> output_cq        ;
+    util::CircularQueue<SizeT, VertexId, Value> input_cq[2]      ;
+    util::CircularQueue<SizeT, VertexId, Value> subq_cq          ;
+    util::CircularQueue<SizeT, VertexId, Value> fullq_cq         ;
     /**
      * @brief DataSliceBase default constructor
      */

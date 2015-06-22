@@ -53,13 +53,14 @@ public:
 
 private:
     std::string  name;      // name of the queue
+    int          gpu_idx ;  // gpu index
     SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
     unsigned int allocated; // where the data is allocated, HOST or DEVICE
     Array1D<SizeT, VertexId>  array; // the main data
-    Array1D<SizeT, VertexId>* vertex_associates; // VertexId type associate values
-    Array1D<SizeT, Value   >* value__associates; // Value type associate values
+    Array1D<SizeT, VertexId>  *vertex_associates; // VertexId type associate values
+    Array1D<SizeT, Value   >  *value__associates; // Value type associate values
     SizeT        num_vertex_associates;
     SizeT        num_value__associates;
     SizeT        head_a, head_b, tail_a, tail_b; // head and tail offsets
@@ -77,6 +78,7 @@ private:
 public:
     CircularQueue() :
         name      (""  ),
+        gpu_idx   (0   ),
         capacity  (0   ),
         size_occu (0   ),
         size_soli (0   ),
@@ -105,10 +107,12 @@ public:
     void SetName(std::string name)
     {
         this->name = name;
-        array.SetName(name+"_array");
-        temp_array.SetName(name+"_temp_array");
+        array                 .SetName(name+"_array"      );
+        //vertex_associates     .SetName(name+"_vertex"     );
+        //value__associates     .SetName(name+"_value"      );
+        temp_array            .SetName(name+"_temp_array" );
         temp_vertex_associates.SetName(name+"_temp_vertex");
-        temp_value__associates.SetName(name+"_temp_value");
+        temp_value__associates.SetName(name+"_temp_value" );
     }
 
     cudaError_t Init(
@@ -125,24 +129,26 @@ public:
         if (retval = array.Allocate(capacity, target)) return retval;
         if (num_vertex_associates != 0)
         {
-            this -> num_vertex_associates = num_vertex_associates;
             vertex_associates = new Array1D<SizeT, VertexId>[num_vertex_associates];
-            for (int i=0; i<num_vertex_associates; i++)
+            for (SizeT i=0; i<num_vertex_associates; i++)
             {
-                vertex_associates[i].SetName(this->name + "_vertex[]");
-                if (retval = vertex_associates[i].Allocate(capacity, target)) return retval;
-            } 
+                vertex_associates[i].SetName(name + "_vertex[]");
+                if (retval = vertex_associates[i].Allocate(capacity, target))
+                return retval;
+            }
         }
         if (num_value__associates != 0)
         {
-            this -> num_value__associates = num_value__associates;
-            value__associates = new Array1D<SizeT, Value>[num_value__associates];
-            for (int i=0; i<num_value__associates; i++)
+            value__associates = new Array1D<SizeT, Value   >[num_value__associates];
+            for (SizeT i=0; i<num_value__associates; i++)
             {
-                value__associates[i].SetName(this->name + "_value[]");
-                if (retval = value__associates[i].Allocate(capacity, target)) return retval;
-            } 
+                value__associates[i].SetName(name + "_value[]");
+                if (retval = value__associates[i].Allocate(capacity, target))
+                return retval;
+            }
         }
+        this -> num_vertex_associates = num_vertex_associates;
+        this -> num_value__associates = num_value__associates;
         allocated = target;
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
@@ -152,22 +158,24 @@ public:
         if (temp_capacity != 0)
         {
             if (retval = temp_array.Allocate(temp_capacity, target)) return retval;
-            if (num_vertex_associates != 0)
-                if (retval = temp_vertex_associates.Allocate(temp_capacity * num_vertex_associates, target))
-                    return retval;
-            if (num_value__associates != 0)
-                if (retval = temp_value__associates.Allocate(temp_capacity * num_value__associates, target))
-                    return retval;
+            if (retval = temp_vertex_associates.Allocate(temp_capacity * num_vertex_associates, target))
+                return retval;
+            if (retval = temp_value__associates.Allocate(temp_capacity * num_value__associates, target))
+                return retval;
             //this->temp_capacity = temp_capacity;
         }
        
         if (target == DEVICE)
         { 
+            if (retval = GRError(cudaGetDevice(&gpu_idx), 
+                "cudaGetDevice failed", __FILE__, __LINE__)) return retval;
             gpu_events = new cudaEvent_t[num_events];
             this -> num_events = num_events;
             for (SizeT i=0; i<num_events; i++)
             {
-                if (retval = cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming)) return retval;
+                if (retval = GRError(cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming), 
+                    "cudaEventCreateWithFlags failed", __FILE__, __LINE__)) 
+                    return retval;
                 empty_gpu_events.push_back(gpu_events[i]);
             }
         }
@@ -194,27 +202,25 @@ public:
         events[0].clear();
         events[1].clear();
 
-        if (retval = array.Release()) return retval;
-        if (retval = temp_array.Release()) return retval;
-        if (retval = temp_vertex_associates.Release()) return retval;
-        if (retval = temp_value__associates.Release()) return retval;
-
         if (vertex_associates != NULL)
         {
-            for (int i=0; i<num_vertex_associates; i++)
-            {
+            for (SizeT i=0; i<num_vertex_associates; i++)
                 if (retval = vertex_associates[i].Release()) return retval;
-            }
             delete[] vertex_associates; vertex_associates = NULL;
         }
         if (value__associates != NULL)
         {
-            for (int i=0; i<num_value__associates; i++)
-            {
+            for (SizeT i=0; i<num_value__associates; i++)
                 if (retval = value__associates[i].Release()) return retval;
-            }
             delete[] value__associates; value__associates = NULL;
         }
+
+        if (retval = array.Release()                 ) return retval;
+        //if (retval = vertex_associates.Release()     ) return retval;
+        //if (retval = value__associates.Release()     ) return retval;
+        if (retval = temp_array.Release()            ) return retval;
+        if (retval = temp_vertex_associates.Release()) return retval;
+        if (retval = temp_value__associates.Release()) return retval;
 
         return retval;
     }
@@ -230,9 +236,16 @@ public:
         return capacity;
     }
 
-    cudaError_t Combined_Return(cudaError_t retval, bool in_critical)
+    cudaError_t Combined_Return(
+        cudaError_t retval = cudaSuccess, 
+        bool        in_critical = true,
+        bool        set_gpu     = false,
+        int         org_gpu     = 0)
     {
         if (!in_critical) queue_mutex.unlock();
+        if (retval == cudaSuccess)
+            retval = GRError(cudaSetDevice(org_gpu),
+                "cudaSetDevice failed", __FILE__, __LINE__);
         return retval;
     }
 
@@ -262,34 +275,38 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
-        SizeT lens   [2] = {0, 0};
+        SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
-        if (retval = AddSize(length, offsets, lens)) return retval;
+        if (retval = AddSize(length, offsets, lengths)) return retval;
 
         for (int i=0; i<2; i++)
         {
-            if (lens[i] == 0) continue;
-            ShowDebugInfo("Push", 0, offsets[i], offsets[i]+lens[i], lens[i]);
+            if (lengths[i] == 0) continue;
+            ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
             if (retval = this->array.Move_In(
-                allocated, allocated, array, lens[i], sum, offsets[i], stream)) return retval;
+                allocated, allocated, array, 
+                lengths[i], sum, offsets[i], stream)) 
+                return retval;
             for (SizeT j=0; j<num_vertex_associates; j++)
             {
                 if (retval = this->vertex_associates[j].Move_In(
-                    allocated, allocated, vertex_associates[j], sum, offsets[i], stream))
+                    allocated, allocated, vertex_associates[j], 
+                    lengths[i], sum, offsets[i], stream))
                     return retval;
             }
             for (SizeT j=0; j<num_value__associates; j++)
             {
                 if (retval = this->value__associates[j].Move_In(
-                    allocated, allocated, value__associates[j], sum, offsets[i], stream))
+                    allocated, allocated, value__associates[j], 
+                    lengths[i], sum, offsets[i], stream))
                     return retval;
             }
 
             // in_event finish
-            if (allocated == HOST) EventFinish(0, offsets[i], lens[i]);
+            if (allocated == HOST) EventFinish(0, offsets[i], lengths[i]);
             else if (allocated == DEVICE)
-                EventSet(0, offsets[i], lens[i], stream);
-            sum += lens[i];
+                EventSet(0, offsets[i], lengths[i], stream);
+            sum += lengths[i];
         } 
         return retval;
     }
@@ -301,16 +318,17 @@ public:
         SizeT         num_vertex_associates = 0, 
         SizeT         num_value__associates = 0,
         VertexId    **vertex_associates = NULL,
-        Value       **value__associates = NULL)
+        Value       **value__associates = NULL,
+        bool          set_gpu = false)
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0,0};
-        SizeT lens   [2] = {0,0};
+        SizeT lengths[2] = {0,0};
         SizeT sum        = 0;
-        if (retval = AddSize(length, offsets, lens)) return retval;
+        if (retval = AddSize(length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
 
-        if (lens[1] == 0)
+        if (lengths[1] == 0)
         { // single chunk
             array = this->array.GetPointer(allocated) + offsets[0];
             for (SizeT j=0; j<num_vertex_associates; j++)
@@ -328,12 +346,28 @@ public:
                         (name + " remp_array oversize ").c_str(), __FILE__, __LINE__);
                     return retval;
                 }
+                int org_gpu = 0;
+                if (set_gpu && allocated == DEVICE)
+                {
+                    if (retval = GRError(cudaGetDevice(&org_gpu),
+                        "cudaGetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                    if (retval = GRError(cudaSetDevice(gpu_idx),
+                        "cudaSetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                }
                 if (retval = temp_array.EnsureSize(length, false, 0, allocated))
                     return retval;
                 if (retval = temp_vertex_associates.EnsureSize(length * num_vertex_associates, false, 0, allocated))
                     return retval;
                 if (retval = temp_value__associates.EnsuerSize(length * num_value__associates, false, 0, allocated))
                     return retval;
+                if (set_gpu && allocated == DEVICE)
+                {
+                    if (retval = GRError(cudaSetDevice(org_gpu),
+                        "cudaSetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                }
             }
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
@@ -357,33 +391,37 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
-        SizeT lens   [2] = {0, 0};
+        SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
         
-        if (retval = ReduceSize(min_length, max_length, offsets, lens)) return retval;
+        if (retval = ReduceSize(min_length, max_length, offsets, lengths)) return retval;
 
         for (int i=0; i<2; i++)
         {
-            if (lens[i] == 0) continue;
-            ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lens[i], lens[i]);
+            if (lengths[i] == 0) continue;
+            ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lengths[i], lengths[i]);
             if (retval = this->array.Move_Out(
-                allocated, allocated, array, lens[i], sum, offsets[i], stream)) return retval;
+                allocated, allocated, array, 
+                lengths[i], sum, offsets[i], stream)) 
+                return retval;
             for (SizeT j=0; j<num_vertex_associates; j++)
             {
                 if (retval = this->vertex_associates[j].Move_Out(
-                    allocated, allocated, vertex_associates[j], sum, offsets[i], stream))
+                    allocated, allocated, vertex_associates[j], 
+                    lengths[i], sum, offsets[i], stream))
                     return retval;
             }
             for (SizeT j=0; j<num_value__associates; j++)
             {
                 if (retval = this->value__associates[j].Move_Out(
-                    allocated, allocated, value__associates[j], sum, offsets[i], stream))
+                    allocated, allocated, value__associates[j], 
+                    lengths[i], sum, offsets[i], stream))
                     return retval;
             }
-            if (allocated == HOST) EventFinish(1, offsets[i], lens[i]);
+            if (allocated == HOST) EventFinish(1, offsets[i], lengths[i]);
             else if (allocated == DEVICE)
-                EventSet(1, offsets[i], lens[i], stream);
-            sum += lens[i];
+                EventSet(1, offsets[i], lengths[i], stream);
+            sum += lengths[i];
         }
         length = sum;
 
@@ -400,16 +438,17 @@ public:
         SizeT         num_vertex_associates = 0,
         SizeT         num_value__associates = 0,
         VertexId    **vertex_associates = NULL,
-        Value       **value__associates = NULL)
+        Value       **value__associates = NULL,
+        bool          set_gpu = false)
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
-        SizeT lens   [2] = {0, 0};
+        SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
 
-        if (retval = ReduceSize(min_length, max_length, offsets, lens)) return retval;
+        if (retval = ReduceSize(min_length, max_length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
-        length = lens[0] + lens[1];
+        length = lengths[0] + lengths[1];
 
         if (offsets[1] == 0)
         { // single chunk
@@ -419,6 +458,17 @@ public:
             for (SizeT j=0; j<num_value__associates; j++)
                 value__associates[j] = this->value__associates[j].GetPointer(allocated) + offset; 
         } else {
+            int org_gpu;
+            if (set_gpu && allocated == DEVICE)
+            {
+                if (retval = GRError(cudaGetDevice(&org_gpu),
+                    "cudaGetDevice failed", __FILE__, __LINE__))
+                    return retval;
+                if (retval = GRError(cudaSetDevice(gpu_idx),
+                    "cudaSetDevice failed", __FILE__, __LINE__))
+                    return retval;
+            }
+
             if (length > temp_array.GetSize() ||
                 length * num_vertex_associates > temp_vertex_associates.GetSize() ||
                 length * num_value__associates > temp_value__associates.GetSize())
@@ -439,22 +489,29 @@ public:
             
             for (int i=0; i<2; i++)
             {
-                if (lens[i] == 0) continue;
+                if (lengths[i] == 0) continue;
                 if (retval = this->array.Move_Out(
                     allocated, allocated, temp_array.GetPointer(allocated), 
-                    lens[i], sum, offsets[i], stream)) return retval;
+                    lengths[i], sum, offsets[i], stream)) return retval;
                 for (SizeT j=0; j<num_vertex_associates; j++)
                 {
                     if (retval = this->vertex_associates[j].Move_Out(
                         allocated, allocated, temp_vertex_associates.GetPointer(allocated), 
-                        lens[i], j*length + sum, offsets[i], stream)) return retval;
+                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
                 }
                 for (SizeT j=0; j<num_value__associates; j++)
                 {
                     if (retval = this->value__associates[j].Move_Out(
                         allocated, allocated, temp_value__associates.GetPointer(allocated),
-                        lens[i], j*length + sum, offsets[i], stream)) return retval;
+                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
                 }
+                sum += lengths[i];
+            }
+            if (set_gpu && allocated == DEVICE)
+            {
+                if (retval = GRError(cudaSetDevice(org_gpu),
+                    "cudaSetDevice failed", __FILE__, __LINE__))
+                    return retval;
             }
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
@@ -633,9 +690,23 @@ public:
         return Combined_Return(retval, in_critical);
     }
 
-    cudaError_t EnsureCapacity(SizeT capacity_, bool in_critical = false)
+    cudaError_t EnsureCapacity(
+        SizeT capacity_, 
+        bool  in_critical = false,
+        bool  set_gpu     = false)
     {
         cudaError_t retval = cudaSuccess;
+        int org_gpu;
+        
+        if (set_gpu && allocated = DEVICE)
+        { // set to the correct device
+            if (retval = GRError(cudaGetDevice(&org_gpu),
+                "cudaGetDevice failed", __FILE__, __LINE__))
+                return retval;
+            if (retval = GRError(cudaSetDevice(gpu_idx),
+                "cudaSetDevice failed", __FILE__, __LINE__))
+                return retval;
+        }
 
         if (!in_critical) queue_mutex.lock();
         printf("capacity -> %d\n", capacity_);
