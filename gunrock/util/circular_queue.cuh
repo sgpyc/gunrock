@@ -336,39 +336,6 @@ public:
             for (SizeT j=0; j<num_value__associates; j++)
                 value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
         } else { // splict at the end
-            if (length > temp_array.GetSize() ||
-                length * num_vertex_associates > temp_vertex_associates.GetSize() || 
-                length * num_value__associates > temp_value__associates.GetSize())
-            {
-                if (!AUTO_RESIZE)
-                {
-                    retval = util::GRError(cudaErrorLaunchOutOfResources, 
-                        (name + " remp_array oversize ").c_str(), __FILE__, __LINE__);
-                    return retval;
-                }
-                int org_gpu = 0;
-                if (set_gpu && allocated == DEVICE)
-                {
-                    if (retval = GRError(cudaGetDevice(&org_gpu),
-                        "cudaGetDevice failed", __FILE__, __LINE__))
-                        return retval;
-                    if (retval = GRError(cudaSetDevice(gpu_idx),
-                        "cudaSetDevice failed", __FILE__, __LINE__))
-                        return retval;
-                }
-                if (retval = temp_array.EnsureSize(length, false, 0, allocated))
-                    return retval;
-                if (retval = temp_vertex_associates.EnsureSize(length * num_vertex_associates, false, 0, allocated))
-                    return retval;
-                if (retval = temp_value__associates.EnsuerSize(length * num_value__associates, false, 0, allocated))
-                    return retval;
-                if (set_gpu && allocated == DEVICE)
-                {
-                    if (retval = GRError(cudaSetDevice(org_gpu),
-                        "cudaSetDevice failed", __FILE__, __LINE__))
-                        return retval;
-                }
-            }
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
                 vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
@@ -688,6 +655,47 @@ public:
 
         ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
         return Combined_Return(retval, in_critical);
+    }
+
+    cudaError_t EnsuerTempCapacity(
+        SizeT temp_capacity,
+        SizeT vertex_capacity,
+        SizeT value__capacity)
+    {
+         if (length > temp_array.GetSize() ||
+            length * num_vertex_associates > temp_vertex_associates.GetSize() || 
+            length * num_value__associates > temp_value__associates.GetSize())
+        {
+            if (!AUTO_RESIZE)
+            {
+                retval = util::GRError(cudaErrorLaunchOutOfResources, 
+                    (name + " remp_array oversize ").c_str(), __FILE__, __LINE__);
+                return retval;
+            }
+            int org_gpu = 0;
+            if (set_gpu && allocated == DEVICE)
+            {
+                if (retval = GRError(cudaGetDevice(&org_gpu),
+                    "cudaGetDevice failed", __FILE__, __LINE__))
+                    return retval;
+                if (retval = GRError(cudaSetDevice(gpu_idx),
+                    "cudaSetDevice failed", __FILE__, __LINE__))
+                    return retval;
+            }
+            if (retval = temp_array.EnsureSize(length, false, 0, allocated))
+                return retval;
+            if (retval = temp_vertex_associates.EnsureSize(length * num_vertex_associates, false, 0, allocated))
+                return retval;
+            if (retval = temp_value__associates.EnsuerSize(length * num_value__associates, false, 0, allocated))
+                return retval;
+            if (set_gpu && allocated == DEVICE)
+            {
+                if (retval = GRError(cudaSetDevice(org_gpu),
+                    "cudaSetDevice failed", __FILE__, __LINE__))
+                    return retval;
+            }
+        }
+
     }
 
     cudaError_t EnsureCapacity(
