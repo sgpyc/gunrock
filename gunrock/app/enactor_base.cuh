@@ -20,7 +20,7 @@
 #include <gunrock/util/error_utils.cuh>
 #include <gunrock/util/test_utils.cuh>
 #include <gunrock/util/array_utils.cuh>
-#include <gunrock/util/circular_queue.cuh>
+//#include <gunrock/util/circular_queue.cuh>
 #include <gunrock/app/problem_base.cuh>
 #include <gunrock/app/enactor_kernel.cuh>
 
@@ -409,7 +409,7 @@ cudaError_t Check_Record(
     return retval;
 }
 
-template<typename Enactor>
+/*template<typename Enactor>
 void Push_Neibor_Thread(ThreadSlice *thread_data)
 {
     typedef typename Enactor::Problem  Problem ;
@@ -476,9 +476,9 @@ void Push_Neibor_Thread(ThreadSlice *thread_data)
         }
         if (thread_data -> retval) break;
     }
-}
+}*/
 
-void Receiving_Thread(ThreadSlice *thread_data)
+/*void Receiving_Thread(ThreadSlice *thread_data)
 {
     if (!(s_data_slice[peer]->events_set[iteration_][gpu_][0]))
     {   to_show[peer__]=false;stages[peer__]--;break;}
@@ -528,7 +528,7 @@ void Receiving_Thread(ThreadSlice *thread_data)
         Set_Record(data_slice, iteration, peer_, 2, streams[peer__]);
         stages[peer__]=2;
     }
-}
+}*/
 
 template <
     int      NUM_VERTEX_ASSOCIATES,
