@@ -840,7 +840,8 @@ public:
         SizeT offset, 
         SizeT length, 
         cudaStream_t stream = 0, 
-        bool in_critical = false)
+        bool in_critical = false,
+        bool set_gpu     = false)
     {
         cudaError_t retval = cudaSuccess;
         if (allocated != DEVICE) return retval;
