@@ -105,44 +105,12 @@ struct FrontierAttribute
     }
 };
 
-/**
- * @brief Structure for per-thread variables used in sub-threads.
- */
-class ThreadSlice
-{    
-public:
-    int           thread_num ;
-    int           gpu_num    ;
-    int           init_size  ;
-    CUTThread     thread_Id  ;
-    int           stats      ;
-    void         *problem    ;
-    void         *enactor    ;
-    ContextPtr   *context    ;
-    util::cpu_mt::CPUBarrier
-                 *cpu_barrier;
-
-    ThreadSlice() :
-        thread_num (0   ),
-        init_size  (0   ),
-        stats      (-2  ),
-        problem    (NULL),
-        enactor    (NULL),
-        context    (NULL),
-        cpu_barrier(NULL)
-    {    
-    }    
-
-    virtual ~ThreadSlice()
-    {    
-        problem     = NULL;
-        enactor     = NULL;
-        context     = NULL;
-        cpu_barrier = NULL;
-    }    
-}; // end of ThreadSlice
-
-template <typename Enactor>
+template <
+    typename VertexId,
+    typename SizeT,
+    typename Value,
+    SizeT    NUM_VERTEX_ASSOCIATES,
+    SizeT    NUM_VALUE__ASSOCIATES>
 struct PushRequest
 {
 public:
@@ -150,682 +118,14 @@ public:
     int       peer     ;
     int       status   ;
     int       gpu_num  ;
-    Enactor::SizeT     length   ;
-    Enactor::SizeT     offset   ;
-    Enactor::SizeT     num_vertex_associates;
-    Enactor::SizeT     num_value__associates;
-    Enactor::VertexId *vertices ;
-    Enactor::VertexId *vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
-    Enactor::Value    *value__associates[Enactor::NUM_VALUE__ASSOCIATES];
+    SizeT     length   ;
+    SizeT     offset   ;
+    SizeT     num_vertex_associates;
+    SizeT     num_value__associates;
+    VertexId *vertices ;
+    VertexId *vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
+    Value    *value__associates[Enactor::NUM_VALUE__ASSOCIATES];
 }; // end of PushRequest
-
-template <typename SizeT, typename DataSlice>
-bool All_Done(EnactorStats                    *enactor_stats,
-              FrontierAttribute<SizeT>        *frontier_attribute, 
-              util::Array1D<SizeT, DataSlice> *data_slice, 
-              int                              num_gpus)
-{   
-    for (int gpu=0;gpu<num_gpus*num_gpus;gpu++)
-    if (enactor_stats[gpu].retval!=cudaSuccess)
-    {   
-        printf("(CUDA error %d @ GPU %d: %s\n", enactor_stats[gpu].retval, gpu%num_gpus, cudaGetErrorString(enactor_stats[gpu].retval)); fflush(stdout);
-        return true;
-    }   
-
-    for (int gpu=0;gpu<num_gpus*num_gpus;gpu++)
-    if (frontier_attribute[gpu].queue_length!=0 || frontier_attribute[gpu].has_incoming)
-    {
-        //printf("frontier_attribute[%d].queue_length = %d\n",gpu,frontier_attribute[gpu].queue_length);   
-        return false;
-    }
-
-    for (int gpu=0;gpu<num_gpus;gpu++)
-    for (int peer=1;peer<num_gpus;peer++)
-    for (int i=0;i<2;i++)
-    if (data_slice[gpu]->in_length[i][peer]!=0)
-    {
-        //printf("data_slice[%d]->in_length[%d][%d] = %d\n", gpu, i, peer, data_slice[gpu]->in_length[i][peer]);
-        return false;
-    }
-
-    for (int gpu=0;gpu<num_gpus;gpu++)
-    for (int peer=1;peer<num_gpus;peer++)
-    if (data_slice[gpu]->out_length[peer]!=0)
-    {
-        //printf("data_slice[%d]->out_length[%d] = %d\n", gpu, peer, data_slice[gpu]->out_length[peer]);
-        return false;
-    }
-
-    return true;
-} 
-
-template <
-    bool     SIZE_CHECK,
-    typename SizeT,
-    typename Type>
-cudaError_t Check_Size(
-    const char *name,
-    SizeT       target_length,
-    util::Array1D<SizeT, Type> 
-               *array,
-    bool       &oversized,
-    int         thread_num = -1,
-    int         iteration  = -1,
-    int         peer_      = -1,
-    bool        keep_content = false)
-{
-    cudaError_t retval = cudaSuccess;
-
-    if (target_length > array->GetSize())
-    {
-        printf("%d\t %d\t %d\t %s \t oversize :\t %d ->\t %d\n",
-            thread_num, iteration, peer_, name,
-            array->GetSize(), target_length);
-        fflush(stdout);
-        oversized=true;
-        if (SIZE_CHECK)
-        {
-            if (array->GetSize() != 0) retval = array->EnsureSize(target_length, keep_content);
-            else retval = array->Allocate(target_length, util::DEVICE);
-        } else {
-            char temp_str[]=" oversize", str[256];
-            memcpy(str, name, sizeof(char) * strlen(name));
-            memcpy(str + strlen(name), temp_str, sizeof(char) * strlen(temp_str));
-            str[strlen(name)+strlen(temp_str)]='\0';
-            retval = util::GRError(cudaErrorLaunchOutOfResources, str, __FILE__, __LINE__);
-        }
-    }
-    return retval;
-}
-
-template <typename Enactor>
-cudaError_t PushNeibor(
-    PushRequest<Enactor> *request,
-    Enactor::Problem     *problem)
-{
-    typedef Enactor::Problem       Problem;
-    typedef Enactor::SizeT         SizeT;
-    typedef Enactor::VertexId      VertexId;
-    typedef Enactor::Value         Value;
-    typedef Problem::DataSlice     DataSlice;
-    typedef Enactor::CircularQueue CircularQueue;
-
-    int           *s_gpu_num             =   request -> gpu_num;
-    int           *t_gpu_num             =   request -> peer;
-    SizeT          iteration             =   request -> iteration;
-    SizeT          length                =   request -> length;
-    DataSlice     *s_data                = &(problem -> data_slice[s_gpu_num][0]);
-    DataSlice     *t_data                = &(problem -> data_slice[t_gpu_num][0]);
-    CircularQueue *s_cq                  = &(s_data  -> output_cq);             // source output cq
-    CircularQueue *t_cq                  = &(t_data  -> input_cq[iteration%2]); // target input cq
-    SizeT          num_vertex_associates =   request -> num_vertex_associates;
-    SizeT          num_value__associates =   request -> num_value__associates;
-    VertexId      *s_vertices            =   request -> vertices;
-    VertexId     **s_vertex_associates   =   request -> vertex_associates;
-    Value        **s_value__associates   =   request -> value__associates;
-    VertexId      *t_vertices            =   NULL;
-    VertexId      *t_vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
-    Value         *t_value__associates[Enactor::NUM_Value__ASSOCIATES];
-    SizeT          s_offset              =   request -> offset;
-    SizeT          t_offset              =   0;
-    cudaError_t    retval                =   cudaSuccess;
-    cudaStream_t   s_stream              =   request -> stream;
-    cudaStream_t   t_stream              ; // =?
-
-    if (retval = t_cq->Push_Addr(length, t_vertices, t_offset, 
-        num_vertex_associates, num_value__associates, 
-        t_vertex_associates, t_value__associates, true)) return retval;
-
-    if (retval = util::GRError(cudaMemcpyAsync(
-        t_vertices, s_vertices, sizeof(VertexId) * length,
-        cudaMemcpyDefault, stream),
-        "cudaMemcpyAsync vertices failed", __FILE__, __LINE__)) return retval;
-
-    for (SizeT i=0; i<num_vertex_associates; i++)
-    {
-        if (retval = util::GRError(cudaMemcpyAsync(
-            t_vertex_associates[i], s_vertex_associates[i], sizeof(VertexId) * length,
-            cudaMemcpyDefault, stream),
-            "cudaMemcpyAsync vertex_associates failed", __FILE__, __LINE__)) return retval;
-    }
-
-    for (SizeT i=0; i<num_value__associates; i++)
-    {
-        if (retval = util::GRError(cudaMemcpyAsync(
-            t_value__associates[i], s_value__associates[i], sizeof(VertexId) * length,
-            cudaMemcpyDefault, stream),
-            "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
-    }
-
-    if (retval = s_cq->EventSet(1, t_offset, length, s_stream)) return retval;
-    if (retval = t_cq->EventSet(0, s_offset, length, t_stream, false, true)) return retval;
-    return retval;
-}
-
-template <typename Problem>
-void ShowDebugInfo(
-    int           thread_num,
-    int           peer_,
-    FrontierAttribute<typename Problem::SizeT>      
-                 *frontier_attribute,
-    EnactorStats *enactor_stats,
-    typename Problem::DataSlice  
-                 *data_slice,
-    GraphSlice<typename Problem::SizeT, typename Problem::VertexId, typename Problem::Value> 
-                 *graph_slice,
-    util::CtaWorkProgressLifetime 
-                 *work_progress,
-    std::string   check_name = "",
-    cudaStream_t  stream = 0) 
-{    
-    typedef typename Problem::SizeT    SizeT;
-    typedef typename Problem::VertexId VertexId;
-    typedef typename Problem::Value    Value;
-    SizeT queue_length;
-
-    //util::cpu_mt::PrintMessage(check_name.c_str(), thread_num, enactor_stats->iteration);
-    //printf("%d \t %d\t \t reset = %d, index = %d\n",thread_num, enactor_stats->iteration, frontier_attribute->queue_reset, frontier_attribute->queue_index);fflush(stdout);
-    //if (frontier_attribute->queue_reset) 
-        queue_length = frontier_attribute->queue_length;
-    //else if (enactor_stats->retval = util::GRError(work_progress->GetQueueLength(frontier_attribute->queue_index, queue_length, false, stream), "work_progress failed", __FILE__, __LINE__)) return;
-    //util::cpu_mt::PrintCPUArray<SizeT, SizeT>((check_name+" Queue_Length").c_str(), &(queue_length), 1, thread_num, enactor_stats->iteration);
-    printf("%d\t %lld\t %d\t stage%d\t %s\t Queue_Length = %d\n", thread_num, enactor_stats->iteration, peer_, data_slice->stages[peer_], check_name.c_str(), queue_length);fflush(stdout);
-    //printf("%d \t %d\t \t peer_ = %d, selector = %d, length = %d, p = %p\n",thread_num, enactor_stats->iteration, peer_, frontier_attribute->selector,queue_length,graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE));fflush(stdout);
-    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>((check_name+" keys").c_str(), data_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE), queue_length, thread_num, enactor_stats->iteration,peer_, stream);
-    //if (graph_slice->frontier_queues.values[frontier_attribute->selector].GetPointer(util::DEVICE)!=NULL)
-    //    util::cpu_mt::PrintGPUArray<SizeT, Value   >("valu1", graph_slice->frontier_queues.values[frontier_attribute->selector].GetPointer(util::DEVICE), _queue_length, thread_num, enactor_stats->iteration);
-    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("degrees", data_slice->degrees.GetPointer(util::DEVICE), graph_slice->nodes, thread_num, enactor_stats->iteration);
-    //if (BFSProblem::MARK_PREDECESSORS)
-    //    util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pred1", data_slice[0]->preds.GetPointer(util::DEVICE), graph_slice->nodes, thread_num, enactor_stats->iteration);
-    //if (BFSProblem::ENABLE_IDEMPOTENCE)
-    //    util::cpu_mt::PrintGPUArray<SizeT, unsigned char>("mask1", data_slice[0]->visited_mask.GetPointer(util::DEVICE), (graph_slice->nodes+7)/8, thread_num, enactor_stats->iteration);
-}  
-
-template <typename DataSlice>
-cudaError_t Set_Record(
-    DataSlice *data_slice,
-    int iteration,
-    int peer_,
-    int stage,
-    cudaStream_t stream)
-{
-    cudaError_t retval = cudaEventRecord(data_slice->events[iteration%4][peer_][stage],stream);
-    data_slice->events_set[iteration%4][peer_][stage]=true;
-    return retval;
-}
-
-template <typename DataSlice>
-cudaError_t Check_Record(
-    DataSlice *data_slice,
-    int iteration,
-    int peer_,
-    int stage_to_check,
-    int &stage,
-    bool &to_show)
-{
-    cudaError_t retval = cudaSuccess;
-    to_show = true;                 
-    if (!data_slice->events_set[iteration%4][peer_][stage_to_check])
-    {   
-        to_show = false;
-        stage--;
-    } else {
-        retval = cudaEventQuery(data_slice->events[iteration%4][peer_][stage_to_check]);
-        if (retval == cudaErrorNotReady)
-        {   
-            to_show=false;
-            stage--;
-            retval = cudaSuccess; 
-        } else if (retval == cudaSuccess)
-        {
-            data_slice->events_set[iteration%4][peer_][stage_to_check]=false;
-        }
-    }
-    return retval;
-}
-
-template<typename Enactor>
-void Send_Thread(ThreadSlice *thread_data)
-{
-    typedef typename PushRequest<
-        Enactor::SizeT, 
-        Enactor::VertexId, 
-        Enactor::Value, 
-        Enactor::NUM_VERTEX_ASSOCIATES, 
-        Enactor::NUM_VALUE__ASSOCIATES>  PRequest;
-    typedef typename std::list<PRequest> PRList;
-    typedef Enactor::Problem             Problem;
-    typedef Problem::DataSlice           DataSlice;
-
-    Problem    *problem       = (Problem*) thread_data->problem;
-    Enactor    *enactor       = (Enactor*) thread_data->enactor;
-    int         gpu_num       =   thread_data -> gpu_num;
-    DataSlice  *data_slice    = &(problem     -> data_slices[gpu_num][0]);
-    PRList     *request_queue = &(data_slice  -> pr_queue);
-    std::mutex *rqueue_mutex  = &(data_slice  -> pr_mutex); 
-    
-    while (thread_data -> status != 4)
-    {
-        if (!request_queue.empty())
-        {
-            rqueue_mutex->lock();
-            PRList::iterator it_, it = request_queue->begin();
-            while (it != request_queue->end())
-            {
-                it_ = it; it++;
-                if ((*it_).status == 1) // requested
-                {
-                    if ((*it_).peer < num_gpus) // local peer
-                    {
-                        if (thread_data -> retval = PushNeibor <Enactor> (&(*it_), problem))
-                            break;
-                        request_queue -> earse(it_);
-                    } else { // remote peer
-                    }
-                }
-            }
-            rqueue_mutex->unlock();
-        } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
-        }
-        if (thread_data -> retval) break;
-    }
-}
-
-template <typename Enactor>
-void Recv_Thread(ThreadSlice *thread_data)
-{
-    typedef typename Enactor::Problem       Problem      ;
-    typedef typename Problem::DataSlice     DataSlice    ;
-    typedef typename Enactor::CircularQueue CircularQueue;
-    typedef typename Enactor::SizeT         SizeT        ;
-    typedef typename Enactor::VertexId      VertexId     ;
-    typedef typename Enactor::Value         Value        ;
-
-    int            gpu_num     = thread_data -> gpu_num;
-    Problem       *problem     = (Problem*) thread_data -> problem;
-    Enactor       *enactor     = (Enactor*) thread_data -> enactor;
-    DataSlice     *data_slice  = &(problem ->data_slices[gpu_num][0]);
-    CircularQueue *input_cq        = data_slice->input_cq;
-    SizeT         *iteration_  = &(thread_data->iteration); 
-    SizeT          iteration   = 0;
-    VertexId      *s_vertices  = NULL;
-    VertexId      *t_vertices  = NULL;
-    VertexId      *s_vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
-    Value         *s_value__associates[Enactor::NUM_VALUE__ASSOCIATES];
-    SizeT          s_size_soli = 0;
-    SizeT          s_size_occu = 0;
-    SizeT          length      = 0;
-    SizeT          s_offset    = 0;
-    SizeT          min_length  = 1;
-    SizeT          max_length  = 1024 * 1024;
-    SizeT          stream    ; // =?
-    CircularQueue *s_cq        = NULL;
-    CircularQueue *t_cq      ; // =?
-    SizeT          e_offset    = 0;
-    util::Array1D<SizeT, char> *e_array = NULL;
-    VertexId      *o_vertex_associates = NULL;
-    SizeT          grid_size   = 0;
-
-    while (thread_data -> status != 4)
-    {
-        iteration = iteratino_[0];
-        s_cq = &(input_cq[iteration%2]);
-        if (!s_cq->empty())
-        {
-            e_array = &(data_slice->expand_incoming_array[0 /**/]);
-            s_cq->GetSize(size_occu, size_soli);
-            length = (s_cq->GetInputCount() == to_input) ? size_occu : size_soli;
-            o_vertex_associates = data_slice -> vertex_associate_orgs.GetPointer(util::HOST);
-            o_value__associates = data_slice -> value__associate_orgs.GetPointer(util::HOST);
-            if (thread_data -> retval = s_cq->Pop_Addr(
-                min_length, max_length, s_vertices, length, s_offset, stream,
-                num_vertex_associates, num_value__associates,
-                s_vertex_associates, s_value__associates)) return retval;
-
-            if (thread_data -> retval = t_cq->Push_Addr(
-                length, t_vertices, t_offset)) return retval;
-
-            e_offset = 0;
-            memcpy( &(e_array[e_offset]),     s_vertex_associates ,
-                        sizeof(VertexId*) * num_vertex_associates);
-            e_offset += sizeof(VertexId*) * num_vertex_associates ;
-            memcpy( &(e_array[e_offset]),     s_value__associates ,
-                        sizeof(Value   *) * num_value__associates);
-            e_offset += sizeof(Value   *) * num_value__associates ;
-            memcpy( &(e_array[e_offset]),     o_vertex_associates ,
-                        sizeof(VertexId*) * num_vertex_associates);
-            e_offset += sizeof(VertexId*) * num_vertex_associates ;
-            memcpy( &(e_array[e_offset]),     o_value__associates ,
-                        sizeof(Value   *) * num_value__associates);
-            e_offset += sizeof(Value   *) * num_value__associates ;
-            e_array->Move(util::HOST, util::DEVICE, e_offset, 0, stream);
-
-            grid_size = length/256+1;
-            if (grid_size>512) grid_size=512;
-            data_slice->iteration->Expand_Incoming(
-                num_vertex_associates,
-                num_value__associates,
-                grid_size, 
-                256, 
-                e_offset,
-                stream,
-                length,
-                s_vertices,
-                t_vertices,
-                e_offset,
-                e_array->GetPointer(util::DEVICE),
-                data_slice);
-
-            if (thread_data -> retval = s_cq->EventSet(1, s_offset, length, stream))
-                return retval;
-            if (thread_data -> retval = t_cq->EventSet(0, t_offset, length, stream))
-                return retval;
-        } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
-        }
-        if (thread_data -> retval) break;
-    }
-
-}
-
-template <typename Enactor>
-void SubQ_Thread(ThreadSlice *thread_data)
-{
-    for (peer__=0; peer__<num_gpus*2; peer__++)
-    {
-        peer_               = (peer__%num_gpus);
-        peer                = peer_<= thread_num? peer_-1   : peer_       ;
-        gpu_                = peer <  thread_num? thread_num: thread_num+1;
-        iteration           = enactor_stats[peer_].iteration;
-        iteration_          = iteration%4;
-        pre_stage           = stages[peer__];
-        selector            = frontier_attribute[peer_].selector;
-        frontier_queue_     = &(data_slice->frontier_queues[peer_]);
-        scanned_edges_      = &(data_slice->scanned_edges  [peer_]);
-        frontier_attribute_ = &(frontier_attribute         [peer_]);
-        enactor_stats_      = &(enactor_stats              [peer_]);
-        work_progress_      = &(work_progress              [peer_]);
-
-        if (Enactor::DEBUG && to_show[peer__])
-        {
-            mssg=" ";mssg[0]='0'+data_slice->wait_counter;
-            ShowDebugInfo<Problem>(
-                thread_num,
-                peer__,
-                frontier_attribute_,
-                enactor_stats_,
-                data_slice,
-                graph_slice,
-                work_progress_,
-                mssg,
-                streams[peer__]);
-        }
-        to_show[peer__]=true;
-
-        switch (stages[peer__])
-        {
-        case 1: //Comp Length
-            if (enactor_stats_->retval = Iteration::Compute_OutputLength(
-                frontier_attribute_,
-                graph_slice    ->row_offsets     .GetPointer(util::DEVICE),
-                graph_slice    ->column_indices  .GetPointer(util::DEVICE),
-                frontier_queue_->keys[selector]  .GetPointer(util::DEVICE),
-                scanned_edges_,
-                graph_slice    ->nodes, 
-                graph_slice    ->edges,
-                context          [peer_][0],
-                streams          [peer_],
-                gunrock::oprtr::advance::V2V, true)) break;
-
-            frontier_attribute_->output_length.Move(util::DEVICE, util::HOST,1,0,streams[peer_]);
-            if (Enactor::SIZE_CHECK)
-            {
-                Set_Record(data_slice, iteration, peer_, stages[peer_], streams[peer_]);
-            }
-            break;
-
-        case 2: //SubQueue Core
-            if (Enactor::SIZE_CHECK)
-            {
-                if (enactor_stats_ -> retval = Check_Record (
-                    data_slice, iteration, peer_, 
-                    stages[peer_]-1, stages[peer_], to_show[peer_])) break;
-                if (to_show[peer_]==false) break;
-                Iteration::Check_Queue_Size(
-                    thread_num,
-                    peer_,
-                    frontier_attribute_->output_length[0] + 2,
-                    frontier_queue_,
-                    frontier_attribute_,
-                    enactor_stats_,
-                    graph_slice);
-            }
-
-            Iteration::SubQueue_Core(
-                thread_num,
-                peer_,
-                frontier_queue_,
-                scanned_edges_,
-                frontier_attribute_,
-                enactor_stats_,
-                data_slice,
-                s_data_slice[thread_num].GetPointer(util::DEVICE),
-                graph_slice,
-                &(work_progress[peer_]),
-                context[peer_],
-                streams[peer_]);
-
-            if (enactor_stats_->retval = work_progress[peer_].GetQueueLength(
-                frontier_attribute_->queue_index,
-                frontier_attribute_->queue_length,
-                false,
-                streams[peer_],
-                true)) break;
-            if (num_gpus>1)
-                Set_Record(data_slice, iteration, peer_, stages[peer_], streams[peer_]);
-            break;
-
-        case 3: //Copy
-            if (num_gpus <=1) 
-            {
-                if (enactor_stats_-> retval = util::GRError(cudaStreamSynchronize(streams[peer_]), "cudaStreamSynchronize failed",__FILE__, __LINE__)) break;
-                Total_Length = frontier_attribute_->queue_length; 
-                to_show[peer_]=false;break;
-            }
-            if (Iteration::HAS_SUBQ || peer_!=0) {
-                if (enactor_stats_-> retval = Check_Record(
-                    data_slice, iteration, peer_, 
-                    stages[peer_]-1, stages[peer_], to_show[peer_])) break;
-                if (to_show[peer_] == false) break;
-            }
-
-            if (!Enactor::SIZE_CHECK)
-            {
-                if (Iteration::HAS_SUBQ)
-                {
-                    if (enactor_stats_->retval = 
-                        Check_Size<false, SizeT, VertexId> ("queue3", frontier_attribute_->output_length[0]+2, &frontier_queue_->keys  [selector^1], over_sized, thread_num, iteration, peer_, false)) break;
-                }
-                if (frontier_attribute_->queue_length ==0) break;
-
-                if (enactor_stats_->retval = 
-                    Check_Size<false, SizeT, VertexId> ("total_queue", Total_Length + frontier_attribute_->queue_length, &data_slice->frontier_queues[num_gpus].keys[0], over_sized, thread_num, iteration, peer_, false)) break;
-                
-                util::MemsetCopyVectorKernel<<<256,256, 0, streams[peer_]>>>(
-                    data_slice->frontier_queues[num_gpus].keys[0].GetPointer(util::DEVICE) + Total_Length,
-                    frontier_queue_->keys[selector].GetPointer(util::DEVICE),
-                    frontier_attribute_->queue_length);
-                if (Problem::USE_DOUBLE_BUFFER)
-                    util::MemsetCopyVectorKernel<<<256,256,0,streams[peer_]>>>(
-                        data_slice->frontier_queues[num_gpus].values[0].GetPointer(util::DEVICE) + Total_Length,
-                        frontier_queue_->values[selector].GetPointer(util::DEVICE),
-                        frontier_attribute_->queue_length);
-            }
-
-            Total_Length += frontier_attribute_->queue_length;
-            break;
-
-        case 4: //End
-            data_slice->wait_counter++;
-            to_show[peer__]=false;
-            break;
-        default:
-            stages[peer__]--;
-            to_show[peer__]=false;
-        }
-
-        if (Enactor::DEBUG && !enactor_stats_->retval)
-        {
-            mssg="stage 0 @ gpu 0, peer_ 0 failed";
-            mssg[6]=char(pre_stage+'0');
-            mssg[14]=char(thread_num+'0');
-            mssg[23]=char(peer__+'0');
-            if (enactor_stats_->retval = util::GRError(mssg, __FILE__, __LINE__)) break;
-        }
-        stages[peer__]++;
-        if (enactor_stats_->retval) break;
-    }
-
-}
-
-template <typename Enactor>
-void FullQ_Thread(ThreadSlice *thread_data)
-{
-    if (Iteration::HAS_FULLQ)
-    {
-        peer_               = 0;
-        frontier_queue_     = &(data_slice->frontier_queues[(Enactor::SIZE_CHECK || num_gpus==1)?0:num_gpus]);
-        scanned_edges_      = &(data_slice->scanned_edges  [(Enactor::SIZE_CHECK || num_gpus==1)?0:num_gpus]);
-        frontier_attribute_ = &(frontier_attribute[peer_]);
-        enactor_stats_      = &(enactor_stats[peer_]);
-        work_progress_      = &(work_progress[peer_]);
-        iteration           = enactor_stats[peer_].iteration;
-        frontier_attribute_->queue_offset = 0;
-        frontier_attribute_->queue_reset  = true;
-        if (!Enactor::SIZE_CHECK) frontier_attribute_->selector     = 0;
-
-        Iteration::FullQueue_Gather(
-            thread_num,
-            peer_,
-            frontier_queue_,
-            scanned_edges_,
-            frontier_attribute_,
-            enactor_stats_,
-            data_slice,
-            s_data_slice[thread_num].GetPointer(util::DEVICE),
-            graph_slice,
-            work_progress_,
-            context[peer_],
-            streams[peer_]); 
-        selector            = frontier_attribute[peer_].selector;
-        if (enactor_stats_->retval) break;
-        
-        if (frontier_attribute_->queue_length !=0)
-        {
-            if (Enactor::DEBUG) {
-                mssg = "";
-                ShowDebugInfo<Problem>(
-                    thread_num,
-                    peer_,
-                    frontier_attribute_,
-                    enactor_stats_,
-                    data_slice,
-                    graph_slice,
-                    work_progress_,
-                    mssg,
-                    streams[peer_]);
-            }
-
-            enactor_stats_->retval = Iteration::Compute_OutputLength(
-                frontier_attribute_,
-                graph_slice    ->row_offsets     .GetPointer(util::DEVICE),
-                graph_slice    ->column_indices  .GetPointer(util::DEVICE),
-                frontier_queue_->keys[selector].GetPointer(util::DEVICE),
-                scanned_edges_,
-                graph_slice    ->nodes, 
-                graph_slice    ->edges,
-                context          [peer_][0],
-                streams          [peer_],
-                gunrock::oprtr::advance::V2V, true);
-            if (enactor_stats_->retval) break;
-
-            frontier_attribute_->output_length.Move(util::DEVICE, util::HOST, 1, 0, streams[peer_]);
-            if (Enactor::SIZE_CHECK)
-            {
-                tretval = cudaStreamSynchronize(streams[peer_]);
-                if (tretval != cudaSuccess) {enactor_stats_->retval=tretval;break;}
-
-                Iteration::Check_Queue_Size(
-                    thread_num,
-                    peer_,
-                    frontier_attribute_->output_length[0] + 2,
-                    frontier_queue_,
-                    frontier_attribute_,
-                    enactor_stats_,
-                    graph_slice);
-
-            }
-            
-            Iteration::FullQueue_Core(
-                thread_num,
-                peer_,
-                frontier_queue_,
-                scanned_edges_,
-                frontier_attribute_,
-                enactor_stats_,
-                data_slice,
-                s_data_slice[thread_num].GetPointer(util::DEVICE),
-                graph_slice,
-                work_progress_,
-                context[peer_],
-                streams[peer_]); 
-            if (enactor_stats_->retval) break;
-            if (!Enactor::SIZE_CHECK)
-            {
-                if (enactor_stats_->retval = 
-                    Check_Size<false, SizeT, VertexId> ("queue3", frontier_attribute->output_length[0]+2, &frontier_queue_->keys[selector^1], over_sized, thread_num, iteration, peer_, false)) break;
-            }
-            selector = frontier_attribute[peer_].selector;
-            Total_Length = frontier_attribute[peer_].queue_length;
-        } else {
-            Total_Length = 0;
-            for (peer__=0;peer__<num_gpus;peer__++)
-                data_slice->out_length[peer__]=0;
-        }
-        if (Enactor::DEBUG) {printf("%d\t %lld\t \t Fullqueue finished. Total_Length= %d\n", thread_num, enactor_stats[0].iteration, Total_Length);fflush(stdout);}
-        frontier_queue_ = &(data_slice->frontier_queues[Enactor::SIZE_CHECK?0:num_gpus]);
-        if (num_gpus==1) data_slice->out_length[0]=Total_Length;
-    }
-    
-    if (num_gpus > 1)
-    {
-        Iteration::Iteration_Update_Preds(
-            graph_slice,
-            data_slice,
-            &frontier_attribute[0],
-            &data_slice->frontier_queues[Enactor::SIZE_CHECK?0:num_gpus],
-            Total_Length,
-            streams[0]);
-        Iteration::template Make_Output <NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES> (
-            thread_num,
-            Total_Length,
-            num_gpus,
-            &data_slice->frontier_queues[Enactor::SIZE_CHECK?0:num_gpus],
-            &data_slice->scanned_edges[0],
-            &frontier_attribute[0],
-            enactor_stats,
-            &problem->data_slices[thread_num],
-            graph_slice,
-            &work_progress[0],
-            context[0],
-            streams[0]);
-    } else data_slice->out_length[0]= Total_Length;
-
-    for (peer_=0;peer_<num_gpus;peer_++)
-        frontier_attribute[peer_].queue_length = data_slice->out_length[peer_];
-
-}
 
 template <
     int      NUM_VERTEX_ASSOCIATES,
@@ -988,26 +288,54 @@ void Iteration_Loop(
  * @brief Base class for graph problem enactors.
  */
 template <
-    typename SizeT,
+    typename _VertexId,
+    typename _SizeT,
+    typename _Value,
     bool     _DEBUG,  // if DEBUG is set, print details to stdout
-    bool     _SIZE_CHECK>
+    bool     _SIZE_CHECK,
+    _SizeT   _NUM_VERTEX_ASSOCIATES,
+    _SizeT   _NUM_VALUE__ASSOCIATES>
 class EnactorBase
 {
-public:  
-    static const bool DEBUG = _DEBUG;
+public:
+    typedef _VertexId VertexId;
+    typedef _SizeT    SizeT   ;
+    typedef _Value    Value   ;
+    static const bool DEBUG      = _DEBUG;
     static const bool SIZE_CHECK = _SIZE_CHECK;
-    int           num_gpus;
-    int          *gpu_idx;
-    FrontierType  frontier_type;
-    std::mutex   *rqueue_mutex;
+    static const SizeT NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
+    static const SizeT NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
+
+    template <typename Type>
+    class Array: public util::Array1D<SizeT, Type> {};
+
+    typedef typename PushRequest<
+        VertexId, SizeT, Value, 
+        NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES>
+        PRequest;
+
+    typedef typename CircularQueue<
+        VertexId, SizeT, Value, SIZE_CHECK>
+        CircularQueue;
+
+    typedef typename FrontierAttribute<SizeT> FrontierA;
+    typedef typename util::DoubleBuffer<SizeT, VertexId, Value> FrontierT;
+
+    int           num_gpus            ; // Number of GPUs
+    int          *gpu_idx             ; // GPU indices
+    FrontierType  frontier_type       ;
+    int           num_vertex_associate; // Number of associate values in VertexId type for each vertex
+    int           num_value__associate; // Number of associate values in Value type for each vertex
+    int           num_stages          ; // Number of stages
+    int           num_input_streams   ;
+    int           num_outpu_streams   ;
+    int           num_subq__streams   ;
+    int           num_split_streams   ;
  
     //Device properties
     util::Array1D<SizeT, util::CudaProperties>          cuda_props        ;
 
     // Queue size counters and accompanying functionality
-    util::Array1D<SizeT, util::CtaWorkProgressLifetime> work_progress     ;
-    util::Array1D<SizeT, EnactorStats>                  enactor_stats     ;
-    util::Array1D<SizeT, FrontierAttribute<SizeT> >     frontier_attribute;
 
     FrontierType GetFrontierType() {return frontier_type;}
 
@@ -1020,13 +348,20 @@ protected:
      * @param[in] DEBUG If set, will collect kernel running stats and display the running info.
      */
     EnactorBase(
-        FrontierType  frontier_type, 
-        int           num_gpus, 
-        int          *gpu_idx)
+        FrontierType   _frontier_type, 
+        int            _num_gpus, 
+        int           *_gpu_idx) :
+        frontier_type (_frontier_type),
+        num_gpus      (_num_gpus),
+        gpu_idx       (_gpu_idx ),
+        num_vertex_associates(0 ),
+        num_value__associates(0 ),
+        num_stages           (3 ),
+        num_input_streams    (0 ),
+        num_outpu_streams    (0 ),
+        num_subq__streams    (1 ),
+        num_split_streams    (0 )
     {
-        this->frontier_type = frontier_type;
-        this->num_gpus      = num_gpus;
-        this->gpu_idx       = gpu_idx;
         cuda_props        .SetName("cuda_props"        );
         work_progress     .SetName("work_progress"     );
         enactor_stats     .SetName("enactor_stats"     );

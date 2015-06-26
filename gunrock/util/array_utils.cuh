@@ -135,7 +135,8 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         
-        if ((target & HOST) == HOST)
+        if ((target & HOST) == HOST && 
+            !( ((allocated & HOST) == HOST) && (this->size >= size) ))
         {
             if (retval = Release(HOST)) return retval;
             UnSetPointer(HOST);
@@ -152,7 +153,8 @@ public:
                 {printf("%s\t allocated on HOST, length =\t %lld, size =\t %lld bytes, pointer =\t %p\n",name.c_str(), (long long) size, (long long) size*sizeof(Value), h_pointer);fflush(stdout);}
         }
     
-        if ((target & DEVICE) == DEVICE)
+        if ((target & DEVICE) == DEVICE && 
+            !( ((allocated & DEVICE) == DEVICE) && (this->size >= size) ))
         {
             if (retval = Release(DEVICE)) return retval;
             UnSetPointer(DEVICE);
@@ -166,7 +168,7 @@ public:
             if (ARRAY_DEBUG) 
                 {printf("%s\t allocated on DEVICE, length =\t %lld, size =\t %lld bytes, pointer =\t %p\n",name.c_str(), (long long) size, (long long) size*sizeof(Value), d_pointer);fflush(stdout);}
         }
-        this->size=size;
+        if (size > this->size) this->size=size;
         return retval;
     } // Allocate(...)
 

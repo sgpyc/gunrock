@@ -1,0 +1,623 @@
+// ----------------------------------------------------------------
+// Gunrock -- Fast and Efficient GPU Graph Library
+// ----------------------------------------------------------------
+// This source code is distributed under the terms of LICENSE.TXT
+// in the root directory of this source distribution.
+// ----------------------------------------------------------------
+
+/**
+ * @file
+ * enactor_slice.cuh
+ *
+ * @brief Per GPU Enactor Slice
+ */
+
+#pragma once
+#include <time.h>
+
+#include <gunrock/util/cta_work_progress.cuh>
+#include <gunrock/util/error_utils.cuh>
+#include <gunrock/util/test_utils.cuh>
+#include <gunrock/util/array_utils.cuh>
+#include <gunrock/util/circular_queue.cuh>
+
+#include <moderngpu.cuh>
+
+using namespace mgpu;
+
+namespace gunrock {
+namespace app {
+
+template <typename Enactor>
+struct EnactorSlice
+{
+    typedef Enactor::SizeT           SizeT        ;
+    typedef Enactor::VertexId        VertexId     ;
+    typedef Enactor::Value           Value        ;
+    typedef Enactor::CircularQueue   CircularQueue;
+    typedef Enactor::Array           Array        ;
+    typedef Enactor::FrontierT       FrontierT    ;
+    typedef Enactor::FrontierA       FrontierA    ;
+    typedef Enactor::PRequest        PRequest     ;
+    int num_gpus;
+    int gpu_num;
+    int gpu_idx;
+    int num_input_streams;
+    int num_outpu_streams;
+    int num_subq__streams;
+    int num_fullq_streams;
+    int num_split_streams;
+    
+    Array<VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
+    Array<Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
+
+    Array<cudaStream_t>   input_streams           ; // GPU streams
+    CircularQueue         input_queues         [2];
+    Array<char        >  *input_e_arrays          ; // compressed data structure for expand_incoming kernel
+
+    Array<cudaStream_t>   outpu_streams           ; // GPU streams
+    CircularQueue         outpu_queue             ;
+    std::list<PRequest>   outpu_request_queue     ;
+    std::mutex            outpu_request_mutex     ;
+
+    Array<cudaStream_t>   subq__streams           ; // GPU streams
+    Array<ContextPtr  >   subq__contexts          ;
+    CircularQueue         subq__queue             ;
+    Array<int         >   subq__stages            ; // current stages of each streams
+    Array<bool        >   subq__to_shows          ; // whether to show debug information for the streams
+    Array<cudaEvent_t*>   subq__events         [4]; // GPU stream events arrays
+    Array<bool*       >   subq__event_sets     [4]; // Whether the GPU stream events are set
+    Array<int         >   subq__wait_markers      ; // 
+    Array<SizeT       >  *subq__scanned_edges     ;
+    Array<FrontierT   >   subq__frontiers         ; // frontier queues
+    Array<FrontierA   >   subq__frontier_attributes;
+    Array<EnactorStatus>  subq__enactor_statuses  ;
+    Array<util::CtaWorkProgressLifetime> 
+                          subq_work_progresses    ;
+    
+    Array<cudaStream_t>   fullq_stream            ; // GPU streams
+    Array<ContextPtr  >   fullq_context           ;
+    CircularQueue         fullq_queue             ;
+    Array<cudaEvent_t*>   fullq_event          [4]; // GPU stream events arrays
+    Array<bool        >   fullq_to_show           ; // whether to show debug information for the streams
+    Array<SizeT       >  *fullq_scanned_edge      ;
+    Array<FrontierT   >   fullq_frontier          ; // frontier queues
+    Array<FrontierA   >   fullq_frontier_attribute;
+    Array<EnactorStatus>  fullq_enactor_status    ;
+    Array<util::CtaWorkProgressLifetime>
+                          fullq_work_progress     ;
+ 
+    Array<cudaStream_t>   split_streams           ; // GPU streams
+    Array<ContextPtr  >   split_contexts          ;
+    Array<SizeT       >   split_lengths           ; // Number of outgoing vertices to peers  
+    Array<SizeT       >  *split_markers           ; // Markers to separate vertices to peer GPUs
+    Array<char        >  *split_m_arrays          ; // compressed data structure for make_out kernel
+
+    EnactorSlice() :
+        num_gpus           (0   ),
+        gpu_num            (0   ),
+        gpu_idx            (0   ),
+        num_input_streams  (0   ),
+        num_outpu_streams  (0   ),
+        num_subq__streams  (0   ),
+        num_fullq_streams  (0   ),
+        num_split_streams  (0   ),
+        input_e_arrays     (NULL),
+        subq__scanned_edges(NULL),
+        fullq_scanned_edge (NULL),
+        split_markers      (NULL),
+        split_m_arrays     (NULL)
+    {
+        vertex_associates_orgs.SetName("vertex_associate_orgs");
+        value__associates_orgs.SetName("value__associate_orgs");
+        input_streams         .SetName("input_streams"        );
+        input_queues[0]       .SetName("input_queues[0]"      );
+        input_queues[1]       .SetName("input_queues[1]"      );
+        outpu_streams         .SetName("outpu_streams"        );
+        outpu_queue           .SetName("outpu_queue"          );
+
+        subq__streams         .SetName("subq__streams"        );
+        subq__contexts        .SetName("subq__contexts"       );
+        subq__queue           .SetName("subq__queue"          );
+        subq__stages          .SetName("subq__stages"         );
+        subq__to_shows        .SetName("subq__to_shows"       );
+        for (int i=0; i<4; i++)
+        {
+            subq__events[i]    .SetName("subq__events[]"      );
+            subq__event_sets[i].SetName("subq__event_sets[]"  );
+        }
+        subq__wait_markers    .SetName("subq__wait_markers"   );
+        //subq__scanned_edges   .SetName("subq__scanned_edges"  );
+        subq__frontiers       .SetName("subq__frontiers"      );
+        subq__frontier_attributes.SetName("sub__frontier_attribures");
+        subq__enactor_statuses.SetName("subq__encator_statuses");
+        subq__work_progresses .SetName("subq__work_progresses");
+
+        fullq_stream          .SetName("fullq_stream"         );
+        fullq_context         .SetName("fullq_context"        );
+        fullq_queue           .SetName("fullq_queue"          );
+        fullq_to_show         .SetName("fullq_to_show"        );
+        for (int i=0; i<4; i++)
+        {
+            fullq_event [i]    .SetName("fullq_event[]"       );
+        }
+        fullq_wait_marker     .SetName("fullq_wait_marker"    );
+        //fullq_scanned_edge    .SetName("fullq_scanned_edges"  );
+        fullq_frontier        .SetName("fullq_frontier"       );
+        fullq_frontier_attribute.SetName("fullq_frontier_attribute");
+        fullq_enactor_status  .SetName("fullq_encator_status" );
+        fullq_work_progress   .SetName("fullq_work_progress"  );
+
+        split_streams         .SetName("split_streams"        );
+        split_contexts        .SetName("split_contexts"       );
+        split_lengths         .SetName("split_lengths"        );
+    }
+
+    virtual ~EnactorSlice()
+    {
+        Release();
+    }
+
+    cudaError_t Init(
+        int num_gpus          = 1,
+        int gpu_num           = 0,
+        int gpu_idx           = 0,
+        int num_input_streams = 0,
+        int num_outpu_streams = 0,
+        int num_subq__streams = 0,
+        int num_split_streams = 0)
+    {
+        cudaError_t retval = cudaSuccess;
+        this->num_gpus = num_gpus;
+        this->gpu_num  = gpu_num;
+        this->gpu_idx  = gpu_idx;
+        if (retval = util::SetDevice(gpu_idx)) return retval;
+
+        if (num_gpus > 1)
+        {
+            if (retval = vertex_associate_orgs.Allocate(Enactor::NUM_VERTEX_ASSOCIATES)) 
+                return retval;
+            if (retval = value__associate_orgs.Allocate(Enactor::NUM_VALUE__ASSOCIATES))
+                return retval;
+
+            this->num_input_streams = num_input_streams;
+            if (num_input_streams != 0)
+            {
+                if (retval = input_streams.Allocate(num_input_streams)) return retval;
+                input_e_arrays = new Array<char>[num_input_streams];
+                for (int stream=0; stream<num_input_streams; stream++)
+                {
+                    if (retval = util::GRError(cudaStreamCreate(input_streams + stream),
+                        "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
+                    input_e_arrays[stream].SetName("input_e_arrays[]");
+                    SizeT target_size = sizeof(VertexId*) * 2 * Enactor::NUM_VERTEX_ASSOCIATES
+                                      + sizeof(Value*   ) * 2 * Enactor::NUM_VALUE__ASSOCIATES;
+                    if (retval = input_e_arrays[stream].Allocate(target_size, 
+                        util::HOST | util::DEVICE)) return retval;
+                }
+            }
+                
+            this->num_outpu_streams = num_outpu_streams;
+            if (num_outpu_streams != 0)
+            {
+                if (retval = outpu_streams.Allocate(num_outpu_streams)) return retval;
+                for (int stream=0; stream<num_outpu_streams; stream++)
+                {    
+                    if (retval = util::GRError(cudaStreamCreate(outpu_streams + stream),
+                        "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
+                }
+            }
+        }
+
+        this->num_subq__streams = num_subq__streams;
+        if (num_subq__streams != 0)
+        {
+            if (retval = subq__streams     .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__contexts    .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__stages      .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__to_shows    .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__wait_markers.Allocate(num_subq__streams)) return retval;
+            if (retval = subq__frontiers   .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__frontier_attributes.Allocate(num_subq__streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            if (retval = subq__enactor_statses    .Allocate(num_subq__streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            if (retval = subq__work_progresses    .Allocate(num_subq__streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            subq__scanned_edges = new Array<SizeT>[num_subq_streams];
+            for (int stream=0; stream<num_subq__streams; stream++)
+            {
+                if (retval = util::GRError(cudaStreamCreate(subq__streams + stream),
+                    "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
+                subq__contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, subq__streams[stream]);
+                subq__scanned_edges[stream].SetName("subq__scanned_edges[]");
+                subq__work_progresses[stream].Setup();
+                if (retval = subq__frontier_attributes[stream].output_length.Allocate(1, 
+                    util::HOST | util::DEVICE)) return retval;
+            }
+            for (int i=0; i<4; i++)
+            {
+                if (retval = subq__events    [i].Allocate(num_subq__streams)) return retval;
+                if (retval = subq__event_sets[i].Allocate(num_subq__streams)) return retval;
+                for (int stream=0; stream<num_subq__streams; stream++)
+                {
+                    subq__events    [i][stream] = new cudaEvent_t[Enactor::NUM_STAGES];
+                    subq__event_sets[i][stream] = new bool       [Enactor::NUM_STAGES];
+                    for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
+                    {
+                        if (retval = util::GRError(cudaEventCreate(subq__events[i][stream] + stage)),
+                            "cudaEventCreate failed", __FILE__, __LINE__) return retval;
+                    }
+                }
+            }
+        }
+         
+        this->num_fullq_streams = num_fullq_streams;
+        if (num_fullq_streams != 0)
+        {   
+            if (retval = fullq_stream      .Allocate(num_fullq_streams)) return retval;
+            if (retval = fullq_context     .Allocate(num_fullq_streams)) return retval;
+            if (retval = fullq_to_show     .Allocate(num_fullq_streams)) return retval;
+            if (retval = fullq_frontier    .Allocate(num_fullq_streams)) return retval;
+            if (retval = fullq_frontier_attribute.Allocate(num_fullq_streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            if (retval = fullq_enactor_stats     .Allocate(num_fullq_streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            if (retval = fullq_work_progress     .Allocate(num_fullq_streams, 
+                util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+            fullq_scanned_edge = new Array<SizeT>[num_fullq_streams];
+            for (int stream=0; stream<num_fullq_streams; stream++)
+            {
+                if (retval = util::GRError(cudaStreamCreate(fullq_stream + stream),
+                    "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
+                fullq_context[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, fullq_stream[stream]);
+                fullq_scanned_edge[stream].SetName("fullq_scanned_edge[]");
+                fullq_work_progress[stream].Setup();
+                if (retval = fullq_frontier_attribute[stream].output_length.Allocate(1, 
+                    util::HOST | util::DEVICE)) return retval;
+            }
+            for (int i=0; i<4; i++)
+            {
+                if (retval = fullq_event    [i].Allocate(num_fullq_streams)) return retval;
+                if (retval = fullq_event_set[i].Allocate(num_fullq_streams)) return retval;
+                for (int stream=0; stream<num_fullq_streams; stream++)
+                {
+                    fullq_event    [i][stream] = new cudaEvent_t[Enactor::NUM_STAGES];
+                    fullq_event_set[i][stream] = new bool       [Enactor::NUM_STAGES];
+                    for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
+                    {
+                        if (retval = util::GRError(cudaEventCreate(fullq_event[i][stream] + stage)),
+                            "cudaEventCreate failed", __FILE__, __LINE__) return retval;
+                    }
+                }
+            }
+        }
+
+        if (num_gpus > 1)
+        {
+            this->num_split_streams = num_split_streams;
+            if (num_split_streams != 0)
+            {
+                if (retval = split_streams .Allocate(num_split_streams)) return retval;
+                if (retval = split_contexts.Allocate(num_split_streams)) return retval;
+                split_markers  = new Array<SizeT>[num_split_streams];
+                split_m_arrays = new Array<char> [num_split_streams];
+                for (int stream=0; stream<num_splict_streams; stream++)
+                {
+                    if (retval = util::GRError(cudaStreamCreate(split_streams + stream),
+                        "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
+                    split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_strams[stream]);
+                    split_markers [stream].SetName("split_marker[]");
+                    split_m_arrays[stream].SetName("split_m_arrays[]");
+                    SizeT target_size = sizeof(VertexId*) * 2 * Enactor::NUM_VERTEX_ASSOCIATES
+                                      + sizeof(Value*   ) * 2 * Enactor::NUM_VALUE__ASSOCIATES;
+                    if (retval = split_m_arrays[stream].Allocate(target_size, 
+                        util::HOST | util::DEVICE)) return retval;
+                }
+            }
+        }
+        return retval;
+    }
+
+    cudaError_t Release()
+    {
+        cudaError_t retval = cudaSuccess;
+        if (retval = util::SetDevice(gpu_idx)) return retval;
+        if (retval = vertex_associate_orgs.Release()) return retval;
+        if (retval = value__associate_orgs.Release()) return retval;
+
+        if (num_input_streams != 0)
+        {
+            for (int stream=0; stream<num_input_streams; i++)
+            {
+                if (retval = input_e_arrays[stream].Release()) return retval;
+                if (retval = util::GRError(cudaStreamDestroy(input_streams[stream]),
+                    "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
+            }   
+            if (retval = input_streams  .Release()) return retval;
+            if (retval = input_queues[0].Release()) return retval;
+            if (retval = input_queues[1].Release()) return retval;
+            delete[] input_e_arrays; input_e_arrays = NULL;
+            num_input_streams = 0;
+        }
+
+        if (num_outpu_streams != 0)
+        { 
+            for (int stream=0; stream<num_outpu_streams; stream++)
+            {
+                if (retval = util::GRError(cudaStreamDestroy(outpu_streams[stream]),
+                    "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
+            }
+            if (retval = outpu_streams.Release()) return retval;
+            if (retval = outpu_queue  .Release()) return retval;
+            num_outpu_streams = 0;
+        }
+
+        if (num_subq__streams != 0)
+        {
+            for (int stream=0; stream<num_subq__streams; stream++)
+            {
+                if (retval = util::GRError(cudaStreamDestroy(subq__streams[stream]),
+                    "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
+                if (retval = subq__frontier_attributes[stream].output_length.Release()) return retval;
+                for (int i=0; i<2; i++)
+                {
+                    if (retval = subq__frontiers[stream].keys  [i].Release()) return retval;
+                    if (retval = subq__frontiers[stream].values[i].Release()) return retval;
+                }
+                if (retval = subq__scanned_edges[stream].Release()) return retval;
+            }
+            for (int i=0; i<4; i++)
+            {
+                for (int stream=0; stream<num_subq__streams; stream++)
+                {
+                    for (int stage=0; stage<Enactor::NUM_STAGE; stage++)
+                    {
+                        if (retval = util::GRError(cudaEventDestroy(subq__events[i][stream][stage]),
+                            "cudaEventDestroy failed", __FILE__, __LINE__)) return retval;
+                    }
+                    delete[] subq__events    [i][stream]; subq__events    [i][stream] = NULL;
+                    delete[] subq__event_sets[i][stream]; subq__event_sets[i][stream] = NULL;
+                }
+                if (retval = subq__events    [i].Release()) return retval;
+                if (retval = subq__event_sets[i].Release()) return retval;
+            }
+            if (retval = subq__streams            .Release()) return retval;
+            if (retval = subq__contexts           .Release()) return retval;
+            if (retval = subq__queue              .Release()) return retval;
+            if (retval = subq__stages             .Release()) return retval;
+            if (retval = subq__to_shows           .Release()) return retval;
+            if (retval = subq__wait_markers       .Release()) return retval;
+            if (retval = subq__froniters          .Release()) return retval;
+            if (retval = subq__frontier_attributes.Release()) return retval;
+            if (retval = subq__enactor_statuses   .Release()) return retval;
+            if (retval = subq__work_progresses    .Release()) return retval;
+            delete[] subq__scanned_edges; subq__scanned_edges = NULL;
+            num_subq__streams = 0;
+        }
+
+        if (num_fullq_streams != 0)
+        {
+            for (int stream=0; stream<num_fullq_stream; stream++)
+            {
+                if (retval = util::GRError(cudaStreamDestroy(fullq_stream[stream]),
+                    "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
+                if (retval = fullq_frontier_attribute[stream].output_length.Release()) return retval;
+                for (int i=0; i<2; i++)
+                {
+                    if (retval = fullq_frontiers[stream].keys  [i].Release()) return retval;
+                    if (retval = fullq_frontiers[stream].values[i].Release()) return retval;
+                }
+                if (retval = fullq_scanned_edges[stream].Release()) return retval;
+            }
+            for (int i=0; i<4; i++)
+            {
+                for (int stream=0; stream<num_fullq_stream; stream++)
+                {
+                    for (int stage=0; stage<Enactor::NUM_STAGE; stage++)
+                    {
+                        if (retval = util::GRError(cudaEventDestroy(fullq_event[i][stream][stage]),
+                            "cudaEventDestroy failed", __FILE__, __LINE__)) return retval;
+                    }
+                    delete[] fullq_event    [i][stream]; fullq_event    [i][stream] = NULL;
+                }
+                if (retval = fullq_events    [i].Release()) return retval;
+            }
+            if (retval = fullq_streams            .Release()) return retval;
+            if (retval = fullq_contexts           .Release()) return retval;
+            if (retval = fullq_queue              .Release()) return retval;
+            if (retval = fullq_stages             .Release()) return retval;
+            if (retval = fullq_to_shows           .Release()) return retval;
+            if (retval = fullq_froniters          .Release()) return retval;
+            if (retval = fullq_frontier_attributes.Release()) return retval;
+            if (retval = fullq_enactor_statuses   .Release()) return retval;
+            if (retval = fullq_work_progresses    .Release()) return retval;
+            delete[] fullq_scanned_edges; fullq_scanned_edges = NULL;
+            num_fullq_streams = 0;
+        }
+
+        if (num_split_streams != 0)
+        {
+            for (int stream=0; stream<num_split_streams; stream++)
+            {
+                if (retval = util::GRError(cudaStreamDestory(split_streams[stream]),
+                    "cudaStreamDestory failed", __FILE__, __LINE__)) return retval;
+                if (retval = split_markers [stream].Release()) return retval;
+                if (retval = split_m_arrays[stream].Release()) return retval;
+            }
+            if (retval = split_streams .Release()) return retval;
+            if (retval = split_contexts.Release()) return retval;
+            if (retval = split_lengths .Release()) return retval;
+            delete[] split_markers ; split_markers  = NULL;
+            delete[] split_m_arrays; split_m_arrays = NULL;
+            num_split_streams = 0;
+        }
+
+        return retval;
+    }
+
+    cudaError_t Reset(
+        FrontierType frontier_type,
+        GraphSlice<SizeT, VertexId, Value>
+                    *graph_slice,
+        bool   use_double_buffer = false,
+        SizeT *num_in_nodes  = NULL,
+        SizeT *num_out_nodes = NULL,
+        double subq__factor  = 1.0,
+        double subq__factor0 = 1.0,
+        double subq__factor1 = 1.0,
+        double fullq_factor  = 1.0,
+        double fullq_factor0 = 1.0,
+        double fullq_factor1 = 1.0,
+        double input_factor  = 1.0,
+        double outpu_factor  = 1.0,
+        double split_factor  = 1.0,
+        double temp_factor   = 0.1)
+    {
+        cudaError_t retval = cudaSuccess;
+        SizeT  target_capacity  = 0;
+
+        if (num_input_streams != 0)
+        {
+            SizeT total_in_nodes = 0;
+            for (int gpu=0; gpu<num_gpus; gpu++)
+                total_in_nodes += num_in_nodes[gpu];
+            SizeT target_capacity = total_in_nodes * input_factor;
+            for (int i=0; i<2; i++)
+            {
+                if (retval = input_queue[i].Init(target_capacity, util::DEVICE, 10,
+                    Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VERTEX_ASSOCIATES,
+                    temp_factor * target_capacity)) return retval;
+                if (retval = input_queue[i].Reset()) return retval;
+            }
+        }
+
+        if (num_outpu_streams != 0)
+        {
+            SizeT total_out_nodes = 0;
+            for (int gpu=0; gpu<num_gpus; gpu++)
+                total_out_nodes += num_out_nodes[gpu];
+            SizeT target_capacity = total_out_nodes * outpu_factor;
+            if (retval = outpu_queue.Init(target_capacity, util::DEVICE, 10,
+                0, 0,
+                temp_factor * target_capacity)) return retval;
+            if (retval = outpu_queue.Reset()) return retval;
+        }
+
+        if (num_subq__streams != 0)
+        {
+            SizeT target_capacity = graph_slice->nodes * subq__factor;
+            if (retval = subq__queue.Init(target_capacity, util::DEVICE, 10,
+                0, 0,
+                temp_factor * target_capacity)) return retval;
+            if (retval = subq__queue.Reset()) return retval;
+
+            SizeT frontier_sizes[2] = {0, 0};
+            double queue_sizing = (i==0)? subq__factor0 : subq__factor1;
+            queue_sizing *= subq__factor;
+            switch (frontier_type) {
+            case VERTEX_FRONTIERS :
+                // O(n) ping-pong global vertex frontiers
+                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                frontier_sizes[1] = frontier_sizes[0];
+                break;
+
+            case EDGE_FRONTIERS :
+                // O(m) ping-pong global edge frontiers
+                frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
+                frontier_sizes[1] = frontier_sizes[0];
+                break;
+
+            case MIXED_FRONTIERS :
+                // O(n) global vertex frontier, O(m) global edge frontier
+                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
+                break;
+            }
+            for (int i=0; i<2; i++)
+            {
+                for (int stream=0; stream<num_subq__streams; stream++)
+                {
+                    if (retval = subq__frontiers[stream].keys[i].Allocate(
+                        frontier_sizes[i], util::DEVICE)) return retval;
+                    if (use_double_buffer) {
+                        if (retval = subq__frontier[stream].values[i].Allocate(
+                            frontier_sizes[i], util::DEVICE)) return retval;
+                    }
+                }
+            }
+            SizeT max_elements = (frontier_sizes[0] > frontier_sizes[1])?
+                frontier_sizes[0] : frontier_sizes[1];
+            if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
+                return retval;
+        }
+
+        if (num_fullq_streams != 0)
+        {
+            SizeT target_capacity = graph_slice->nodes * fullq_factor;
+            if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,
+                0, 0,
+                temp_factor * target_capacity)) return retval;
+            if (retval = fullq_queue.Reset()) return retval;
+
+            SizeT frontier_sizes[2] = {0, 0};
+            double queue_sizing = (i==0)? fullq_factor0 : fullq_factor1;
+            queue_sizing *= fullq_factor;
+            switch (frontier_type) {
+            case VERTEX_FRONTIERS :
+                // O(n) ping-pong global vertex frontiers
+                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                frontier_sizes[1] = frontier_sizes[0];
+                break;
+
+            case EDGE_FRONTIERS :
+                // O(m) ping-pong global edge frontiers
+                frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
+                frontier_sizes[1] = frontier_sizes[0];
+                break;
+
+            case MIXED_FRONTIERS :
+                // O(n) global vertex frontier, O(m) global edge frontier
+                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
+                break;
+            }
+            for (int i=0; i<2; i++)
+            {
+                for (int stream=0; stream<num_fullq_stream; stream++)
+                {
+                    if (retval = fullq_frontier[stream].keys[i].Allocate(
+                        frontier_sizes[i], util::DEVICE)) return retval;
+                    if (use_double_buffer) {
+                        if (retval = fullq_frontier[stream].values[i].Allocate(
+                            frontier_sizes[i], util::DEVICE)) return retval;
+                    }
+                }
+            }
+            SizeT max_elements = (frontier_sizes[0] > frontier_sizes[1])?
+                frontier_sizes[0] : frontier_sizes[1];
+            if (retval = fullq_scanned_edges[stream].Allocate(max_elements, util::DEVICE))
+                return retval;
+        }
+
+        if (num_split_streams != 0)
+        {
+            SizeT target_capacity = graph_slice->nodes * split_factor;
+            for (int stream=0; stream<num_split_streams; stream++)
+            {
+                if (retval = split_markers[stream].Allocate(target_capacity, util::DEVICE))
+                    return retval;
+            }
+        }
+        return retval;
+    }
+}; // end of EnactorSlice
+
+} // namespace app
+} // namespace gunrock
+
+// Leave this at the end of the file
+// Local Variables:
+// mode:c++
+// c-file-style: "NVIDIA"
+// End:
