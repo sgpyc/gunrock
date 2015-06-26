@@ -27,8 +27,8 @@ namespace gunrock {
 namespace util {
 
 template <
-    typename SizeT,
     typename VertexId,
+    typename SizeT,
     typename Value   = VertexId,
     bool AUTO_RESIZE = true>
 struct CircularQueue
@@ -129,7 +129,8 @@ public:
         if (retval = array.Allocate(capacity, target)) return retval;
         if (num_vertex_associates != 0)
         {
-            vertex_associates = new Array1D<SizeT, VertexId>[num_vertex_associates];
+            if (vertex_associates == NULL)
+                vertex_associates = new Array1D<SizeT, VertexId>[num_vertex_associates];
             for (SizeT i=0; i<num_vertex_associates; i++)
             {
                 vertex_associates[i].SetName(name + "_vertex[]");
@@ -139,7 +140,8 @@ public:
         }
         if (num_value__associates != 0)
         {
-            value__associates = new Array1D<SizeT, Value   >[num_value__associates];
+            if (value__associates == NULL)
+                value__associates = new Array1D<SizeT, Value   >[num_value__associates];
             for (SizeT i=0; i<num_value__associates; i++)
             {
                 value__associates[i].SetName(name + "_value[]");
@@ -169,13 +171,16 @@ public:
         { 
             if (retval = GRError(cudaGetDevice(&gpu_idx), 
                 "cudaGetDevice failed", __FILE__, __LINE__)) return retval;
-            gpu_events = new cudaEvent_t[num_events];
-            this -> num_events = num_events;
-            for (SizeT i=0; i<num_events; i++)
+            if (gpu_events == NULL)
             {
-                if (retval = GRError(cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming), 
-                    "cudaEventCreateWithFlags failed", __FILE__, __LINE__)) 
-                    return retval;
+                gpu_events = new cudaEvent_t[num_events];
+                this -> num_events = num_events;
+                for (SizeT i=0; i<num_events; i++)
+                {
+                    if (retval = GRError(cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming), 
+                        "cudaEventCreateWithFlags failed", __FILE__, __LINE__)) 
+                        return retval;
+                }
                 empty_gpu_events.push_back(gpu_events[i]);
             }
         }
