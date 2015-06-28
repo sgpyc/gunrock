@@ -87,16 +87,27 @@ template<
     typename FilterKernelPolicy,
     typename Enactor>
 struct BFSIteration : public IterationBase <
-    AdvanceKernelPolicy, FilterKernelPolicy, Enactor,
-    true, false, false, true, Enactor::Problem::MARK_PREDECESSORS>
+    AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
+    //true, false, false, true, Enactor::Problem::MARK_PREDECESSORS>
 {
+    typedef IterationBase<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
+        BaseIteration;
     typedef typename Enactor::SizeT      SizeT     ;    
     typedef typename Enactor::Value      Value     ;    
     typedef typename Enactor::VertexId   VertexId  ;
-    typedef typename Enactor::Problem    Problem ;
+    typedef typename Enactor::Problem    Problem   ;
     typedef typename Problem::DataSlice  DataSlice ;
-    typedef GraphSlice<SizeT, VertexId, Value> GraphSlice;
+    typedef typename Enactor::GraphSlice GraphSlice;
     typedef BFSFunctor<VertexId, SizeT, Value, Problem> BfsFunctor;
+
+    BFSIteration(
+        int num_gpus,
+        int num_streams) : BaseIteration(
+        num_gpus,
+        num_streams,
+        true, false, false, true, Enactor::Problem::MARK_PREDECESSORS)
+    {
+    }
 
     static void SubQueue_Core(
         int                            thread_num,
@@ -321,12 +332,21 @@ struct BFSIteration : public IterationBase <
  *
  * @tparam INSTRUMWENT Boolean type to show whether or not to collect per-CTA clock-count statistics
  */
-template <typename _Problem, bool _INSTRUMENT, bool _DEBUG, bool _SIZE_CHECK>
-class BFSEnactor : public EnactorBase<typename _Problem::SizeT, _DEBUG, _SIZE_CHECK>
+template <
+    typename _Problem, 
+    bool     _INSTRUMENT, 
+    bool     _DEBUG, 
+    bool     _SIZE_CHECK>
+class BFSEnactor : public EnactorBase<
+    typename _Problem::VertexId,
+    typename _Problem::SizeT, 
+    typename _Problem::Value,
+    _DEBUG, 
+    _SIZE_CHECK,
+    (_Problem::MARK_PREDECESSORS && !_Problem::ENABLE_IDEMPOTENCE)? 2 : 1, // NUM_VERTEX_ASSOCIATES
+    0> // NUM_VALUE__ASSOCIATES
 {   
     _Problem     *problem      ;
-    ThreadSlice  *thread_slices;
-    CUTThread    *thread_Ids   ;
 
 public:
     typedef _Problem                   Problem;
@@ -336,18 +356,20 @@ public:
     static const bool INSTRUMENT = _INSTRUMENT;
     static const bool DEBUG      = _DEBUG;
     static const bool SIZE_CHECK = _SIZE_CHECK;
-
+    typedef EnactorBase<VertexId, SizeT, Value, DEBUG, SIZE_CHECK,
+        (Problem::MARK_PREDECESSORS && !_Problem::ENABLE_IDEMPOTENCE) ? 2: 1,
+        0> BaseEnactor;
+    typedef BFSEnactor<Problem, INSTRUMENT, DEBUG, SIZE_CHECK>
+        Enactor;
     // Methods
 
     /**
      * @brief BFSEnactor constructor
      */
     BFSEnactor(int num_gpus = 1, int* gpu_idx = NULL) :
-        EnactorBase<SizeT, _DEBUG, _SIZE_CHECK>(VERTEX_FRONTIERS, num_gpus, gpu_idx)//,
+        BaseEnactor(VERTEX_FRONTIERS, num_gpus, gpu_idx)//,
     {
-        thread_slices = NULL;
-        thread_Ids    = NULL;
-        problem       = NULL;
+        problem = NULL;
     }
 
     /**
@@ -355,9 +377,6 @@ public:
      */
     virtual ~BFSEnactor()
     {
-        cutWaitForThreads(thread_Ids, this->num_gpus);
-        delete[] thread_Ids   ; thread_Ids    = NULL;
-        delete[] thread_slices; thread_slices = NULL;
         problem = NULL;
     }
 
@@ -373,25 +392,29 @@ public:
      * @param[out] search_depth Search depth of BFS algorithm.
      * @param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
      */
-    template <typename VertexId>
     void GetStatistics(
         long long &total_queued,
-        VertexId  &search_depth,
+        SizeT     &search_depth,
         double    &avg_duty)
     {
         unsigned long long total_lifetimes=0;
         unsigned long long total_runtimes =0;
         total_queued = 0;
         search_depth = 0;
-        for (int gpu=0;gpu<this->num_gpus;gpu++)
+        EnactorSlice<Enactor> *enactor_slices 
+            = (EnactorSlice<Enactor>*) this->enactor_slices;
+        for (int gpu=0; gpu<this->num_gpus; gpu++)
         {
             if (this->num_gpus!=1)
                 if (util::SetDevice(this->gpu_idx[gpu])) return;
             cudaThreadSynchronize();
 
-            for (int peer=0; peer< this->num_gpus; peer++)
+            for (int stream=0; stream< this->num_subq__streams + this->num_fullq_streams; stream++)
             {
-                EnactorStats *enactor_stats_ = this->enactor_stats + gpu * this->num_gpus + peer;
+                EnactorStats *enactor_stats_ = (stream < num_subq__streams) ?
+                    enactor_slices[gpu].subq__enactor_status + stream :
+                    enactor_slices[gpu].fullq_enactor_status + stream - num_subq__streams;
+                total_queued += eanctor_stats_ -> total_queued[0];
                 enactor_stats_ -> total_queued.Move(util::DEVICE, util::HOST);
                 total_queued += enactor_stats_ -> total_queued[0];
                 if (enactor_stats_ -> iteration > search_depth) 
@@ -408,60 +431,83 @@ public:
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy>
     cudaError_t InitBFS(
-        ContextPtr *context,
-        Problem    *problem,
-        int        max_grid_size = 0,
-        bool       size_check    = true)
+        Problem *problem,
+        int      max_grid_size = 0,
+        int      num_input_streams = -1,
+        int      num_outpu_streams = -1,
+        int      num_subq__streams = -1,
+        int      num_split_streams = -1)
     {   
         cudaError_t retval = cudaSuccess;
 
+        if (num_input_streams < 0) num_input_streams = this->num_gpus - 1;
+        if (num_outpu_streams < 0) num_outpu_streams = this->num_gpus - 1;
+        if (num_subq__streams < 0) num_subq__streams = this->num_gpus;
+        if (num_split_streams < 0) num_split_streams = this->num_gpus;
+
         // Lazy initialization
-        if (retval = EnactorBase<SizeT, DEBUG, SIZE_CHECK>::Init(problem,
-                                       max_grid_size,
-                                       AdvanceKernelPolicy::CTA_OCCUPANCY, 
-                                       FilterKernelPolicy::CTA_OCCUPANCY)) return retval;
-        
+        if (retval = BaseEnactor::template Init<
+            AdvanceKernelPolicy, FilterKernelPolicy, Enactor> (
+            problem,
+            this,
+            max_grid_size,
+            AdvanceKernelPolicy::CTA_OCCUPANCY, 
+            FilterKernelPolicy::CTA_OCCUPANCY,
+            256,
+            num_input_streams,
+            num_outpu_streams,
+            num_subq__streams,
+            0,
+            num_split_streams)) return retval;        
         this->problem = problem;
-        thread_slices = new ThreadSlice [this->num_gpus];
-        thread_Ids    = new CUTThread   [this->num_gpus];
 
-        for (int gpu=0;gpu<this->num_gpus;gpu++)
-        {
-            if (retval = util::SetDevice(this->gpu_idx[gpu])) break;
-            if (Problem::ENABLE_IDEMPOTENCE) {
-                SizeT bytes = (problem->graph_slices[gpu]->nodes + 8 - 1) / 8;
-                cudaChannelFormatDesc   bitmask_desc = cudaCreateChannelDesc<char>();
-                gunrock::oprtr::filter::BitmaskTex<unsigned char>::ref.channelDesc = bitmask_desc;
-                if (retval = util::GRError(cudaBindTexture(
-                    0,
-                    gunrock::oprtr::filter::BitmaskTex<unsigned char>::ref,
-                    problem->data_slices[gpu]->visited_mask.GetPointer(util::DEVICE),
-                    bytes),
-                    "BFSEnactor cudaBindTexture bitmask_tex_ref failed", __FILE__, __LINE__)) break;
-            }
-        }
-        
-        for (int gpu=0;gpu<this->num_gpus;gpu++)
-        {
-            thread_slices[gpu].thread_num    = gpu;
-            thread_slices[gpu].problem       = (void*)problem;
-            thread_slices[gpu].enactor       = (void*)this;
-            thread_slices[gpu].context       = &(context[gpu*this->num_gpus]);
-            thread_slices[gpu].stats         = -1;
-            thread_slices[gpu].thread_Id = cutStartThread(
-                (CUT_THREADROUTINE)&(BFSThread<
-                    AdvanceKernelPolicy,FilterKernelPolicy, 
-                    BFSEnactor<Problem, INSTRUMENT, DEBUG, SIZE_CHECK> >),
-                    (void*)&(thread_slices[gpu]));
-            thread_Ids[gpu] = thread_slices[gpu].thread_Id;
-        }
-
-       return retval;
+        return retval;
     }
 
-    cudaError_t Reset()
+    template <typename AdvanceKernelPolicy, typename FilterKernelPolicy>
+    cudaError_t Reset(
+        VertexId src
+        FrontierType frontier_type,             // The frontier type (i.e., edge/vertex/mixed
+        double queue_sizing,                    // Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively). 0.0 is unspecified.
+        double queue_sizing1 = -1.0)
     {
-        return EnactorBase<SizeT, DEBUG, SIZE_CHECK>::Reset();
+        cudaError_t retval = cudaSuccess;
+        int         gpu    = 0;
+        VertexId    tsrc   = src;
+ 
+        if (queue_sizing1 < 0) queue_sizing1 = queue_sizing;
+        if (retval = BaseEnactor::template Reset<AdvanceKernelPolicy, FilterKernelPolity, Enactor>()) return retval;
+
+        // Fillin the initial input_queue for BFS problem
+        if (this->num_gpus > 1)
+        {   
+            gpu = this->partition_tables[0][src];
+            tsrc= this->convertion_tables[0][src];
+        }   
+        if (retval = util::SetDevice(this->gpu_idx[gpu])) return retval;
+        if (retval = util::GRError(cudaMemcpy(
+            enactor_slices[gpu]->subq__frontiers[0].keys[0].GetPointer(util::DEVICE),
+            &tsrc, sizeof(VertexId), cudaMemcpyHostToDevice),
+            "BFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__)) 
+            return retval; 
+        
+        VertexId src_label = 0;
+        if (retval = util::GRError(cudaMemcpy(
+            problem->data_slices[gpu]->labels.GetPointer(util::DEVICE)+tsrc,
+            &src_label, sizeof(VertexId), cudaMemcpyHostToDevice),
+            "BFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__))
+            return retval; 
+
+       if (_MARK_PREDECESSORS && !_ENABLE_IDEMPOTENCE) {
+            VertexId src_pred = -1; 
+            if (retval = util::GRError(cudaMemcpy(
+                problem->data_slices[gpu]->preds.GetPointer(util::DEVICE) + tsrc,
+                &src_pred, sizeof(VertexId), cudaMemcpyHostToDevice),
+                "BFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__))
+                return retval; 
+        }   
+
+        return retval;
     }
 
     /** @} */
@@ -664,10 +710,8 @@ public:
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */
     cudaError_t Init(
-        ContextPtr  *context,
         Problem     *problem,
         int         max_grid_size  = 0,
-        bool        size_check     = true,
         int         traversal_mode = 0)
     {
         int min_sm_version = -1;
@@ -679,17 +723,17 @@ public:
             if (Problem::ENABLE_IDEMPOTENCE) {
                 if (traversal_mode == 0)
                     return InitBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(
-                            context, problem, max_grid_size, size_check);
+                            problem, max_grid_size);
                 else
                     return InitBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(
-                            context, problem, max_grid_size, size_check);
+                            problem, max_grid_size);
             } else {
                 if (traversal_mode == 0)
                     return InitBFS<     LBAdvanceKernelPolicy     , FilterKernelPolicy>(
-                            context, problem, max_grid_size, size_check);
+                            problem, max_grid_size);
                 else
                     return InitBFS<ForwardAdvanceKernelPolicy     , FilterKernelPolicy>(
-                            context, problem, max_grid_size, size_check);
+                            problem, max_grid_size);
             }
         }
 

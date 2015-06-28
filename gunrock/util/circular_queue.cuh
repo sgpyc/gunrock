@@ -37,14 +37,24 @@ public:
 
     class CqEvent{
     public:
-        int   status;
-        SizeT offset, length;
-        cudaEvent_t event;
+        enum Status {
+            New,
+            Init,
+            Assigned,
+            Running,
+            Finished,
+            Cleared
+        };
+
+        Status      status;
+        SizeT       offset;
+        SizeT       length;
+        cudaEvent_t event ;
 
         CqEvent(
             SizeT offset_,
             SizeT length_) :
-            status(0      ),
+            status(New    ),
             offset(offset_),
             length(length_)
         {
@@ -54,6 +64,7 @@ public:
 private:
     std::string  name;      // name of the queue
     int          gpu_idx ;  // gpu index
+    int          input_count; 
     SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
@@ -79,6 +90,7 @@ public:
     CircularQueue() :
         name      (""  ),
         gpu_idx   (0   ),
+        input_count(0  ),
         capacity  (0   ),
         size_occu (0   ),
         size_soli (0   ),
@@ -236,9 +248,21 @@ public:
         size_occu = this->size_occu;
     }
 
+    bool Empty()
+    {
+        if (size_soli != 0) return false;
+        if (size_occu != 0) return false;
+        return true;
+    }
+
     SizeT GetCapacity()
     {
         return capacity;
+    }
+
+    int GetInputCount()
+    {
+        return input_count;
     }
 
     cudaError_t Combined_Return(
@@ -329,7 +353,7 @@ public:
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
-        SizeT sum        = 0;
+        //SizeT sum        = 0;
         if (retval = AddSize(length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
 
@@ -711,7 +735,7 @@ public:
         cudaError_t retval = cudaSuccess;
         int org_gpu;
         
-        if (set_gpu && allocated = DEVICE)
+        if (set_gpu && allocated == DEVICE)
         { // set to the correct device
             if (retval = GRError(cudaGetDevice(&org_gpu),
                 "cudaGetDevice failed", __FILE__, __LINE__))
@@ -763,7 +787,7 @@ public:
                     if (retval = temp_array.EnsureSize(lengths[1], false, 0, allocated))
                         return Combined_Return(retval, in_critical);
                     if (num_value__associates != 0)
-                    if (retval = temp_value__associates.EnsuerSize(lengths[1], false, 0, allocated))
+                    if (retval = temp_value__associates.EnsureSize(lengths[1], false, 0, allocated))
                         return Combined_Return(retval, in_critical);
 
                     if (retval = array.Move_Out(allocated, allocated,
@@ -905,7 +929,7 @@ public:
             {
                 printf("Event %d,%d,%d sets\n", direction, offset, length);//fflush(stdout);
                 (*it).event = event;
-                (*it).status = 1;
+                (*it).status = CqEvent::Assigned;
                 break;
             }
         }
@@ -965,7 +989,7 @@ public:
             if ((offset == (*it).offset) && (length == (*it).length)) // matched event
             {
                 printf("Event %d,%d,%d finishes\n", direction, offset, length);//fflush(stdout);
-                (*it).status = 2;
+                (*it).status = Finished;
                 break;
             }
         }
@@ -984,12 +1008,12 @@ public:
         for (it  = events[direction].begin();
              it != events[direction].end(); it++)
         {
-            if ((*it).status == 1)
+            if ((*it).status == CqEvent::Assigned)
             {
                 retval = cudaEventQuery((*it).event);
                 if (retval == cudaSuccess)
                 {
-                    (*it).status = 2;
+                    (*it).status = CqEvent::Finished;
                     printf("Event %d,%d,%d finishes\n", direction, (*it).offset, (*it).length);
                     empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {
@@ -1013,7 +1037,7 @@ public:
         {
             it = events[direction].begin();
             //printf("Event %d, %d, %d, status = %d\n", direction, (*it).offset, (*it).length, (*it).status);fflush(stdout);
-            if ((*it).status == 2) // finished event
+            if ((*it).status == CqEvent::Finished) // finished event
             {
                 if (direction == 0)
                 { // in event
@@ -1021,7 +1045,7 @@ public:
                     {
                         head_b += (*it).length;
                         if (head_b >= capacity) head_b -= capacity;
-                        (*it).status = 3;
+                        (*it).status = CqEvent::Cleared;
                         size_soli += (*it).length;
                     } 
                 } else { // out event
@@ -1029,7 +1053,7 @@ public:
                     {
                         tail_b += (*it).length;
                         if (tail_b >= capacity) tail_b -= capacity;
-                        (*it).status = 3;
+                        (*it).status = CqEvent::Cleared;
                         size_occu -= (*it).length;
                     }
                 }
