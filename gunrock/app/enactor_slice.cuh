@@ -13,13 +13,6 @@
  */
 
 #pragma once
-#include <time.h>
-
-#include <gunrock/util/cta_work_progress.cuh>
-#include <gunrock/util/error_utils.cuh>
-#include <gunrock/util/test_utils.cuh>
-#include <gunrock/util/array_utils.cuh>
-#include <gunrock/util/circular_queue.cuh>
 
 #include <moderngpu.cuh>
 
@@ -31,27 +24,30 @@ namespace app {
 template <typename Enactor>
 struct EnactorSlice
 {
-    typedef Enactor::SizeT           SizeT        ;
-    typedef Enactor::VertexId        VertexId     ;
-    typedef Enactor::Value           Value        ;
-    typedef Enactor::CircularQueue   CircularQueue;
-    typedef Enactor::Array           Array        ;
-    typedef Enactor::FrontierT       FrontierT    ;
-    typedef Enactor::FrontierA       FrontierA    ;
-    typedef Enactor::PRequest        PRequest     ;
+    typedef typename Enactor::SizeT           SizeT        ;
+    typedef typename Enactor::VertexId        VertexId     ;
+    typedef typename Enactor::Value           Value        ;
+    typedef typename Enactor::CircularQueue   CircularQueue;
+    template <typename Type>
+    using Array = typename Enactor::Array<Type>;
+    typedef typename Enactor::FrontierT       FrontierT    ;
+    typedef typename Enactor::FrontierA       FrontierA    ;
+    typedef typename Enactor::PRequest        PRequest     ;
+    typedef typename Enactor::EnactorStats    EnactorStats ;
     int num_gpus;
     int gpu_num;
     int gpu_idx;
     int num_input_streams;
     int num_outpu_streams;
     int num_subq__streams;
-    int num_fullq_streams;
+    int num_fullq_stream ;
     int num_split_streams;
     
     Array<VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
     Array<Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
 
     Array<cudaStream_t>   input_streams           ; // GPU streams
+    int                   input_target_count      ;
     CircularQueue         input_queues         [2];
     Array<char        >  *input_e_arrays          ; // compressed data structure for expand_incoming kernel
 
@@ -71,19 +67,21 @@ struct EnactorSlice
     Array<SizeT       >  *subq__scanned_edges     ;
     Array<FrontierT   >   subq__frontiers         ; // frontier queues
     Array<FrontierA   >   subq__frontier_attributes;
-    Array<EnactorStatus>  subq__enactor_statuses  ;
+    Array<EnactorStats>   subq__enactor_statses   ;
     Array<util::CtaWorkProgressLifetime> 
-                          subq_work_progresses    ;
+                          subq__work_progresses   ;
     
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
     CircularQueue         fullq_queue             ;
+    Array<int>            fullq_stage             ;
     Array<cudaEvent_t*>   fullq_event          [4]; // GPU stream events arrays
     Array<bool        >   fullq_to_show           ; // whether to show debug information for the streams
+    //Array<int         >  *fullq_wait_marker       ;
     Array<SizeT       >  *fullq_scanned_edge      ;
     Array<FrontierT   >   fullq_frontier          ; // frontier queues
     Array<FrontierA   >   fullq_frontier_attribute;
-    Array<EnactorStatus>  fullq_enactor_status    ;
+    Array<EnactorStats>   fullq_enactor_stats     ;
     Array<util::CtaWorkProgressLifetime>
                           fullq_work_progress     ;
  
@@ -100,7 +98,7 @@ struct EnactorSlice
         num_input_streams  (0   ),
         num_outpu_streams  (0   ),
         num_subq__streams  (0   ),
-        num_fullq_streams  (0   ),
+        num_fullq_stream   (0   ),
         num_split_streams  (0   ),
         input_e_arrays     (NULL),
         subq__scanned_edges(NULL),
@@ -108,8 +106,8 @@ struct EnactorSlice
         split_markers      (NULL),
         split_m_arrays     (NULL)
     {
-        vertex_associates_orgs.SetName("vertex_associate_orgs");
-        value__associates_orgs.SetName("value__associate_orgs");
+        vertex_associate_orgs .SetName("vertex_associate_orgs");
+        value__associate_orgs .SetName("value__associate_orgs");
         input_streams         .SetName("input_streams"        );
         input_queues[0]       .SetName("input_queues[0]"      );
         input_queues[1]       .SetName("input_queues[1]"      );
@@ -130,22 +128,23 @@ struct EnactorSlice
         //subq__scanned_edges   .SetName("subq__scanned_edges"  );
         subq__frontiers       .SetName("subq__frontiers"      );
         subq__frontier_attributes.SetName("sub__frontier_attribures");
-        subq__enactor_statuses.SetName("subq__encator_statuses");
+        subq__enactor_statses .SetName("subq__encator_statses");
         subq__work_progresses .SetName("subq__work_progresses");
 
         fullq_stream          .SetName("fullq_stream"         );
         fullq_context         .SetName("fullq_context"        );
         fullq_queue           .SetName("fullq_queue"          );
+        fullq_stage           .SetName("fullq_stage"          );
         fullq_to_show         .SetName("fullq_to_show"        );
         for (int i=0; i<4; i++)
         {
             fullq_event [i]    .SetName("fullq_event[]"       );
         }
-        fullq_wait_marker     .SetName("fullq_wait_marker"    );
+        //fullq_wait_marker     .SetName("fullq_wait_marker"    );
         //fullq_scanned_edge    .SetName("fullq_scanned_edges"  );
         fullq_frontier        .SetName("fullq_frontier"       );
         fullq_frontier_attribute.SetName("fullq_frontier_attribute");
-        fullq_enactor_status  .SetName("fullq_encator_status" );
+        fullq_enactor_stats   .SetName("fullq_encator_stats"  );
         fullq_work_progress   .SetName("fullq_work_progress"  );
 
         split_streams         .SetName("split_streams"        );
@@ -165,6 +164,7 @@ struct EnactorSlice
         int num_input_streams = 0,
         int num_outpu_streams = 0,
         int num_subq__streams = 0,
+        int num_fullq_streams = 0,
         int num_split_streams = 0)
     {
         cudaError_t retval = cudaSuccess;
@@ -218,13 +218,13 @@ struct EnactorSlice
             if (retval = subq__to_shows    .Allocate(num_subq__streams)) return retval;
             if (retval = subq__wait_markers.Allocate(num_subq__streams)) return retval;
             if (retval = subq__frontiers   .Allocate(num_subq__streams)) return retval;
-            if (retval = subq__frontier_attributes.Allocate(num_subq__streams, 
+            if (retval = subq__frontier_attributes.Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            if (retval = subq__enactor_statses    .Allocate(num_subq__streams, 
+            if (retval = subq__enactor_statses    .Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            if (retval = subq__work_progresses    .Allocate(num_subq__streams, 
+            if (retval = subq__work_progresses    .Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            subq__scanned_edges = new Array<SizeT>[num_subq_streams];
+            subq__scanned_edges = new Array<SizeT>[num_subq__streams];
             for (int stream=0; stream<num_subq__streams; stream++)
             {
                 if (retval = util::GRError(cudaStreamCreate(subq__streams + stream),
@@ -252,21 +252,22 @@ struct EnactorSlice
             }
         }
          
-        this->num_fullq_streams = num_fullq_streams;
-        if (num_fullq_streams != 0)
+        this->num_fullq_stream = num_fullq_stream;
+        if (num_fullq_stream != 0)
         {   
-            if (retval = fullq_stream      .Allocate(num_fullq_streams)) return retval;
-            if (retval = fullq_context     .Allocate(num_fullq_streams)) return retval;
-            if (retval = fullq_to_show     .Allocate(num_fullq_streams)) return retval;
-            if (retval = fullq_frontier    .Allocate(num_fullq_streams)) return retval;
-            if (retval = fullq_frontier_attribute.Allocate(num_fullq_streams, 
+            if (retval = fullq_stream      .Allocate(num_fullq_stream)) return retval;
+            if (retval = fullq_context     .Allocate(num_fullq_stream)) return retval;
+            if (retval = fullq_stage       .Allocate(num_fullq_stream)) return retval;
+            if (retval = fullq_to_show     .Allocate(num_fullq_stream)) return retval;
+            if (retval = fullq_frontier    .Allocate(num_fullq_stream)) return retval;
+            if (retval = fullq_frontier_attribute.Init(num_fullq_stream, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            if (retval = fullq_enactor_stats     .Allocate(num_fullq_streams, 
+            if (retval = fullq_enactor_stats     .Init(num_fullq_stream, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            if (retval = fullq_work_progress     .Allocate(num_fullq_streams, 
+            if (retval = fullq_work_progress     .Init(num_fullq_stream, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
-            fullq_scanned_edge = new Array<SizeT>[num_fullq_streams];
-            for (int stream=0; stream<num_fullq_streams; stream++)
+            fullq_scanned_edge = new Array<SizeT>[num_fullq_stream];
+            for (int stream=0; stream<num_fullq_stream; stream++)
             {
                 if (retval = util::GRError(cudaStreamCreate(fullq_stream + stream),
                     "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
@@ -278,12 +279,12 @@ struct EnactorSlice
             }
             for (int i=0; i<4; i++)
             {
-                if (retval = fullq_event    [i].Allocate(num_fullq_streams)) return retval;
-                if (retval = fullq_event_set[i].Allocate(num_fullq_streams)) return retval;
-                for (int stream=0; stream<num_fullq_streams; stream++)
+                if (retval = fullq_event    [i].Allocate(num_fullq_stream)) return retval;
+                //if (retval = fullq_event_set[i].Allocate(num_fullq_streams)) return retval;
+                for (int stream=0; stream<num_fullq_stream; stream++)
                 {
                     fullq_event    [i][stream] = new cudaEvent_t[Enactor::NUM_STAGES];
-                    fullq_event_set[i][stream] = new bool       [Enactor::NUM_STAGES];
+                    //fullq_event_set[i][stream] = new bool       [Enactor::NUM_STAGES];
                     for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
                     {
                         if (retval = util::GRError(cudaEventCreate(fullq_event[i][stream] + stage)),
@@ -302,11 +303,11 @@ struct EnactorSlice
                 if (retval = split_contexts.Allocate(num_split_streams)) return retval;
                 split_markers  = new Array<SizeT>[num_split_streams];
                 split_m_arrays = new Array<char> [num_split_streams];
-                for (int stream=0; stream<num_splict_streams; stream++)
+                for (int stream=0; stream<num_split_streams; stream++)
                 {
                     if (retval = util::GRError(cudaStreamCreate(split_streams + stream),
                         "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
-                    split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_strams[stream]);
+                    split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_streams[stream]);
                     split_markers [stream].SetName("split_marker[]");
                     split_m_arrays[stream].SetName("split_m_arrays[]");
                     SizeT target_size = sizeof(VertexId*) * 2 * Enactor::NUM_VERTEX_ASSOCIATES
@@ -328,7 +329,7 @@ struct EnactorSlice
 
         if (num_input_streams != 0)
         {
-            for (int stream=0; stream<num_input_streams; i++)
+            for (int stream=0; stream<num_input_streams; stream++)
             {
                 if (retval = input_e_arrays[stream].Release()) return retval;
                 if (retval = util::GRError(cudaStreamDestroy(input_streams[stream]),
@@ -371,7 +372,7 @@ struct EnactorSlice
             {
                 for (int stream=0; stream<num_subq__streams; stream++)
                 {
-                    for (int stage=0; stage<Enactor::NUM_STAGE; stage++)
+                    for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
                     {
                         if (retval = util::GRError(cudaEventDestroy(subq__events[i][stream][stage]),
                             "cudaEventDestroy failed", __FILE__, __LINE__)) return retval;
@@ -388,15 +389,15 @@ struct EnactorSlice
             if (retval = subq__stages             .Release()) return retval;
             if (retval = subq__to_shows           .Release()) return retval;
             if (retval = subq__wait_markers       .Release()) return retval;
-            if (retval = subq__froniters          .Release()) return retval;
+            if (retval = subq__frontiers          .Release()) return retval;
             if (retval = subq__frontier_attributes.Release()) return retval;
-            if (retval = subq__enactor_statuses   .Release()) return retval;
+            if (retval = subq__enactor_statses    .Release()) return retval;
             if (retval = subq__work_progresses    .Release()) return retval;
             delete[] subq__scanned_edges; subq__scanned_edges = NULL;
             num_subq__streams = 0;
         }
 
-        if (num_fullq_streams != 0)
+        if (num_fullq_stream != 0)
         {
             for (int stream=0; stream<num_fullq_stream; stream++)
             {
@@ -405,42 +406,42 @@ struct EnactorSlice
                 if (retval = fullq_frontier_attribute[stream].output_length.Release()) return retval;
                 for (int i=0; i<2; i++)
                 {
-                    if (retval = fullq_frontiers[stream].keys  [i].Release()) return retval;
-                    if (retval = fullq_frontiers[stream].values[i].Release()) return retval;
+                    if (retval = fullq_frontier[stream].keys  [i].Release()) return retval;
+                    if (retval = fullq_frontier[stream].values[i].Release()) return retval;
                 }
-                if (retval = fullq_scanned_edges[stream].Release()) return retval;
+                if (retval = fullq_scanned_edge[stream].Release()) return retval;
             }
             for (int i=0; i<4; i++)
             {
                 for (int stream=0; stream<num_fullq_stream; stream++)
                 {
-                    for (int stage=0; stage<Enactor::NUM_STAGE; stage++)
+                    for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
                     {
                         if (retval = util::GRError(cudaEventDestroy(fullq_event[i][stream][stage]),
                             "cudaEventDestroy failed", __FILE__, __LINE__)) return retval;
                     }
                     delete[] fullq_event    [i][stream]; fullq_event    [i][stream] = NULL;
                 }
-                if (retval = fullq_events    [i].Release()) return retval;
+                if (retval = fullq_event     [i].Release()) return retval;
             }
-            if (retval = fullq_streams            .Release()) return retval;
-            if (retval = fullq_contexts           .Release()) return retval;
+            if (retval = fullq_stream             .Release()) return retval;
+            if (retval = fullq_context            .Release()) return retval;
             if (retval = fullq_queue              .Release()) return retval;
-            if (retval = fullq_stages             .Release()) return retval;
-            if (retval = fullq_to_shows           .Release()) return retval;
-            if (retval = fullq_froniters          .Release()) return retval;
-            if (retval = fullq_frontier_attributes.Release()) return retval;
-            if (retval = fullq_enactor_statuses   .Release()) return retval;
-            if (retval = fullq_work_progresses    .Release()) return retval;
-            delete[] fullq_scanned_edges; fullq_scanned_edges = NULL;
-            num_fullq_streams = 0;
+            if (retval = fullq_stage              .Release()) return retval;
+            if (retval = fullq_to_show            .Release()) return retval;
+            if (retval = fullq_frontier           .Release()) return retval;
+            if (retval = fullq_frontier_attribute .Release()) return retval;
+            if (retval = fullq_enactor_stats      .Release()) return retval;
+            if (retval = fullq_work_progress      .Release()) return retval;
+            delete[] fullq_scanned_edge; fullq_scanned_edge = NULL;
+            num_fullq_stream = 0;
         }
 
         if (num_split_streams != 0)
         {
             for (int stream=0; stream<num_split_streams; stream++)
             {
-                if (retval = util::GRError(cudaStreamDestory(split_streams[stream]),
+                if (retval = util::GRError(cudaStreamDestroy(split_streams[stream]),
                     "cudaStreamDestory failed", __FILE__, __LINE__)) return retval;
                 if (retval = split_markers [stream].Release()) return retval;
                 if (retval = split_m_arrays[stream].Release()) return retval;

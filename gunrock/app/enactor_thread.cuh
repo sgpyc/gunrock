@@ -13,25 +13,9 @@
  */
 
 #pragma once
-#include <time.h>
 
-#include <gunrock/util/cuda_properties.cuh>
-#include <gunrock/util/cta_work_progress.cuh>
-#include <gunrock/util/error_utils.cuh>
-#include <gunrock/util/test_utils.cuh>
-#include <gunrock/util/array_utils.cuh>
-#include <gunrock/util/circular_queue.cuh>
-#include <gunrock/app/problem_base.cuh>
-#include <gunrock/app/enactor_kernel.cuh>
-
-#include <gunrock/oprtr/advance/kernel.cuh>
-#include <gunrock/oprtr/advance/kernel_policy.cuh>
-#include <gunrock/oprtr/filter/kernel.cuh>
-#include <gunrock/oprtr/filter/kernel_policy.cuh>
-
-#include <moderngpu.cuh>
-
-using namespace mgpu;
+#include <list>
+#include <gunrock/app/enactor_loop.cuh>
 
 namespace gunrock {
 namespace app {
@@ -39,28 +23,50 @@ namespace app {
 /**
  * @brief Structure for per-thread variables used in sub-threads.
  */
+template<
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
 class ThreadSlice
 {    
 public:
+
+    enum Status {
+        New,
+        Init,
+        Start,
+        Running,
+        Ideal,
+        ToKill,
+        Ended
+    };  
+
     int           thread_num ;
-    int           gpu_num    ;
+    int           thread_type;
+    int           gpu_num    ;   
+    long long     iteration  ;   
     int           init_size  ;
-    CUTThread     thread_Id  ;
-    int           stats      ;
-    void         *problem    ;
-    void         *enactor    ;
-    ContextPtr   *context    ;
+    Status        status     ;   
+    void         *problem    ;   
+    void         *enactor    ;   
+    cudaError_t   retval     ;   
     util::cpu_mt::CPUBarrier
                  *cpu_barrier;
+    IterationBase <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
+                 *iteration_loops;
 
     ThreadSlice() :
-        thread_num (0   ),
-        init_size  (0   ),
-        stats      (-2  ),
+        thread_num (0   ),  
+        thread_type(0   ),  
+        gpu_num    (0   ),  
+        iteration  (0   ),  
+        init_size  (0   ),  
+        status     (New ),  
         problem    (NULL),
         enactor    (NULL),
-        context    (NULL),
-        cpu_barrier(NULL)
+        retval     (cudaSuccess),
+        cpu_barrier(NULL),
+        iteration_loops(NULL)
     {    
     }    
 
@@ -68,42 +74,58 @@ public:
     {    
         problem     = NULL;
         enactor     = NULL;
-        context     = NULL;
         cpu_barrier = NULL;
+        iteration_loops = NULL;
     }    
 }; // end of ThreadSlice
 
-template<typename Enactor>
-void Send_Thread(ThreadSlice *thread_data)
+template<
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
+void Outpu_Thread(void *_thread_slice)
 {
-    typedef Enactor::PRequest            PRequest;
+    typedef typename Enactor::PRequest   PRequest;
     typedef typename std::list<PRequest> PRList;
-    typedef Enactor::Problem             Problem;
-    typedef Problem::DataSlice           DataSlice;
+    typedef typename Enactor::Problem    Problem;
+    typedef typename Problem::DataSlice  DataSlice;
+    typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, 
+        Enactor> ThreadSlice;
+    typedef EnactorSlice<Enactor> EnactorSlice;
 
-    Problem      *problem       = (Problem*) thread_data->problem;
-    Enactor      *enactor       = (Enactor*) thread_data->enactor;
-    int           gpu_num       =   thread_data   -> gpu_num;
-    EnactorSlice *enactor_slice = &(enactor       -> enactor_slices[gpu_num]);
-    PRList       *request_queue = &(enactor_slice -> outpu_request_queue);
-    std::mutex   *rqueue_mutex  = &(enactor_slice -> outpu_request_mutex); 
-    
-    while (thread_data -> status != 4)
+    ThreadSlice  *thread_slice = (ThreadSlice*) _thread_slice;
+    Problem      *problem = (Problem*) thread_slice  -> problem;
+    Enactor      *enactor = (Enactor*) thread_slice  -> enactor;
+    int           gpu_num          =   thread_slice  -> gpu_num;
+    int           num_gpus         =   enactor -> num_gpus;
+    EnactorSlice *enactor_slice    = ((EnactorSlice*) enactor -> enactor_slices) + gpu_num;
+    PRList       *request_queue    = &(enactor_slice -> outpu_request_queue);
+    std::mutex   *rqueue_mutex     = &(enactor_slice -> outpu_request_mutex); 
+    int           stream_selector  = 0;
+    cudaStream_t  stream           = 0;
+    cudaStream_t *streams          = &(enactor_slice -> outpu_streams[0]);
+    typename std::list<PRequest>::iterator it, it_;
+
+    while (thread_slice -> status != 4)
     {
-        if (!request_queue.empty())
+        if (!request_queue->empty())
         {
             rqueue_mutex->lock();
-            PRList::iterator it_, it = request_queue->begin();
+            it = request_queue->begin();
             while (it != request_queue->end())
             {
                 it_ = it; it++;
                 if ((*it_).status == 1) // requested
                 {
+                    stream = streams[stream_selector];
+                    stream_selector ++;
+                    stream_selector = stream_selector % enactor_slice->num_outpu_streams;
                     if ((*it_).peer < num_gpus) // local peer
                     {
-                        if (thread_data -> retval = PushNeibor <Enactor> (&(*it_), problem))
+                        (*it_).stream = stream;
+                        if (thread_slice -> retval = PushNeibor <Enactor> (&(*it_), enactor))
                             break;
-                        request_queue -> earse(it_);
+                        request_queue -> erase(it_);
                     } else { // remote peer
                     }
                 }
@@ -112,12 +134,15 @@ void Send_Thread(ThreadSlice *thread_data)
         } else {
             std::this_thread::sleep_for(std::chrono::microseconds(1));
         }
-        if (thread_data -> retval) break;
+        if (thread_slice -> retval) break;
     }
 }
 
-template <typename Enactor>
-void Recv_Thread(ThreadSlice *thread_data)
+template<
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
+void Input_Thread(void *_thread_slice)
 {
     typedef typename Enactor::Problem       Problem      ;
     typedef typename Problem::DataSlice     DataSlice    ;
@@ -125,51 +150,79 @@ void Recv_Thread(ThreadSlice *thread_data)
     typedef typename Enactor::SizeT         SizeT        ;
     typedef typename Enactor::VertexId      VertexId     ;
     typedef typename Enactor::Value         Value        ;
-
-    int            gpu_num     = thread_data -> gpu_num;
-    Problem       *problem     = (Problem*) thread_data -> problem;
-    Enactor       *enactor     = (Enactor*) thread_data -> enactor;
-    DataSlice     *data_slice  = &(problem ->data_slices[gpu_num][0]);
-    EnactorSlice  *enactor_slice = &(enactor -> enactor_slices[gpu_num]);
-    CircularQueue *input_queue = data_slice->input_queue;
-    SizeT         *iteration_  = &(thread_data->iteration); 
-    SizeT          iteration   = 0;
-    VertexId      *s_vertices  = NULL;
-    VertexId      *t_vertices  = NULL;
+    typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, 
+        Enactor> ThreadSlice;
+    //template <typename Type>
+    //using Array = typename Enactor::Array<Type>;
+ 
+    ThreadSlice  *thread_slice = (ThreadSlice*) _thread_slice;
+    Problem       *problem = (Problem*) thread_slice  -> problem;
+    Enactor       *enactor = (Enactor*) thread_slice  -> enactor;
+    int            gpu_num          =   thread_slice  -> gpu_num;
+    util::Array1D<SizeT, DataSlice> 
+                  *data_slice       = &(problem       -> data_slices[gpu_num]);
+    EnactorSlice<Enactor> 
+                  *enactor_slice    = ((EnactorSlice<Enactor>*) enactor -> enactor_slices) + gpu_num;
+    CircularQueue *input_queues     =   enactor_slice -> input_queues;
+    cudaStream_t  *streams          = &(enactor_slice -> input_streams[0]);
+    int            target_input_count = enactor_slice -> input_target_count;
+    typename Enactor::Array<char>   
+                  *e_arrays         =   enactor_slice -> input_e_arrays;
+    long long     *iteration_       = &(thread_slice  -> iteration); 
+    long long      iteration        = 0;
+    VertexId      *s_vertices       = NULL;
+    VertexId      *t_vertices       = NULL;
     VertexId      *s_vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
     Value         *s_value__associates[Enactor::NUM_VALUE__ASSOCIATES];
-    SizeT          s_size_soli = 0;
-    SizeT          s_size_occu = 0;
-    SizeT          length      = 0;
-    SizeT          s_offset    = 0;
-    SizeT          min_length  = 1;
-    SizeT          max_length  = 1024 * 1024;
-    SizeT          stream    ; // =?
-    CircularQueue *s_cq        = NULL;
-    CircularQueue *t_cq      ; // =?
-    SizeT          e_offset    = 0;
-    util::Array1D<SizeT, char> *e_array = NULL;
-    VertexId      *o_vertex_associates = NULL;
-    SizeT          grid_size   = 0;
+    SizeT          s_size_soli      = 0;
+    SizeT          s_size_occu      = 0;
+    SizeT          length           = 0;
+    SizeT          s_offset         = 0;
+    SizeT          t_offset         = 0;
+    SizeT          grid_size        = 0;
+    SizeT          min_length       = 1;
+    SizeT          max_length       = 32 * 1024 * 1024;
+    cudaStream_t   stream           = 0;
+    int            stream_selector  = 0;
+    CircularQueue *s_queue          = NULL;
+    CircularQueue *t_queue          = NULL;
+    SizeT          e_offset         = 0;
+    typename Enactor::Array<char>   
+                  *e_array          = NULL;
+    VertexId     **o_vertex_associates   = NULL;
+    Value        **o_value__associates   = NULL;
+    SizeT          num_vertex_associates = 0;
+    SizeT          num_value__associates = 0;
+    IterationBase<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
+                  *iteration_loop = NULL;
 
-    while (thread_data -> status != 4)
+    while (thread_slice -> status != ThreadSlice::ToKill)
     {
-        iteration = iteratino_[0];
-        s_cq = &(input_cq[iteration%2]);
-        if (!s_cq->empty())
+        iteration = iteration_[0];
+        s_queue   = &(input_queues[iteration%2]);
+        if (!s_queue->Empty())
         {
-            e_array = &(data_slice->expand_incoming_array[0 /**/]);
-            s_cq->GetSize(size_occu, size_soli);
-            length = (s_cq->GetInputCount() == to_input) ? size_occu : size_soli;
-            o_vertex_associates = data_slice -> vertex_associate_orgs.GetPointer(util::HOST);
-            o_value__associates = data_slice -> value__associate_orgs.GetPointer(util::HOST);
-            if (thread_data -> retval = s_cq->Pop_Addr(
+            e_array = &(e_arrays[stream_selector]);
+            s_queue -> GetSize(s_size_occu, s_size_soli);
+            t_queue = (enactor -> using_subq) ? &enactor_slice -> subq__queue :
+                &enactor_slice -> fullq_queue;
+            stream  = streams[stream_selector];
+            length = (s_queue->GetInputCount() == target_input_count) ? 
+                      s_size_occu : s_size_soli;
+            o_vertex_associates = enactor_slice -> 
+                vertex_associate_orgs.GetPointer(util::HOST);
+            o_value__associates = enactor_slice -> 
+                value__associate_orgs.GetPointer(util::HOST);
+            num_vertex_associates = enactor -> num_vertex_associates;
+            num_value__associates = enactor -> num_value__associates;
+
+            if (thread_slice -> retval = s_queue->Pop_Addr(
                 min_length, max_length, s_vertices, length, s_offset, stream,
                 num_vertex_associates, num_value__associates,
-                s_vertex_associates, s_value__associates)) return retval;
+                s_vertex_associates, s_value__associates)) return;
 
-            if (thread_data -> retval = t_cq->Push_Addr(
-                length, t_vertices, t_offset)) return retval;
+            if (thread_slice -> retval = t_queue->Push_Addr(
+                length, t_vertices, t_offset)) return;
 
             e_offset = 0;
             memcpy( &(e_array[e_offset]),     s_vertex_associates ,
@@ -188,36 +241,44 @@ void Recv_Thread(ThreadSlice *thread_data)
 
             grid_size = length/256+1;
             if (grid_size>512) grid_size=512;
-            data_slice->iteration->Expand_Incoming(
-                num_vertex_associates,
-                num_value__associates,
-                grid_size, 
-                256, 
-                e_offset,
-                stream,
-                length,
-                s_vertices,
-                t_vertices,
-                e_offset,
-                e_array->GetPointer(util::DEVICE),
-                data_slice);
+            iteration_loop = thread_slice -> iteration_loops + stream_selector;
+            iteration_loop -> num_vertex_associates = num_vertex_associates;
+            iteration_loop -> num_value__associates = num_value__associates;
+            iteration_loop -> grid_size             = grid_size;
+            iteration_loop -> block_size            = 256;
+            iteration_loop -> shared_size           = e_offset;
+            iteration_loop -> stream                = stream;
+            iteration_loop -> num_elements          = length;
+            iteration_loop -> keys_in               = s_vertices;
+            iteration_loop -> keys_out              = t_vertices;
+            iteration_loop -> array_size            = e_offset;
+            iteration_loop -> d_array               = e_array->GetPointer(util::DEVICE);
+            iteration_loop -> data_slice            = data_slice;
 
-            if (thread_data -> retval = s_cq->EventSet(1, s_offset, length, stream))
-                return retval;
-            if (thread_data -> retval = t_cq->EventSet(0, t_offset, length, stream))
-                return retval;
+            if (thread_slice -> retval = iteration_loop -> Expand_Incoming())
+                return;
+
+            if (thread_slice -> retval = 
+                s_queue -> EventSet(1, s_offset, length, stream))
+                return;
+            if (thread_slice -> retval = 
+                t_queue -> EventSet(0, t_offset, length, stream))
+                return;
         } else {
             std::this_thread::sleep_for(std::chrono::microseconds(1));
         }
-        if (thread_data -> retval) break;
+        if (thread_slice -> retval) break;
     }
 
 }
 
-template <typename Enactor>
-void SubQ_Thread(ThreadSlice *thread_data)
+template<
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
+void SubQ__Thread(void *_thread_slice)
 {
-    for (peer__=0; peer__<num_gpus*2; peer__++)
+    /*for (peer__=0; peer__<num_gpus*2; peer__++)
     {
         peer_               = (peer__%num_gpus);
         peer                = peer_<= thread_num? peer_-1   : peer_       ;
@@ -370,14 +431,17 @@ void SubQ_Thread(ThreadSlice *thread_data)
         }
         stages[peer__]++;
         if (enactor_stats_->retval) break;
-    }
+    }*/
 
 }
 
-template <typename Enactor>
-void FullQ_Thread(ThreadSlice *thread_data)
+template<
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
+void FullQ_Thread(void *_thread_data)
 {
-    if (Iteration::HAS_FULLQ)
+    /*if (Iteration::HAS_FULLQ)
     {
         peer_               = 0;
         frontier_queue_     = &(data_slice->frontier_queues[(Enactor::SIZE_CHECK || num_gpus==1)?0:num_gpus]);
@@ -509,7 +573,7 @@ void FullQ_Thread(ThreadSlice *thread_data)
 
     for (peer_=0;peer_<num_gpus;peer_++)
         frontier_attribute[peer_].queue_length = data_slice->out_length[peer_];
-
+    */
 }
 
 } // namespace app

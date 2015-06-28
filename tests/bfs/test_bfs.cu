@@ -355,8 +355,8 @@ void SimpleReferenceBfs(
  */
 template <
     typename    VertexId,
-    typename    Value,
     typename    SizeT,
+    typename    Value,
     bool        INSTRUMENT,
     bool        DEBUG,
     bool        SIZE_CHECK,
@@ -371,26 +371,26 @@ void RunTests(Test_Parameter *parameter)
         MARK_PREDECESSORS,
         ENABLE_IDEMPOTENCE,
         (MARK_PREDECESSORS && ENABLE_IDEMPOTENCE)> 
-    BfsProblem; // does not use double buffer
+    Problem; // does not use double buffer
 
-    typedef BFSEnactor<BfsProblem, 
+    typedef BFSEnactor<Problem, 
         INSTRUMENT, 
         DEBUG, 
         SIZE_CHECK>
-    BfsEnactor;
+    Enactor;
 
-    Csr<VertexId, Value, SizeT>
-                 *graph                 = (Csr<VertexId, Value, SizeT>*)parameter->graph;
+    Csr<VertexId, SizeT, Value>
+                 *graph                 = (Csr<VertexId, SizeT, Value>*)parameter->graph;
     VertexId      src                   = (VertexId)parameter -> src;
     int           max_grid_size         = parameter -> max_grid_size;
     int           num_gpus              = parameter -> num_gpus;
     double        max_queue_sizing      = parameter -> max_queue_sizing;
     double        max_queue_sizing1     = parameter -> max_queue_sizing1;
     double        max_in_sizing         = parameter -> max_in_sizing;
-    ContextPtr   *context               = (ContextPtr*)parameter -> context;
+    //ContextPtr   *context               = (ContextPtr*)parameter -> context;
     std::string   partition_method      = parameter -> partition_method;
     int          *gpu_idx               = parameter -> gpu_idx;
-    cudaStream_t *streams               = parameter -> streams;
+    //cudaStream_t *streams               = parameter -> streams;
     float         partition_factor      = parameter -> partition_factor;
     int           partition_seed        = parameter -> partition_seed;
     bool          g_quick               = parameter -> g_quick;
@@ -420,10 +420,10 @@ void RunTests(Test_Parameter *parameter)
         cudaMemGetInfo(&(org_size[gpu]),&dummy);
     }
     // Allocate BFS enactor map
-    BfsEnactor *enactor= new BfsEnactor(num_gpus, gpu_idx);
+    Enactor *enactor= new Enactor(num_gpus, gpu_idx);
             
     // Allocate problem on GPU
-    BfsProblem *problem = new BfsProblem;
+    Problem *problem = new Problem;
     util::GRError(problem->Init(
         g_stream_from_host,
         graph,
@@ -431,12 +431,9 @@ void RunTests(Test_Parameter *parameter)
         num_gpus,
         gpu_idx,
         partition_method,
-        streams,
-        max_queue_sizing,
-        max_in_sizing,
         partition_factor,
         partition_seed), "Problem BFS Initialization Failed", __FILE__, __LINE__);
-    util::GRError(enactor->Init (context, problem, max_grid_size, traversal_mode), "BFS Enactor init failed", __FILE__, __LINE__);
+    util::GRError(enactor->Init (problem, max_grid_size, traversal_mode), "BFS Enactor init failed", __FILE__, __LINE__);
 
     //
     // Compute reference CPU BFS solution for source-distance
@@ -444,7 +441,7 @@ void RunTests(Test_Parameter *parameter)
     if (reference_check_label != NULL)
     {
         printf("Computing reference value ...\n");
-        SimpleReferenceBfs<VertexId, Value, SizeT, MARK_PREDECESSORS, ENABLE_IDEMPOTENCE>(
+        SimpleReferenceBfs<VertexId, SizeT, Value, MARK_PREDECESSORS, ENABLE_IDEMPOTENCE>(
             graph,
             reference_check_label,
             reference_check_preds,
@@ -567,8 +564,8 @@ void RunTests(Test_Parameter *parameter)
 
 template <
     typename    VertexId,
-    typename    Value,
     typename    SizeT,
+    typename    Value,
     bool        INSTRUMENT,
     bool        DEBUG,
     bool        SIZE_CHECK,
@@ -576,72 +573,72 @@ template <
 void RunTests_enable_idempotence(Test_Parameter *parameter)
 {
     if (parameter->enable_idempotence) RunTests
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
         true > (parameter);
    else RunTests
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS,
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS,
         false> (parameter);
 }
 
 template <
     typename    VertexId,
-    typename    Value,
     typename    SizeT,
+    typename    Value,
     bool        INSTRUMENT,
     bool        DEBUG,
     bool        SIZE_CHECK>
 void RunTests_mark_predecessors(Test_Parameter *parameter)
 {
     if (parameter->mark_predecessors) RunTests_enable_idempotence
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, SIZE_CHECK,
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
         true > (parameter);
    else RunTests_enable_idempotence
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, SIZE_CHECK, 
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, 
         false> (parameter);
 }
 
 template <
     typename      VertexId,
-    typename      Value,
     typename      SizeT,
+    typename      Value,
     bool          INSTRUMENT,
     bool          DEBUG>
 void RunTests_size_check(Test_Parameter *parameter)
 {
     if (parameter->size_check) RunTests_mark_predecessors
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, 
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
         true > (parameter);
    else RunTests_mark_predecessors
-        <VertexId, Value, SizeT, INSTRUMENT, DEBUG, 
+        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
         false> (parameter);
 }
 
 template <
     typename    VertexId,
-    typename    Value,
     typename    SizeT,
+    typename    Value,
     bool        INSTRUMENT>
 void RunTests_debug(Test_Parameter *parameter)
 {
     if (parameter->debug) RunTests_size_check
-        <VertexId, Value, SizeT, INSTRUMENT, 
+        <VertexId, SizeT, Value, INSTRUMENT, 
         true > (parameter);
     else RunTests_size_check
-        <VertexId, Value, SizeT, INSTRUMENT, 
+        <VertexId, SizeT, Value, INSTRUMENT, 
         false> (parameter);
 }
 
 template <
     typename      VertexId,
-    typename      Value,
-    typename      SizeT>
+    typename      SizeT,
+    typename      Value>
 void RunTests_instrumented(Test_Parameter *parameter)
 {
     if (parameter->instrumented) RunTests_debug
-        <VertexId, Value, SizeT, 
+        <VertexId, SizeT, Value,
         true > (parameter);
     else RunTests_debug
-        <VertexId, Value, SizeT, 
+        <VertexId, SizeT, Value, 
         false> (parameter);
 }
 
@@ -661,12 +658,10 @@ template <
     typename Value,
     typename SizeT>
 void RunTests(
-    Csr<VertexId, Value, SizeT> *graph,
+    Csr<VertexId, SizeT, Value> *graph,
     CommandLineArgs             &args,
     int                          num_gpus,
-    ContextPtr                  *context,
-    int                         *gpu_idx,
-    cudaStream_t                *streams)
+    int                         *gpu_idx)
 {
     string src_str="";
     Test_Parameter *parameter = new Test_Parameter;   
@@ -674,9 +669,9 @@ void RunTests(
     parameter -> Init(args);
     parameter -> graph              = graph;
     parameter -> num_gpus           = num_gpus;
-    parameter -> context            = context;
+    //parameter -> context            = context;
     parameter -> gpu_idx            = gpu_idx;
-    parameter -> streams            = streams;
+    //parameter -> streams            = streams;
 
     args.GetCmdLineArgument("src", src_str);
     if (src_str.empty()) {
@@ -830,8 +825,8 @@ int main( int argc, char** argv)
     CommandLineArgs  args(argc, argv);
     int              num_gpus     = 0;
     int             *gpu_idx      = NULL;
-    ContextPtr      *context      = NULL;
-    cudaStream_t    *streams      = NULL;
+    //ContextPtr      *context      = NULL;
+    //cudaStream_t    *streams      = NULL;
     bool             g_undirected = false;
 
     if ((argc < 2) || (args.CheckCmdLineFlag("help"))) {
@@ -852,19 +847,19 @@ int main( int argc, char** argv)
         gpu_idx    = new int[num_gpus];
         gpu_idx[0] = 0;
     }
-    streams  = new cudaStream_t[num_gpus * num_gpus *2];
-    context  = new ContextPtr  [num_gpus * num_gpus];
+    //streams  = new cudaStream_t[num_gpus * num_gpus *2];
+    //context  = new ContextPtr  [num_gpus * num_gpus];
     printf("Using %d gpus: ", num_gpus);
     for (int gpu=0;gpu<num_gpus;gpu++) 
     {
         printf(" %d ", gpu_idx[gpu]);
-        util::SetDevice(gpu_idx[gpu]);
-        for (int i=0;i<num_gpus*2;i++)
-        {
-            int _i=gpu*num_gpus*2+i;
-            util::GRError(cudaStreamCreate(&streams[_i]), "cudaStreamCreate fialed.",__FILE__,__LINE__);
-            if (i<num_gpus) context[gpu*num_gpus+i] = mgpu::CreateCudaDeviceAttachStream(gpu_idx[gpu],streams[_i]);
-        }
+        //util::SetDevice(gpu_idx[gpu]);
+        //for (int i=0;i<num_gpus*2;i++)
+        //{
+        //    int _i=gpu*num_gpus*2+i;
+        //    util::GRError(cudaStreamCreate(&streams[_i]), "cudaStreamCreate fialed.",__FILE__,__LINE__);
+        //    if (i<num_gpus) context[gpu*num_gpus+i] = mgpu::CreateCudaDeviceAttachStream(gpu_idx[gpu],streams[_i]);
+        //}
     }
     printf("\n"); fflush(stdout);
     
@@ -885,9 +880,9 @@ int main( int argc, char** argv)
     //
 
     typedef int VertexId;                   // Use as the node identifier
-    typedef int Value;                      // Use as the value type
     typedef int SizeT;                      // Use as the graph size type
-    Csr<VertexId, Value, SizeT> csr(false); // default for stream_from_host
+    typedef int Value;                      // Use as the value type
+    Csr<VertexId, SizeT, Value> csr(false); // default for stream_from_host
     if (graph_args < 1) { Usage(); return 1; }
 
     if (graph_type == "market")
@@ -991,7 +986,7 @@ int main( int argc, char** argv)
     }
 
     csr.PrintHistogram();
-    RunTests(&csr, args, num_gpus, context, gpu_idx, streams);
+    RunTests(&csr, args, num_gpus, gpu_idx);
 
     return 0;
 }
