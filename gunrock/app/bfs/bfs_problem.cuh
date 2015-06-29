@@ -304,8 +304,8 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                         //this->num_gpus > 1? this->graph_slices[gpu]->original_vertex.GetPointer(util::HOST) : NULL,
                         )) return retval;
 
-                if (ENABLE_IDEMPOTENCE) {
-                    SizeT bytes = (graph_slices[gpu]->nodes + 8 - 1) / 8;
+                if (this->ENABLE_IDEMPOTENCE) {
+                    SizeT bytes = (this->graph_slices[gpu]->nodes + 8 - 1) / 8;
                     cudaChannelFormatDesc   bitmask_desc = cudaCreateChannelDesc<char>();
                     gunrock::oprtr::filter::BitmaskTex<unsigned char>::ref.channelDesc = bitmask_desc;
                     if (retval = util::GRError(cudaBindTexture(

@@ -50,11 +50,13 @@ struct EnactorSlice
     int                   input_target_count      ;
     CircularQueue         input_queues         [2];
     Array<char        >  *input_e_arrays          ; // compressed data structure for expand_incoming kernel
+    void*                 input_iteration_loops   ;
 
     Array<cudaStream_t>   outpu_streams           ; // GPU streams
     CircularQueue         outpu_queue             ;
     std::list<PRequest>   outpu_request_queue     ;
     std::mutex            outpu_request_mutex     ;
+    void*                 outpu_iteration_loops   ;
 
     Array<cudaStream_t>   subq__streams           ; // GPU streams
     Array<ContextPtr  >   subq__contexts          ;
@@ -63,19 +65,22 @@ struct EnactorSlice
     Array<bool        >   subq__to_shows          ; // whether to show debug information for the streams
     Array<cudaEvent_t*>   subq__events         [4]; // GPU stream events arrays
     Array<bool*       >   subq__event_sets     [4]; // Whether the GPU stream events are set
-    Array<int         >   subq__wait_markers      ; // 
+    Array<int         >   subq__wait_markers      ; //
+    int                   subq__wait_counter      ; 
     Array<SizeT       >  *subq__scanned_edges     ;
     Array<FrontierT   >   subq__frontiers         ; // frontier queues
     Array<FrontierA   >   subq__frontier_attributes;
     Array<EnactorStats>   subq__enactor_statses   ;
     Array<util::CtaWorkProgressLifetime> 
                           subq__work_progresses   ;
+    void*                 subq__iteration_loops   ;
     
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
     CircularQueue         fullq_queue             ;
     Array<int>            fullq_stage             ;
     Array<cudaEvent_t*>   fullq_event          [4]; // GPU stream events arrays
+    Array<bool*       >   fullq_event_set      [4];
     Array<bool        >   fullq_to_show           ; // whether to show debug information for the streams
     //Array<int         >  *fullq_wait_marker       ;
     Array<SizeT       >  *fullq_scanned_edge      ;
@@ -84,12 +89,14 @@ struct EnactorSlice
     Array<EnactorStats>   fullq_enactor_stats     ;
     Array<util::CtaWorkProgressLifetime>
                           fullq_work_progress     ;
+    void*                 fullq_iteration_loop    ;
  
     Array<cudaStream_t>   split_streams           ; // GPU streams
     Array<ContextPtr  >   split_contexts          ;
     Array<SizeT       >   split_lengths           ; // Number of outgoing vertices to peers  
     Array<SizeT       >  *split_markers           ; // Markers to separate vertices to peer GPUs
     Array<char        >  *split_m_arrays          ; // compressed data structure for make_out kernel
+    void*                 split_iteration_loops   ;
 
     EnactorSlice() :
         num_gpus           (0   ),
@@ -486,10 +493,10 @@ struct EnactorSlice
             SizeT target_capacity = total_in_nodes * input_factor;
             for (int i=0; i<2; i++)
             {
-                if (retval = input_queue[i].Init(target_capacity, util::DEVICE, 10,
+                if (retval = input_queues[i].Init(target_capacity, util::DEVICE, 10,
                     Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VERTEX_ASSOCIATES,
                     temp_factor * target_capacity)) return retval;
-                if (retval = input_queue[i].Reset()) return retval;
+                if (retval = input_queues[i].Reset()) return retval;
             }
         }
 
@@ -514,46 +521,48 @@ struct EnactorSlice
             if (retval = subq__queue.Reset()) return retval;
 
             SizeT frontier_sizes[2] = {0, 0};
-            double queue_sizing = (i==0)? subq__factor0 : subq__factor1;
-            queue_sizing *= subq__factor;
-            switch (frontier_type) {
-            case VERTEX_FRONTIERS :
-                // O(n) ping-pong global vertex frontiers
-                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                frontier_sizes[1] = frontier_sizes[0];
-                break;
-
-            case EDGE_FRONTIERS :
-                // O(m) ping-pong global edge frontiers
-                frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
-                frontier_sizes[1] = frontier_sizes[0];
-                break;
-
-            case MIXED_FRONTIERS :
-                // O(n) global vertex frontier, O(m) global edge frontier
-                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
-                break;
-            }
+            SizeT max_elements = 0;
             for (int i=0; i<2; i++)
             {
+                double queue_sizing = (i==0)? subq__factor0 : subq__factor1;
+                queue_sizing *= subq__factor;
+                switch (frontier_type) {
+                case VERTEX_FRONTIERS :
+                    // O(n) ping-pong global vertex frontiers
+                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                    frontier_sizes[1] = frontier_sizes[0];
+                    break;
+
+                case EDGE_FRONTIERS :
+                    // O(m) ping-pong global edge frontiers
+                    frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
+                    frontier_sizes[1] = frontier_sizes[0];
+                    break;
+
+                case MIXED_FRONTIERS :
+                    // O(n) global vertex frontier, O(m) global edge frontier
+                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                    frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
+                    break;
+                }
                 for (int stream=0; stream<num_subq__streams; stream++)
                 {
                     if (retval = subq__frontiers[stream].keys[i].Allocate(
                         frontier_sizes[i], util::DEVICE)) return retval;
                     if (use_double_buffer) {
-                        if (retval = subq__frontier[stream].values[i].Allocate(
+                        if (retval = subq__frontiers[stream].values[i].Allocate(
                             frontier_sizes[i], util::DEVICE)) return retval;
                     }
                 }
+                if (frontier_sizes[0] > max_elements) max_elements = frontier_sizes[0];
+                if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
             }
-            SizeT max_elements = (frontier_sizes[0] > frontier_sizes[1])?
-                frontier_sizes[0] : frontier_sizes[1];
+            for (int stream=0; stream<num_subq__streams; stream++)
             if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
                 return retval;
         }
 
-        if (num_fullq_streams != 0)
+        if (num_fullq_stream != 0)
         {
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
             if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,
@@ -562,29 +571,30 @@ struct EnactorSlice
             if (retval = fullq_queue.Reset()) return retval;
 
             SizeT frontier_sizes[2] = {0, 0};
-            double queue_sizing = (i==0)? fullq_factor0 : fullq_factor1;
-            queue_sizing *= fullq_factor;
-            switch (frontier_type) {
-            case VERTEX_FRONTIERS :
-                // O(n) ping-pong global vertex frontiers
-                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                frontier_sizes[1] = frontier_sizes[0];
-                break;
-
-            case EDGE_FRONTIERS :
-                // O(m) ping-pong global edge frontiers
-                frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
-                frontier_sizes[1] = frontier_sizes[0];
-                break;
-
-            case MIXED_FRONTIERS :
-                // O(n) global vertex frontier, O(m) global edge frontier
-                frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
-                break;
-            }
+            SizeT max_elements = 0;
             for (int i=0; i<2; i++)
             {
+                double queue_sizing = (i==0)? fullq_factor0 : fullq_factor1;
+                queue_sizing *= fullq_factor;
+                switch (frontier_type) {
+                case VERTEX_FRONTIERS :
+                    // O(n) ping-pong global vertex frontiers
+                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                    frontier_sizes[1] = frontier_sizes[0];
+                    break;
+
+                case EDGE_FRONTIERS :
+                    // O(m) ping-pong global edge frontiers
+                    frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
+                    frontier_sizes[1] = frontier_sizes[0];
+                    break;
+
+                case MIXED_FRONTIERS :
+                    // O(n) global vertex frontier, O(m) global edge frontier
+                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                    frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
+                    break;
+                }
                 for (int stream=0; stream<num_fullq_stream; stream++)
                 {
                     if (retval = fullq_frontier[stream].keys[i].Allocate(
@@ -594,10 +604,11 @@ struct EnactorSlice
                             frontier_sizes[i], util::DEVICE)) return retval;
                     }
                 }
+                if (frontier_sizes[0] > max_elements) max_elements = frontier_sizes[0];
+                if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
             }
-            SizeT max_elements = (frontier_sizes[0] > frontier_sizes[1])?
-                frontier_sizes[0] : frontier_sizes[1];
-            if (retval = fullq_scanned_edges[stream].Allocate(max_elements, util::DEVICE))
+            for (int stream=0; stream<num_fullq_stream; stream++)
+            if (retval = fullq_scanned_edge[stream].Allocate(max_elements, util::DEVICE))
                 return retval;
         }
 

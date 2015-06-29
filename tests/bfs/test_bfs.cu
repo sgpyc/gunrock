@@ -460,8 +460,8 @@ void RunTests(Test_Parameter *parameter)
 
     for (int iter = 0; iter < iterations; ++iter)
     {
-        util::GRError(problem->Reset(src, enactor->GetFrontierType(), max_queue_sizing, max_queue_sizing1), "BFS Problem Data Reset Failed", __FILE__, __LINE__);
-        util::GRError(enactor->Reset(), "BFS Enactor Reset failed", __FILE__, __LINE__);
+        util::GRError(problem->Reset(), "BFS Problem Data Reset Failed", __FILE__, __LINE__);
+        util::GRError(enactor->Reset(src, enactor->GetFrontierType(), max_queue_sizing, max_queue_sizing1, traversal_mode), "BFS Enactor Reset failed", __FILE__, __LINE__);
 
         util::GRError("Error before Enact", __FILE__, __LINE__);
         printf("__________________________\n");fflush(stdout);
@@ -518,7 +518,8 @@ void RunTests(Test_Parameter *parameter)
     if (num_gpus>1) printf(" #keys%d",num_gpus);
     printf("\n");
     double max_queue_sizing_[2] = {0,0}, max_in_sizing_=0;
-    for (int gpu=0;gpu<num_gpus;gpu++)
+    // TODO: find a new way to get queue sizing
+    /*for (int gpu=0;gpu<num_gpus;gpu++)
     {   
         size_t gpu_free,dummy;
         cudaSetDevice(gpu_idx[gpu]);
@@ -544,7 +545,7 @@ void RunTests(Test_Parameter *parameter)
         }   
         if (num_gpus>1) printf("\t %lld", (long long)(problem->data_slices[gpu]->frontier_queues[num_gpus].keys[0].GetSize()));
         printf("\n");
-    }   
+    }*/  
     printf("\t queue_sizing =\t %lf \t %lf", max_queue_sizing_[0], max_queue_sizing_[1]);
     if (num_gpus>1) printf("\t in_sizing =\t %lf", max_in_sizing_);
     printf("\n");

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <gunrock/oprtr/advance/kernel_policy.cuh>
 #include <gunrock/app/enactor_helper.cuh>
 
 namespace gunrock {
@@ -189,6 +190,12 @@ template <
 struct IterationBase
 {
 public:
+    enum Status {
+        New,
+        Init,
+        Running
+    };
+
     typedef typename Enactor::SizeT      SizeT     ;   
     typedef typename Enactor::Value      Value     ;   
     typedef typename Enactor::VertexId   VertexId  ;
@@ -218,6 +225,7 @@ public:
     bool              forward;
     bool              update_predecessors;
 
+    Status            status;
     int               num_gpus;
     int               thread_num;
     int               gpu_num;
@@ -242,10 +250,18 @@ public:
     int               grid_size;
     int               block_size;
     size_t            shared_size;
-    VertexId         *keys_in;
-    VertexId         *keys_out;
+    VertexId         *d_keys_in;
+    VertexId         *d_keys_out;
     size_t            array_size;
     char             *d_array;
+
+    SizeT            *d_offsets;
+    VertexId         *d_indices;
+    VertexId         *d_in_key_queue;
+    SizeT             max_in;
+    SizeT             max_out;
+    gunrock::oprtr::advance::TYPE advance_type;
+    bool              express;
 
     IterationBase(
         int  _num_gpus, 
@@ -254,7 +270,8 @@ public:
         bool _has_fullq,
         bool _backward,
         bool _forward,
-        bool _undate_predecessors) :
+        bool _update_predecessors) :
+        status            (Status::New),
         has_subq          (_has_subq),
         has_fullq         (_has_fullq),
         backward          (_backward),
@@ -277,7 +294,20 @@ public:
         data_slices       (NULL),
         graph_slice       (NULL),
         work_progress     (NULL),
-        stream            (0   )
+        stream            (0   ),
+        grid_size         (0   ),
+        block_size        (0   ),
+        shared_size       (0   ),
+        d_keys_in         (NULL),
+        d_keys_out        (NULL),
+        array_size        (0   ),
+        d_array           (NULL),
+        d_offsets         (NULL),
+        d_indices         (NULL),
+        d_in_key_queue    (NULL),
+        max_in            (0   ),
+        max_out           (0   ),
+        express           (false)
     {
         t_out_length = new SizeT[num_streams];
     }
@@ -293,9 +323,17 @@ public:
         graph_slice        = NULL;
         work_progress      = NULL;
         delete[] t_out_length; t_out_length = NULL;
+        d_keys_in          = NULL;
+        d_keys_out         = NULL;
+        d_array            = NULL;
+        d_offsets          = NULL;
+        d_indices          = NULL;
+        d_in_key_queue     = NULL;
     }
 
     virtual cudaError_t SubQueue_Gather () {return cudaSuccess;}
+
+    virtual cudaError_t Compute_OutputLength() {return cudaSuccess;}
 
     virtual cudaError_t SubQueue_Core   () {return cudaSuccess;}
 
@@ -320,13 +358,13 @@ public:
     {
         cudaError_t retval = cudaSuccess;
 
-        if (num_elements == 0) return;
+        if (num_elements == 0) return retval;
         int selector    = frontier_attribute->selector;
         int grid_size   = num_elements / 256;
         if ((num_elements % 256) !=0) grid_size++;
         if (grid_size > 512) grid_size = 512;
 
-        if (Problem::MARK_PREDECESSORS && UPDATE_PREDECESSORS && num_elements>0 )
+        if (Problem::MARK_PREDECESSORS && update_predecessors && num_elements>0 )
         {
             Copy_Preds<VertexId, SizeT> <<<grid_size,256,0, stream>>>(
                 num_elements,
@@ -353,10 +391,13 @@ public:
         int         iteration  = enactor_stats -> iteration;
 
         if (Enactor::DEBUG)
+        {
             printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
                 thread_num, iteration, stream_num,
                 frontier_queue->keys[selector^1].GetSize(),
-                request_length);fflush(stdout);
+                request_length);
+            fflush(stdout);
+        }
 
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, &frontier_queue->keys  [selector^1], 
@@ -376,7 +417,8 @@ public:
                 "queue3", request_length, &frontier_queue->values[selector  ], 
                 over_sized, thread_num, iteration, stream_num, true )) 
                 return retval;
-        } 
+        }
+        return retval; 
     }
 
     virtual cudaError_t Make_Output()
@@ -578,6 +620,12 @@ public:
         return retval;
     }
 
+    void PrintMessage(const char* message, long long iteration = -1)
+    {
+        if (Enactor::DEBUG)
+            util::cpu_mt::PrintMessage(message, thread_num,
+            iteration, stream_num);
+    }
 };
 
 } // namespace app

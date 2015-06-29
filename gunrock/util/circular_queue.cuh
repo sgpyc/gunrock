@@ -192,8 +192,8 @@ public:
                     if (retval = GRError(cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming), 
                         "cudaEventCreateWithFlags failed", __FILE__, __LINE__)) 
                         return retval;
+                    empty_gpu_events.push_back(gpu_events[i]);
                 }
-                empty_gpu_events.push_back(gpu_events[i]);
             }
         }
 
@@ -365,6 +365,8 @@ public:
             for (SizeT j=0; j<num_value__associates; j++)
                 value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
         } else { // splict at the end
+            if (retval = EnsureTempCapacity(length, length, length, set_gpu))
+                return retval;
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
                 vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
@@ -454,35 +456,20 @@ public:
             for (SizeT j=0; j<num_value__associates; j++)
                 value__associates[j] = this->value__associates[j].GetPointer(allocated) + offset; 
         } else {
-            int org_gpu;
+            int org_gpu = 0;
             if (set_gpu && allocated == DEVICE)
-            {
+            {    
                 if (retval = GRError(cudaGetDevice(&org_gpu),
                     "cudaGetDevice failed", __FILE__, __LINE__))
                     return retval;
                 if (retval = GRError(cudaSetDevice(gpu_idx),
                     "cudaSetDevice failed", __FILE__, __LINE__))
                     return retval;
-            }
+            } 
 
-            if (length > temp_array.GetSize() ||
-                length * num_vertex_associates > temp_vertex_associates.GetSize() ||
-                length * num_value__associates > temp_value__associates.GetSize())
-            {
-                if (!AUTO_RESIZE)
-                {
-                    retval = util::GRError(cudaErrorLaunchOutOfResources, 
-                        (name + " temp_array oversize ").c_str(), __FILE__, __LINE__);
-                    return retval;
-                }
-                if (temp_array.EnsureSize(length, false, 0, allocated))
-                    return retval;
-                if (temp_vertex_associates.EnsureSize(length * num_vertex_associates, false, 0, allocated))
-                    return retval;
-                if (temp_value__associates.EnsureSize(length * num_value__associates, false, 0, allocated))
-                    return retval;
-            }
-            
+            if (retval = EnsureTempCapacity(length, length, length, false))
+                return retval;
+           
             for (int i=0; i<2; i++)
             {
                 if (lengths[i] == 0) continue;
@@ -686,45 +673,52 @@ public:
         return Combined_Return(retval, in_critical);
     }
 
-    cudaError_t EnsuerTempCapacity(
+    cudaError_t EnsureTempCapacity(
         SizeT temp_capacity,
         SizeT vertex_capacity,
-        SizeT value__capacity)
+        SizeT value__capacity,
+        bool set_gpu = false)
     {
-         if (length > temp_array.GetSize() ||
-            length * num_vertex_associates > temp_vertex_associates.GetSize() || 
-            length * num_value__associates > temp_value__associates.GetSize())
+        cudaError_t retval = cudaSuccess;
+
+         if (temp_capacity > temp_array.GetSize() ||
+             vertex_capacity * num_vertex_associates > temp_vertex_associates.GetSize() || 
+             value__capacity * num_value__associates > temp_value__associates.GetSize())
         {
             if (!AUTO_RESIZE)
             {
                 retval = util::GRError(cudaErrorLaunchOutOfResources, 
                     (name + " remp_array oversize ").c_str(), __FILE__, __LINE__);
                 return retval;
-            }
-            int org_gpu = 0;
-            if (set_gpu && allocated == DEVICE)
-            {
-                if (retval = GRError(cudaGetDevice(&org_gpu),
-                    "cudaGetDevice failed", __FILE__, __LINE__))
+            } else {
+                int org_gpu = 0;
+                if (set_gpu && allocated == DEVICE)
+                {
+                    if (retval = GRError(cudaGetDevice(&org_gpu),
+                        "cudaGetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                    if (retval = GRError(cudaSetDevice(gpu_idx),
+                        "cudaSetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                }
+                if (retval = temp_array            .EnsureSize(
+                    temp_capacity                        , false, 0, allocated))
                     return retval;
-                if (retval = GRError(cudaSetDevice(gpu_idx),
-                    "cudaSetDevice failed", __FILE__, __LINE__))
+                if (retval = temp_vertex_associates.EnsureSize(
+                    vertex_capacity * num_vertex_associates, false, 0, allocated))
                     return retval;
-            }
-            if (retval = temp_array.EnsureSize(length, false, 0, allocated))
-                return retval;
-            if (retval = temp_vertex_associates.EnsureSize(length * num_vertex_associates, false, 0, allocated))
-                return retval;
-            if (retval = temp_value__associates.EnsuerSize(length * num_value__associates, false, 0, allocated))
-                return retval;
-            if (set_gpu && allocated == DEVICE)
-            {
-                if (retval = GRError(cudaSetDevice(org_gpu),
-                    "cudaSetDevice failed", __FILE__, __LINE__))
+                if (retval = temp_value__associates.EnsureSize(
+                    value__capacity * num_value__associates, false, 0, allocated))
                     return retval;
+                if (set_gpu && allocated == DEVICE)
+                {
+                    if (retval = GRError(cudaSetDevice(org_gpu),
+                        "cudaSetDevice failed", __FILE__, __LINE__))
+                        return retval;
+                }
             }
         }
-
+        return retval;
     }
 
     cudaError_t EnsureCapacity(
@@ -989,7 +983,7 @@ public:
             if ((offset == (*it).offset) && (length == (*it).length)) // matched event
             {
                 printf("Event %d,%d,%d finishes\n", direction, offset, length);//fflush(stdout);
-                (*it).status = Finished;
+                (*it).status = CqEvent::Finished;
                 break;
             }
         }

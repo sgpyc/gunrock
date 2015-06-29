@@ -425,8 +425,9 @@ protected:
 
         for (int gpu=0; gpu<num_gpus; gpu++)
         {
-            if (util::SetDevice(gpu_idx[gpu])) return;
-            EanctorSlice *enactor_slice = enactor_slices + gpu;
+            if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
+            EnactorSlice *enactor_slice = 
+                ((EnactorSlice*) enactor_slices) + gpu;
 
             for (int stream=0; stream < num_subq__streams + num_fullq_stream ; stream++)
             {
@@ -439,7 +440,7 @@ protected:
                 FrontierA *frontier_attribute_ = (stream < num_subq__streams) ?
                     enactor_slice -> subq__frontier_attributes + stream :
                     enactor_slice -> fullq_frontier_attribute  + stream - num_subq__streams;
-                if (retval = frontier_attribut_ -> output_length .Release()) return retval;
+                if (retval = frontier_attribute_ -> output_length .Release()) return retval;
                 util::CtaWorkProgressLifetime *work_progress_ = (stream < num_subq__streams) ?
                     enactor_slice -> subq__work_progresses + stream :
                     enactor_slice -> fullq_work_progress   + stream - num_subq__streams;

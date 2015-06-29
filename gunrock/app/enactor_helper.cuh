@@ -23,8 +23,8 @@ template <typename Enactor>
 bool All_Done(Enactor *enactor,
               int      gpu_num  = 0)
 {
-    Enactor_Slice<Enactor> *enactor_slices 
-        = (Enactor_Slice<Enactor>*) enactor->enactor_slices;
+    EnactorSlice<Enactor> *enactor_slices 
+        = (EnactorSlice<Enactor>*) enactor->enactor_slices;
     for (int i=0; i<enactor->num_threads; i++)
     {
         cudaError_t retval = enactor->thread_slices[i].retval;
@@ -39,10 +39,10 @@ bool All_Done(Enactor *enactor,
 
     for (int gpu=0; gpu < enactor->num_gpus; gpu++)
     {
-        Enactor_Slice<Enactor> *enactor_slice = &enactor_slices[gpu];
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu];
         for (int stream=0; stream < enactor->num_subq__streams + enactor->num_fullq_streams; stream++)
         {
-            Enactor::FrontierA *frontier_attribute = (stream < enactor->num_subq_streams) ? 
+            typename Enactor::FrontierA *frontier_attribute = (stream < enactor->num_subq_streams) ? 
                 enactor_slice->subq__frontier_attributes + stream :
                 enactor_slice->fullq_frontier_attributes + stream - enactor->num_subq_streams;
             if (frontier_attribute->queue_length != 0 ||
@@ -190,6 +190,7 @@ void ShowDebugInfo(
     int           thread_num,
     int           stream_num,
     Enactor      *enactor,
+    long long     iteration,
     std::string   check_name = "",
     cudaStream_t  stream = 0) 
 {    
@@ -200,22 +201,22 @@ void ShowDebugInfo(
     int   stage        = -1;
 
     EnactorSlice<Enactor> *enactor_slice 
-        = ((EnactorSlice<Encator>*) enactor->enactor_slices) + gpu_num;
+        = ((EnactorSlice<Enactor>*) enactor->enactor_slices) + gpu_num;
     //util::cpu_mt::PrintMessage(check_name.c_str(), thread_num, enactor_stats->iteration);
     //printf("%d \t %d\t \t reset = %d, index = %d\n",thread_num, enactor_stats->iteration, frontier_attribute->queue_reset, frontier_attribute->queue_index);fflush(stdout);
     //if (frontier_attribute->queue_reset)
-    switch (thrad_type)
+    switch (thread_type)
     {
     case 0:
         break;
     case 1:
         break;
     case 2:
-        queue_length = enactor_slice->subq__attributes[stream_num].queue_length;
+        queue_length = enactor_slice->subq__frontier_attributes[stream_num].queue_length;
         stage        = enactor_slice->subq__stages    [stream_num];
         break;
     case 3:
-        queue_length = enactor_slice->fullq_attribute [stream_num].queue_length;
+        queue_length = enactor_slice->fullq_frontier_attribute [stream_num].queue_length;
         stage        = enactor_slice->fullq_stage     [stream_num];
         break;
     default:
@@ -224,7 +225,7 @@ void ShowDebugInfo(
     //else if (enactor_stats->retval = util::GRError(work_progress->GetQueueLength(frontier_attribute->queue_index, queue_length, false, stream), "work_progress failed", __FILE__, __LINE__)) return;
     //util::cpu_mt::PrintCPUArray<SizeT, SizeT>((check_name+" Queue_Length").c_str(), &(queue_length), 1, thread_num, enactor_stats->iteration);
     printf("%d\t %lld\t %d\t stage%d\t %s\t Queue_Length = %d\n", 
-        gpu_num, enactor->thread_slices[thread_num]->iteration, stream_num, 
+        gpu_num, iteration, stream_num, 
         stage, check_name.c_str(), queue_length);fflush(stdout);
     //printf("%d \t %d\t \t peer_ = %d, selector = %d, length = %d, p = %p\n",thread_num, enactor_stats->iteration, peer_, frontier_attribute->selector,queue_length,graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE));fflush(stdout);
     //util::cpu_mt::PrintGPUArray<SizeT, VertexId>((check_name+" keys").c_str(), data_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE), queue_length, thread_num, enactor_stats->iteration,peer_, stream);
@@ -237,44 +238,71 @@ void ShowDebugInfo(
     //    util::cpu_mt::PrintGPUArray<SizeT, unsigned char>("mask1", data_slice[0]->visited_mask.GetPointer(util::DEVICE), (graph_slice->nodes+7)/8, thread_num, enactor_stats->iteration);
 }  
 
-template <typename DataSlice>
+template <typename EnactorSlice>
 cudaError_t Set_Record(
-    DataSlice *data_slice,
+    EnactorSlice *enactor_slice,
+    int thread_type,
     int iteration,
-    int peer_,
-    int stage,
-    cudaStream_t stream)
+    int stream_num,
+    int stage)
 {
-    cudaError_t retval = cudaEventRecord(data_slice->events[iteration%4][peer_][stage],stream);
-    data_slice->events_set[iteration%4][peer_][stage]=true;
+    cudaError_t retval = cudaSuccess;
+    if (thread_type == 2) // subq
+    {
+        retval = cudaEventRecord(
+            enactor_slice -> subq__events[iteration%4][stream_num][stage],
+            enactor_slice -> subq__streams[stream_num]);
+        enactor_slice -> subq__event_sets[iteration%4][stream_num][stage] = true;
+    } else if (thread_type == 3) // fullq
+    {
+        retval = cudaEventRecord(
+            enactor_slice -> fullq_event [iteration%4][stream_num][stage],
+            enactor_slice -> fullq_stream[stream_num]);
+        enactor_slice -> fullq_event_set [iteration%4][stream_num][stage] = true;
+    }
     return retval;
 }
 
-template <typename DataSlice>
+template <typename EnactorSlice>
 cudaError_t Check_Record(
-    DataSlice *data_slice,
+    EnactorSlice *enactor_slice,
+    int thread_type,
     int iteration,
-    int peer_,
+    int stream_num,
     int stage_to_check,
     int &stage,
     bool &to_show)
 {
     cudaError_t retval = cudaSuccess;
-    to_show = true;                 
-    if (!data_slice->events_set[iteration%4][peer_][stage_to_check])
+    to_show = true;
+    bool *event_set = NULL;
+    cudaEvent_t event;
+
+    if (thread_type == 2) 
+    { // subq
+        event     = enactor_slice ->
+            subq__events    [iteration%4][stream_num][stage_to_check];
+        event_set = enactor_slice -> 
+            subq__event_sets[iteration%4][stream_num] + stage_to_check;
+    } else if (thread_type == 3) 
+    { // fullq
+        event     = enactor_slice ->
+            fullq_event     [iteration%4][stream_num][stage_to_check];
+        event_set = enactor_slice ->
+            fullq_event_set [iteration%4][stream_num] + stage_to_check;
+    }
+    if (!event_set[0])
     {   
-        to_show = false;
-        stage--;
+        to_show = false;stage--;
     } else {
-        retval = cudaEventQuery(data_slice->events[iteration%4][peer_][stage_to_check]);
+        retval = cudaEventQuery(event);
         if (retval == cudaErrorNotReady)
         {   
-            to_show=false;
-            stage--;
+            to_show=false;stage--;
             retval = cudaSuccess; 
         } else if (retval == cudaSuccess)
         {
-            data_slice->events_set[iteration%4][peer_][stage_to_check]=false;
+            event_set[0] = false;
         }
     }
     return retval;
