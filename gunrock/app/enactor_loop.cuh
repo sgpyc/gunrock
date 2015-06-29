@@ -359,7 +359,7 @@ public:
         cudaError_t retval = cudaSuccess;
 
         if (num_elements == 0) return retval;
-        int selector    = frontier_attribute->selector;
+        //int selector    = frontier_attribute->selector;
         int grid_size   = num_elements / 256;
         if ((num_elements % 256) !=0) grid_size++;
         if (grid_size > 512) grid_size = 512;
@@ -368,17 +368,17 @@ public:
         {
             Copy_Preds<VertexId, SizeT> <<<grid_size,256,0, stream>>>(
                 num_elements,
-                frontier_queue->keys[selector].GetPointer(util::DEVICE),
-                data_slice    ->preds         .GetPointer(util::DEVICE),
-                data_slice    ->temp_preds    .GetPointer(util::DEVICE));
+                d_keys_in,
+                data_slice[0] ->preds         .GetPointer(util::DEVICE),
+                data_slice[0] ->temp_preds    .GetPointer(util::DEVICE));
 
             Update_Preds<VertexId,SizeT> <<<grid_size,256,0,stream>>>(
                 num_elements,
                 graph_slice   ->nodes,
-                frontier_queue->keys[selector] .GetPointer(util::DEVICE),
+                d_keys_in,
                 graph_slice   ->original_vertex.GetPointer(util::DEVICE),
-                data_slice    ->temp_preds     .GetPointer(util::DEVICE),
-                data_slice    ->preds          .GetPointer(util::DEVICE));//,
+                data_slice[0] ->temp_preds     .GetPointer(util::DEVICE),
+                data_slice[0] ->preds          .GetPointer(util::DEVICE));//,
         }
         return retval;
     }
@@ -425,7 +425,7 @@ public:
     {
         // TODO: modify to fit new interfaces
         cudaError_t retval          = cudaSuccess;
-/*        bool        over_sized      = false;
+        bool        over_sized      = false;
         bool        keys_over_sized = false;
         int         stream_num      = 0;
         int         t=0, i=0;
@@ -433,7 +433,7 @@ public:
         int         selector        = frontier_attribute->selector;
         int         block_size      = 256;
         int         grid_size       = num_elements / block_size;
-        DataSlice*  data_slice      = this->data_slice->GetPointer(util::HOST);
+        DataSlice*  data_slice      = data_slice + 0;
 
         if (num_gpus < 2) return retval;
         if ((num_elements % block_size)!=0) grid_size ++;
@@ -447,10 +447,11 @@ public:
         if (num_elements ==0) return;
  
         over_sized = false;
-        for (peer_ = 0; peer_<num_gpus; peer_++)
+        for (stream_num = 0; stream_num < num_streams; stream_num++)
         {
-            if (enactor_stats->retval = 
-                Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> ("keys_marker", num_elements, &data_slice->keys_marker[peer_], over_sized, thread_num, enactor_stats->iteration, peer_)) break;
+            if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
+                "keys_marker", num_elements, &data_slice->keys_marker[peer_], 
+                over_sized, thread_num, iteration, )) break;
             if (over_sized) data_slice->keys_markers[peer_]=data_slice->keys_marker[peer_].GetPointer(util::DEVICE);
         }
         if (enactor_stats->retval) return;
@@ -616,7 +617,7 @@ public:
         if (enactor_stats->retval = cudaStreamSynchronize(stream)) return;
         frontier_attribute->selector^=1;
         if (t_out_length!=NULL) {delete[] t_out_length; t_out_length=NULL;}
-    */
+   
         return retval;
     }
 
