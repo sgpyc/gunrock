@@ -54,8 +54,8 @@ enum FrontierType {
  * @tparam Value               Type to use as vertex / edge associated values
  */
 template <
-    typename SizeT,
     typename VertexId,
+    typename SizeT,
     typename Value>
 struct GraphSlice
 {
@@ -314,8 +314,8 @@ struct GraphSlice
  * @tparam Value               Type to use as vertex / edge associated values
  */
 template <
-    typename SizeT,
     typename VertexId,
+    typename SizeT,
     typename Value>
 struct DataSliceBase
 {
@@ -391,86 +391,12 @@ struct DataSliceBase
      *
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */
-    cudaError_t Reset(
-        FrontierType frontier_type,
-        GraphSlice<SizeT, VertexId, Value>  
-               *graph_slice,
-        double  queue_sizing       = 2.0,
-        bool    _USE_DOUBLE_BUFFER = false, 
-        double  queue_sizing1      = -1.0)
+    cudaError_t Reset()
     {   
         cudaError_t retval = cudaSuccess;
-        for (int peer=0; peer<num_gpus; peer++)
-            out_length[peer] = 1;
-        if (queue_sizing1<0) queue_sizing1 = queue_sizing;
-
-        //  
-        // Allocate frontier queues if necessary
-        //  
-
-        // Determine frontier queue sizes
-        SizeT new_frontier_elements[2] = {0,0};
-        if (num_gpus>1) util::cpu_mt::PrintCPUArray<int, SizeT>("in_counter", graph_slice->in_counter.GetPointer(util::HOST), num_gpus+1, gpu_idx);
-
-        for (int peer=0;peer<(num_gpus>1?num_gpus+1:1);peer++)
-        for (int i=0; i< 2; i++)
-        {
-            double queue_sizing_ = i==0?queue_sizing : queue_sizing1;
-            switch (frontier_type) {
-                case VERTEX_FRONTIERS :
-                    // O(n) ping-pong global vertex frontiers
-                    new_frontier_elements[0] = double(num_gpus>1? graph_slice->in_counter[peer]:graph_slice->nodes) * queue_sizing_ +2;
-                    new_frontier_elements[1] = new_frontier_elements[0];
-                    break;
-
-                case EDGE_FRONTIERS :
-                    // O(m) ping-pong global edge frontiers
-                    new_frontier_elements[0] = double(graph_slice->edges) * queue_sizing_ +2;
-                    new_frontier_elements[1] = new_frontier_elements[0];
-                    break;
-
-                case MIXED_FRONTIERS :
-                    // O(n) global vertex frontier, O(m) global edge frontier
-                    new_frontier_elements[0] = double(num_gpus>1?graph_slice->in_counter[peer]:graph_slice->nodes) * queue_sizing_ +2;
-                    new_frontier_elements[1] = double(graph_slice->edges) * queue_sizing_ +2;
-                    break;
-            }    
-
-            // if froniter_queue is not big enough
-            if (frontier_queues[peer].keys[i].GetSize() < new_frontier_elements[i]) {
-
-                // If previously allocated
-                if (frontier_queues[peer].keys[i].GetPointer(util::DEVICE) != NULL && frontier_queues[peer].keys[i].GetSize()!=0) {
-                    if (retval = frontier_queues[peer].keys[i].EnsureSize(new_frontier_elements[i])) return retval;
-                } else {
-                    if (retval = frontier_queues[peer].keys[i].Allocate(new_frontier_elements[i], util::DEVICE)) return retval;
-                }
-
-                // If use double buffer
-                if (_USE_DOUBLE_BUFFER) {
-                    if (frontier_queues[peer].values[i].GetPointer(util::DEVICE) != NULL &&frontier_queues[peer].values[i].GetSize()!=0) {
-                        if (retval = frontier_queues[peer].values[i].EnsureSize(new_frontier_elements[i])) return retval;
-                    } else {
-                        if (retval = frontier_queues[peer].values[i].Allocate(new_frontier_elements[i], util::DEVICE)) return retval;
-                    }
-                }
-
-            } //end if
-
-            if (i==1) continue;
-
-            // Allocate scanned_edges
-            SizeT max_elements = new_frontier_elements[0];
-            if (new_frontier_elements[1] > max_elements) max_elements=new_frontier_elements[1];
-            if (scanned_edges[peer].GetSize() < max_elements)
-            {
-                if (scanned_edges[peer].GetPointer(util::DEVICE) != NULL && scanned_edges[peer].GetSize() != 0) {
-                    if (retval = scanned_edges[peer].EnsureSize(max_elements)) return retval;
-                } else {
-                    if (retval = scanned_edges[peer].Allocate(max_elements, util::DEVICE)) return retval;
-                }
-            }
-        }
+        // TODO: move to somewhere else
+        /*for (int peer=0; peer<num_gpus; peer++)
+            out_length[peer] = 1;*/
 
         return retval;
     } // end Reset(...)
@@ -740,7 +666,6 @@ struct ProblemBase
         int         num_gpus          = 1,
         int         *gpu_idx          = NULL,
         std::string partition_method  = "random",
-        float       queue_sizing      = 2.0,
         float       partition_factor  = -1,
         int         partition_seed    = -1)
     {
@@ -767,20 +692,30 @@ struct ProblemBase
                 util::CpuTimer cpu_timer;
 
                 printf("partition_method = %s\n", partition_method.c_str());
-                if (partition_method=="random")
-                    partitioner=new rp::RandomPartitioner   <VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+                if      (partition_method == "random")
+                    partitioner = new rp::RandomPartitioner <
+                        VertexId, SizeT, Value, 
+                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
-                else if (partition_method=="metis")
-                    partitioner=new metisp::MetisPartitioner<VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+                else if (partition_method == "metis" )
+                    partitioner = new metisp::MetisPartitioner <
+                        VertexId, SizeT, Value, 
+                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
-                else if (partition_method=="static")
-                    partitioner=new sp::StaticPartitioner<VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+                else if (partition_method == "static")
+                    partitioner = new sp::StaticPartitioner <
+                        VertexId, SizeT, Value, 
+                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
-                else if (partition_method=="cluster")
-                    partitioner=new cp::ClusterPartitioner  <VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+                else if (partition_method == "cluster")
+                    partitioner = new cp::ClusterPartitioner <
+                        VertexId, SizeT, Value, 
+                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
-                else if (partition_method=="biasrandom")
-                    partitioner=new brp::BiasRandomPartitioner <VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+                else if (partition_method == "biasrandom")
+                    partitioner = new brp::BiasRandomPartitioner <
+                        VertexId, SizeT, Value, 
+                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
                 else util::GRError("partition_method invalid", __FILE__,__LINE__);
                 cpu_timer.Start();
