@@ -95,7 +95,9 @@ struct EnactorSlice
     Array<ContextPtr  >   split_contexts          ;
     Array<SizeT       >   split_lengths           ; // Number of outgoing vertices to peers  
     Array<SizeT       >  *split_markers           ; // Markers to separate vertices to peer GPUs
+    Array<SizeT*      >   split_markerss          ;
     Array<char        >  *split_m_arrays          ; // compressed data structure for make_out kernel
+    Array<cudaEvent_t >   split_events            ;
     void*                 split_iteration_loops   ;
 
     EnactorSlice() :
