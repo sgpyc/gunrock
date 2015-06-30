@@ -544,7 +544,7 @@ void FullQ_Thread(void *_thread_slice)
     EnactorSlice  *enactor_slice    = ((EnactorSlice*)
                                         enactor -> enactor_slices) + gpu_num;
     CircularQueue *s_queue          = &(enactor_slice -> fullq_queue);
-    //int            num_streams      =   enactor_slice -> num_fullq_stream;
+    int            num_streams      =   enactor_slice -> num_fullq_stream;
     cudaStream_t   stream           =   enactor_slice -> fullq_stream[0];
     bool          *to_shows         =   enactor_slice -> fullq_to_show  + 0;
     int           *stages           =   enactor_slice -> fullq_stage    + 0;
@@ -559,10 +559,10 @@ void FullQ_Thread(void *_thread_slice)
                   *scanned_edge     =   enactor_slice -> fullq_scanned_edge;
     int            stream_num         = 0;
     long long      iteration          = 0;
-    long long      iteration_         = 0;
+    //long long      iteration_         = 0;
     std::string    mssg               = "";
     IterationT    *iteration_loop     = NULL;
-    //int            selector           = 0;
+    int            selector           = 0;
     bool           over_sized         = false;
     CircularQueue *t_queue            = NULL;
     //VertexId      *vertex_array       = NULL;
@@ -738,7 +738,7 @@ void FullQ_Thread(void *_thread_slice)
                 iteration_loop -> status      = IterationT::Status::Running;
             }
             iteration_loop -> num_streams = enactor_slice -> num_split_streams;
-            iteration_loop -> streams     = enactor_slice -> split_streams;
+            iteration_loop -> streams     = enactor_slice -> split_streams + 0;
             iteration_loop -> iteration   = iteration;
             if (thread_slice -> retval = 
                 iteration_loop -> Iteration_Update_Preds())

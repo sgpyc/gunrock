@@ -172,6 +172,44 @@ public:
 
 }; // end of PushRequest
 
+template <
+    typename _VertexId, 
+    typename _SizeT, 
+    typename _Value,
+    int _NUM_VERTEX_ASSOCIATES,
+    int _NUM_VALUE__ASSOCIATES>
+struct MakeOutArray
+{
+    typedef _VertexId VertexId;
+    typedef _SizeT    SizeT;
+    typedef _Value    Value;
+    static const int NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
+    static const int NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
+
+    enum Direction{
+        FORWARD = 1,
+        BACKWARD = 2
+    };
+
+    Direction  direction;
+    SizeT      num_elements;
+    int        num_vertex_associates;
+    int        num_value__associates;
+    int        target_gpu;
+    VertexId  *keys_in;
+    VertexId  *keys_out;
+    SizeT     *markers;
+    VertexId  *vertex_orgs[NUM_VERTEX_ASSOCIATES];
+    Value     *value__orgs[NUM_VALUE__ASSOCIATES];
+    VertexId  *vertex_outs[NUM_VERTEX_ASSOCIATES];
+    Value     *value__outs[NUM_VALUE__ASSOCIATES];
+    int       *forward_partition;
+    VertexId  *forward_convertion;
+    SizeT     *backward_offset;
+    int       *backward_partition;
+    VertexId  *backward_convertion;
+};
+
 /**
  * @brief Base class for graph problem enactors.
  */
@@ -208,6 +246,10 @@ public:
     typedef typename util::CircularQueue<
         VertexId, SizeT, Value, SIZE_CHECK>
         CircularQueue;
+    
+    typedef MakeOutArray<VertexId, SizeT, Value,
+        NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES>
+        MakeOutArray;
 
     typedef FrontierAttribute<SizeT> FrontierA;
     typedef typename util::DoubleBuffer<VertexId, SizeT, Value> FrontierT;
