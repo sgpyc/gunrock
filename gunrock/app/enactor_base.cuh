@@ -68,10 +68,61 @@ struct EnactorStats
         total_queued  .SetName("total_queued");
     }
 
+    virtual ~EnactorStats()
+    {
+        Release();
+    }
+
+    cudaError_t Init(
+        unsigned int advance_grid_size,
+        unsigned int filter_grid_size,
+        unsigned int node_lock_size)
+    {
+        cudaError_t retval = cudaSuccess;
+
+        this -> advance_grid_size = advance_grid_size;
+        this -> filter_grid_size  = filter_grid_size;
+
+        //initialize runtime stats
+        if (retval = advance_kernel_stats.Setup(
+            advance_grid_size)) return retval;
+        if (retval = filter_kernel_stats.Setup(
+            filter_grid_size )) return retval;
+        if (retval = node_locks    .Allocate(
+            node_lock_size, util::DEVICE)) return retval;
+        if (retval = node_locks_out.Allocate(
+            node_lock_size, util::DEVICE)) return retval;
+        if (retval = total_queued  .Allocate(
+            1, util::DEVICE | util::HOST)) return retval;
+
+        return retval;
+    }
+
+    cudaError_t Release()
+    {
+        cudaError_t retval = cudaSuccess;
+        if (retval = node_locks    .Release()) return retval;
+        if (retval = node_locks_out.Release()) return retval;
+        if (retval = total_queued  .Release()) return retval;
+        return retval;
+    }
+
+    cudaError_t Reset()
+    {
+        cudaError_t retval = cudaSuccess;
+        iteration       = 0;
+        total_runtimes  = 0;
+        total_lifetimes = 0;
+        total_queued[0] = 0;
+        total_queued.Move(util::HOST, util::DEVICE);
+        return retval;
+    }
+
     template <typename SizeT2>
     void Accumulate(SizeT2 *d_queued, cudaStream_t stream)
     {
-        Accumulate_Num<<<1,1,0,stream>>> (d_queued, total_queued.GetPointer(util::DEVICE));
+        Accumulate_Num<<<1,1,0,stream>>> (
+            d_queued, total_queued.GetPointer(util::DEVICE));
     }
 };
 
@@ -104,6 +155,39 @@ struct FrontierAttribute
     {
         output_length.SetName("output_length");
     }
+
+    virtual ~FrontierAttribute()
+    {
+        Release();
+    }
+
+    cudaError_t Init()
+    {
+        cudaError_t retval = cudaSuccess;
+
+        return retval;
+    }
+
+    cudaError_t Release()
+    {
+        cudaError_t retval = cudaSuccess;
+
+        if (retval = output_length .Release()) return retval;
+        return retval;
+    }
+
+    cudaError_t Reset()
+    {
+        cudaError_t retval = cudaSuccess;
+        queue_index = 0;
+        queue_reset = true;
+        queue_length = 0;
+        output_length[0] = 0;
+        if (retval = output_length.Move(util::HOST, util::DEVICE)) return retval;
+        queue_offset = 0;
+        has_incoming = false;
+        return retval;
+    }
 };
 
 template <
@@ -135,6 +219,7 @@ public:
     VertexId *vertices ;
     VertexId *vertex_associates[NUM_VERTEX_ASSOCIATES];
     Value    *value__associates[NUM_VALUE__ASSOCIATES];
+    cudaEvent_t event;
 
     PushRequest() :
         iteration (0),
@@ -146,9 +231,28 @@ public:
         stream    (0),
         num_vertex_associates(0),
         num_value__associates(0),
-        vertices  (0)
+        vertices  (NULL)
     {
-        
+        for (SizeT i=0; i<num_vertex_associates; i++)
+            vertex_associates[i] = NULL;
+        for (SizeT i=0; i<num_value__associates; i++)
+            value__associates[i] = NULL;
+    }
+
+    virtual ~PushRequest()
+    {
+        Release();
+    }
+
+    cudaError_t Release()
+    {
+        cudaError_t retval = cudaSuccess;
+        vertices = NULL;
+        for (SizeT i=0; i<num_vertex_associates; i++)
+            vertex_associates[i] = NULL;
+        for (SizeT i=0; i<num_value__associates; i++)
+            value__associates[i] = NULL;
+        return retval;
     }
 
     void operator=(const PushRequest<VertexId, SizeT, Value,
@@ -178,7 +282,7 @@ template <
     typename _Value,
     int _NUM_VERTEX_ASSOCIATES,
     int _NUM_VALUE__ASSOCIATES>
-struct MakeOutArray
+struct MakeOutHandle
 {
     typedef _VertexId VertexId;
     typedef _SizeT    SizeT;
@@ -187,6 +291,7 @@ struct MakeOutArray
     static const int NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
 
     enum Direction{
+        NONE    = 0,
         FORWARD = 1,
         BACKWARD = 2
     };
@@ -208,6 +313,31 @@ struct MakeOutArray
     SizeT     *backward_offset;
     int       *backward_partition;
     VertexId  *backward_convertion;
+};
+
+template <
+    typename _VertexId,
+    typename _SizeT,
+    typename _Value,
+    int _NUM_VERTEX_ASSOCIATES,
+    int _NUM_VALUE__ASSOCIATES>
+struct ExpandIncomingHandle
+{
+    typedef _VertexId VertexId;
+    typedef _SizeT    SizeT;
+    typedef _Value    Value;
+    static const int NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
+    static const int NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
+
+    SizeT     num_elements;
+    int       num_vertex_associates;
+    int       num_value__associates;
+    VertexId *keys_in;
+    VertexId *keys_out;
+    VertexId *vertex_ins [NUM_VERTEX_ASSOCIATES];
+    VertexId *vertex_orgs[NUM_VERTEX_ASSOCIATES];
+    Value    *value__ins [NUM_VALUE__ASSOCIATES];
+    Value    *value__orgs[NUM_VALUE__ASSOCIATES];
 };
 
 /**
@@ -247,15 +377,27 @@ public:
         VertexId, SizeT, Value, SIZE_CHECK>
         CircularQueue;
     
-    typedef MakeOutArray<VertexId, SizeT, Value,
+    typedef MakeOutHandle<
+        VertexId, SizeT, Value,
         NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES>
-        MakeOutArray;
+        MakeOutHandle;
+
+    typedef ExpandIncomingHandle<
+        VertexId, SizeT, Value,
+        NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES>
+        ExpandIncomingHandle;
+
+    typedef PushRequest <
+        VertexId, SizeT, Value,
+        NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES>
+        PushRequest;
 
     typedef FrontierAttribute<SizeT> FrontierA;
     typedef typename util::DoubleBuffer<VertexId, SizeT, Value> FrontierT;
     typedef GraphSlice<VertexId, SizeT, Value> GraphSlice;
     typedef typename util::CtaWorkProgressLifetime WorkProgress;
 
+    void         *problem             ;
     int           num_gpus            ; // Number of GPUs
     int           num_threads         ;
     int          *gpu_idx             ; // GPU indices
@@ -269,6 +411,7 @@ public:
     int           num_fullq_stream    ;
     int           num_split_streams   ;
     bool          using_subq          ;
+    bool          using_fullq         ;
     void         *enactor_slices      ;
     void         *thread_slices       ;
     Array<std::thread>  threads       ;
@@ -314,6 +457,7 @@ protected:
             // it in our kernel code)
             cuda_props   [gpu].Setup(gpu_idx[gpu]);
         }
+        problem = NULL;
     }
 
     /**
@@ -325,6 +469,7 @@ protected:
         {
             util::GRError("enactor_slices is not NULL", __FILE__, __LINE__);
         }
+        problem = NULL;
     }
 
    /**
@@ -381,11 +526,12 @@ protected:
             return retval; 
         
         int thread_counter = 0;
-        for (int gpu=0; gpu<num_gpus; gpu++)
+        for (int gpu_num=0; gpu_num<num_gpus; gpu_num++)
         {
-            if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
-            if (retval = enactor_slices[gpu].Init(
-                num_gpus, gpu, gpu_idx[gpu],
+            if (retval = util::SetDevice(gpu_idx[gpu_num])) return retval;
+            EnactorSlice *enactor_slice = enactor_slices + gpu_num;
+            if (retval = enactor_slices->Init(
+                num_gpus, gpu_num, gpu_idx[gpu_num],
                 num_input_streams, num_outpu_streams,
                 num_subq__streams, num_fullq_stream ,
                 num_split_streams)) return retval;
@@ -393,52 +539,37 @@ protected:
             for (int stream=0; stream < num_subq__streams + num_fullq_stream ; stream++)
             {
                 EnactorStats *enactor_stats_ = (stream < num_subq__streams) ?
-                    enactor_slices[gpu].subq__enactor_statses + stream :
-                    enactor_slices[gpu].fullq_enactor_stats   + stream - num_subq__streams;
-                //initialize runtime stats
-                enactor_stats_ -> advance_grid_size 
-                    = MaxGridSize(gpu, advance_occupancy, max_grid_size);
-                enactor_stats_ -> filter_grid_size  
-                    = MaxGridSize(gpu, filter_occupancy , max_grid_size);
-
-                if (retval = enactor_stats_ -> advance_kernel_stats.Setup(
-                    enactor_stats_ -> advance_grid_size)) return retval;
-                if (retval = enactor_stats_ ->  filter_kernel_stats.Setup(
-                    enactor_stats_ -> filter_grid_size )) return retval;
-                if (retval = enactor_stats_ -> node_locks    .Allocate(
-                    node_lock_size, util::DEVICE)) return retval;
-                if (retval = enactor_stats_ -> node_locks_out.Allocate(
-                    node_lock_size, util::DEVICE)) return retval;
-                if (retval = enactor_stats_ -> total_queued  .Allocate(
-                    1, util::DEVICE | util::HOST)) return retval;
+                    enactor_slice->subq__enactor_statses + stream :
+                    enactor_slice->fullq_enactor_stats   + stream - num_subq__streams;
+                if (retval = enactor_stats_ -> Init(
+                    MaxGridSize(gpu_num, advance_occupancy, max_grid_size),
+                    MaxGridSize(gpu_num, filter_occupancy , max_grid_size),
+                    node_lock_size))
+                    return retval;
             }
 
-            for (int i=0; i<4; i++)
+            typename ThreadSlice::Type thread_type = ThreadSlice::Type::Input;
+            while (thread_type != ThreadSlice::Type::Last)
             {
-                ThreadSlice *thread_slice  = thread_slices + thread_counter;
-                thread_slice -> thread_num = thread_counter;
-                thread_slice -> gpu_num    = gpu;
-                thread_slice -> status     = ThreadSlice::Status::Init;
-                thread_slice -> problem    = (void*) problem;
-                thread_slice -> enactor    = (void*) enactor;
-                if      (i==0 && num_input_streams>0)
-                    threads[thread_counter] = std::thread(Input_Thread
-                        <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>, 
-                        (void*)thread_slice);
-                else if (i==1 && num_outpu_streams>0)
-                    threads[thread_counter] = std::thread(Outpu_Thread
-                        <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>, 
-                        (void*)thread_slice);
-                else if (i==2 && num_subq__streams>0)
-                    threads[thread_counter] = std::thread(SubQ__Thread
-                        <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>,
-                        (void*)thread_slice);
-                else if (i==3 && num_fullq_stream + num_split_streams > 0)
-                    threads[thread_counter] = std::thread(FullQ_Thread
-                        <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>,
-                        (void*)thread_slice);
-                else continue;
+                if ((thread_type == ThreadSlice::Type::Input 
+                     && num_input_streams <= 0) ||
+                    (thread_type == ThreadSlice::Type::Output 
+                     && num_outpu_streams <= 0) ||
+                    (thread_type == ThreadSlice::Type::SubQ
+                     && num_subq__streams <= 0) ||
+                    (thread_type == ThreadSlice::Type::FullQ
+                     && num_fullq_stream + num_split_streams <= 0))
+                {
+                    thread_type = ThreadSlice::IncreatmentType(thread_type); 
+                    continue;
+                }
+
+                if (retval = thread_slices[thread_counter].Init(
+                    thread_counter, gpu_num, problem, enactor, 
+                    thread_type, threads[thread_counter]))
+                    return retval;
                 thread_counter ++;
+                thread_type = ThreadSlice::IncreatmentType(thread_type); 
             }
         }
         num_threads = thread_counter;
@@ -470,24 +601,6 @@ protected:
             if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
             EnactorSlice *enactor_slice = 
                 ((EnactorSlice*) enactor_slices) + gpu;
-
-            for (int stream=0; stream < num_subq__streams + num_fullq_stream ; stream++)
-            {
-                EnactorStats *enactor_stats_ = (stream < num_subq__streams) ?
-                    enactor_slice -> subq__enactor_statuses + stream :
-                    enactor_slice -> fullq_enactor_status   + stream - num_subq__streams;
-                if (retval = enactor_stats_ -> node_locks    .Release()) return retval;
-                if (retval = enactor_stats_ -> node_locks_out.Release()) return retval;
-                if (retval = enactor_stats_ -> total_queued  .Release()) return retval;
-                FrontierA *frontier_attribute_ = (stream < num_subq__streams) ?
-                    enactor_slice -> subq__frontier_attributes + stream :
-                    enactor_slice -> fullq_frontier_attribute  + stream - num_subq__streams;
-                if (retval = frontier_attribute_ -> output_length .Release()) return retval;
-                util::CtaWorkProgressLifetime *work_progress_ = (stream < num_subq__streams) ?
-                    enactor_slice -> subq__work_progresses + stream :
-                    enactor_slice -> fullq_work_progress   + stream - num_subq__streams;
-                if (retval = work_progress_ -> HostReset()) return retval;
-            }
             enactor_slice -> Release();
         }
         if (retval = cuda_props        .Release()) return retval;
@@ -503,40 +616,46 @@ protected:
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy,
         typename Enactor>
-    cudaError_t Reset()
+    cudaError_t Reset(
+        FrontierType frontier_type,
+        double subq__factor  = 1.0,
+        double subq__factor0 = 1.0,
+        double subq__factor1 = 1.0,
+        double fullq_factor  = 1.0,
+        double fullq_factor0 = 1.0,
+        double fullq_factor1 = 1.0,
+        double input_factor  = 1.0,
+        double outpu_factor  = 1.0,
+        double split_factor  = 1.0,
+        double temp_factor   = 0.1)
     {
         cudaError_t retval = cudaSuccess;
-
-        /*for (int gpu=0;gpu<num_gpus;gpu++)
+        EnactorSlice<Enactor> *enactor_slices
+            = (EnactorSlice<Enactor>*) this->enactor_slices;
+        ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>* thread_slices
+            = (ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>*) this->thread_slices;
+        typename Enactor::Problem *problem = (typename Enactor::Problem*) this->problem;
+        for (int gpu=0;gpu<num_gpus;gpu++)
         {
             if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
-            for (int peer=0; peer<num_gpus; peer++)
-            {
-                EnactorStats *enactor_stats_ = enactor_stats + gpu*num_gpus + peer;
-                enactor_stats_ -> iteration             = 0;
-                enactor_stats_ -> total_runtimes        = 0;
-                enactor_stats_ -> total_lifetimes       = 0;
-                enactor_stats_ -> total_queued[0]       = 0;
-                enactor_stats_ -> total_queued.Move(util::HOST, util::DEVICE);
-            }
-        }*/
+            if (retval = enactor_slices[gpu].Reset(
+                frontier_type,
+                problem -> graph_slices[gpu],
+                Enactor::Problem::USE_DOUBLE_BUFFER,
+                problem -> graph_slices[gpu]->in_counter + 0,
+                problem -> graph_slices[gpu]->out_counter + 0,
+                subq__factor, subq__factor0, subq__factor1,
+                fullq_factor, fullq_factor0, fullq_factor1,
+                input_factor, outpu_factor, split_factor,
+                temp_factor)) return retval;
+        }
+        for (int i=0; i<num_threads; i++)
+        {
+            if (retval = util::SetDevice(gpu_idx[thread_slices[i].gpu_num])) return retval;
+            if (retval = thread_slices[i].Reset()) return retval;
+        }
         return retval;
     }
-
-    /*template <typename Problem>
-    cudaError_t Setup(
-        Problem *problem,
-        int max_grid_size,
-        int advance_occupancy,
-        int filter_occupancy,
-        int node_lock_size = 256)
-    {
-        cudaError_t retval = cudaSuccess;
-
-        if (retval = Init(problem, max_grid_size, advance_occupancy, filter_occupancy, node_lock_size)) return retval;
-        if (retval = Reset()) return retval;
-        return retval;
-    }*/
 
     /**
      * @brief Utility function for getting the max grid size.

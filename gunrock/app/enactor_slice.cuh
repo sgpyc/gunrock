@@ -34,6 +34,9 @@ struct EnactorSlice
     typedef typename Enactor::FrontierA       FrontierA    ;
     typedef typename Enactor::PRequest        PRequest     ;
     typedef typename Enactor::EnactorStats    EnactorStats ;
+    typedef typename Enactor::ExpandIncomingHandle ExpandIncomingHandle;
+    typedef typename Enactor::MakeOutHandle   MakeOutHandle;
+
     int num_gpus;
     int gpu_num;
     int gpu_idx;
@@ -45,18 +48,23 @@ struct EnactorSlice
     
     Array<VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
     Array<Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
+    std::list<cudaEvent_t> empty_events;
 
     Array<cudaStream_t>   input_streams           ; // GPU streams
     int                   input_target_count      ;
     CircularQueue         input_queues         [2];
-    Array<char        >  *input_e_arrays          ; // compressed data structure for expand_incoming kernel
+    Array<ExpandIncomingHandle> input_e_handles   ; // compressed data structure for expand_incoming kernel
     void*                 input_iteration_loops   ;
+    void                 *input_thread_slice      ;
+    SizeT                 input_min_length        ;
+    SizeT                 input_max_length        ;
 
     Array<cudaStream_t>   outpu_streams           ; // GPU streams
     CircularQueue         outpu_queue             ;
     std::list<PRequest>   outpu_request_queue     ;
     std::mutex            outpu_request_mutex     ;
     void*                 outpu_iteration_loops   ;
+    void                 *outpu_thread_slice      ;
 
     Array<cudaStream_t>   subq__streams           ; // GPU streams
     Array<ContextPtr  >   subq__contexts          ;
@@ -74,7 +82,13 @@ struct EnactorSlice
     Array<util::CtaWorkProgressLifetime> 
                           subq__work_progresses   ;
     void*                 subq__iteration_loops   ;
-    
+    SizeT                 subq__target_count   [2];
+    void                 *subq__thread_slice      ;
+    SizeT                 subq__min_length        ;
+    SizeT                 subq__max_length        ;
+    SizeT                *subq__s_lengths         ;
+    SizeT                *subq__s_offsets         ;
+
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
     CircularQueue         fullq_queue             ;
@@ -90,13 +104,15 @@ struct EnactorSlice
     Array<util::CtaWorkProgressLifetime>
                           fullq_work_progress     ;
     void*                 fullq_iteration_loop    ;
- 
+    SizeT                 fullq_target_count   [2];
+    void                 *fullq_thread_slice      ;
+
     Array<cudaStream_t>   split_streams           ; // GPU streams
     Array<ContextPtr  >   split_contexts          ;
     Array<SizeT       >   split_lengths           ; // Number of outgoing vertices to peers  
     Array<SizeT       >  *split_markers           ; // Markers to separate vertices to peer GPUs
     Array<SizeT*      >   split_markerss          ;
-    Array<char        >  *split_m_arrays          ; // compressed data structure for make_out kernel
+    Array<MakeOutHandle>  split_m_handles          ; // compressed data structure for make_out kernel
     Array<cudaEvent_t >   split_events            ;
     void*                 split_iteration_loops   ;
 
@@ -109,17 +125,18 @@ struct EnactorSlice
         num_subq__streams  (0   ),
         num_fullq_stream   (0   ),
         num_split_streams  (0   ),
-        input_e_arrays     (NULL),
+        //input_e_arrays     (NULL),
         subq__scanned_edges(NULL),
         fullq_scanned_edge (NULL),
-        split_markers      (NULL),
-        split_m_arrays     (NULL)
+        split_markers      (NULL)
+        //split_m_arrays     (NULL)
     {
         vertex_associate_orgs .SetName("vertex_associate_orgs");
         value__associate_orgs .SetName("value__associate_orgs");
         input_streams         .SetName("input_streams"        );
         input_queues[0]       .SetName("input_queues[0]"      );
         input_queues[1]       .SetName("input_queues[1]"      );
+        input_e_handles       .SetName("input_e_handles"      );
         outpu_streams         .SetName("outpu_streams"        );
         outpu_queue           .SetName("outpu_queue"          );
 
@@ -159,6 +176,7 @@ struct EnactorSlice
         split_streams         .SetName("split_streams"        );
         split_contexts        .SetName("split_contexts"       );
         split_lengths         .SetName("split_lengths"        );
+        split_m_handles       .SetName("split_m_handles"      );
     }
 
     virtual ~EnactorSlice()
@@ -192,17 +210,13 @@ struct EnactorSlice
             this->num_input_streams = num_input_streams;
             if (num_input_streams != 0)
             {
-                if (retval = input_streams.Allocate(num_input_streams)) return retval;
-                input_e_arrays = new Array<char>[num_input_streams];
+                if (retval = input_streams  .Allocate(num_input_streams)) return retval;
+                if (retval = input_e_handles.Init(num_input_streams,
+                    util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
                 for (int stream=0; stream<num_input_streams; stream++)
                 {
                     if (retval = util::GRError(cudaStreamCreate(input_streams + stream),
                         "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
-                    input_e_arrays[stream].SetName("input_e_arrays[]");
-                    SizeT target_size = sizeof(VertexId*) * 2 * Enactor::NUM_VERTEX_ASSOCIATES
-                                      + sizeof(Value*   ) * 2 * Enactor::NUM_VALUE__ASSOCIATES;
-                    if (retval = input_e_arrays[stream].Allocate(target_size, 
-                        util::HOST | util::DEVICE)) return retval;
                 }
             }
                 
@@ -240,7 +254,7 @@ struct EnactorSlice
                     "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
                 subq__contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, subq__streams[stream]);
                 subq__scanned_edges[stream].SetName("subq__scanned_edges[]");
-                subq__work_progresses[stream].Setup();
+                subq__work_progresses[stream].Init();
                 if (retval = subq__frontier_attributes[stream].output_length.Allocate(1, 
                     util::HOST | util::DEVICE)) return retval;
             }
@@ -282,7 +296,7 @@ struct EnactorSlice
                     "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
                 fullq_context[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, fullq_stream[stream]);
                 fullq_scanned_edge[stream].SetName("fullq_scanned_edge[]");
-                fullq_work_progress[stream].Setup();
+                fullq_work_progress[stream].Init();
                 if (retval = fullq_frontier_attribute[stream].output_length.Allocate(1, 
                     util::HOST | util::DEVICE)) return retval;
             }
@@ -311,18 +325,14 @@ struct EnactorSlice
                 if (retval = split_streams .Allocate(num_split_streams)) return retval;
                 if (retval = split_contexts.Allocate(num_split_streams)) return retval;
                 split_markers  = new Array<SizeT>[num_split_streams];
-                split_m_arrays = new Array<char> [num_split_streams];
+                if (retval = split_m_handles.Init(num_split_streams,
+                    util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
                 for (int stream=0; stream<num_split_streams; stream++)
                 {
                     if (retval = util::GRError(cudaStreamCreate(split_streams + stream),
                         "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
                     split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_streams[stream]);
                     split_markers [stream].SetName("split_marker[]");
-                    split_m_arrays[stream].SetName("split_m_arrays[]");
-                    SizeT target_size = sizeof(VertexId*) * 2 * Enactor::NUM_VERTEX_ASSOCIATES
-                                      + sizeof(Value*   ) * 2 * Enactor::NUM_VALUE__ASSOCIATES;
-                    if (retval = split_m_arrays[stream].Allocate(target_size, 
-                        util::HOST | util::DEVICE)) return retval;
                 }
             }
         }
@@ -340,14 +350,13 @@ struct EnactorSlice
         {
             for (int stream=0; stream<num_input_streams; stream++)
             {
-                if (retval = input_e_arrays[stream].Release()) return retval;
                 if (retval = util::GRError(cudaStreamDestroy(input_streams[stream]),
                     "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
             }   
             if (retval = input_streams  .Release()) return retval;
             if (retval = input_queues[0].Release()) return retval;
             if (retval = input_queues[1].Release()) return retval;
-            delete[] input_e_arrays; input_e_arrays = NULL;
+            if (retval = input_e_handles.Release()) return retval;
             num_input_streams = 0;
         }
 
@@ -369,13 +378,16 @@ struct EnactorSlice
             {
                 if (retval = util::GRError(cudaStreamDestroy(subq__streams[stream]),
                     "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
-                if (retval = subq__frontier_attributes[stream].output_length.Release()) return retval;
-                for (int i=0; i<2; i++)
-                {
-                    if (retval = subq__frontiers[stream].keys  [i].Release()) return retval;
-                    if (retval = subq__frontiers[stream].values[i].Release()) return retval;
-                }
-                if (retval = subq__scanned_edges[stream].Release()) return retval;
+                if (retval = subq__frontier_attributes[stream].Release())
+                    return retval;
+                if (retval = subq__frontiers          [stream].Release())
+                    return retval;
+                if (retval = subq__scanned_edges      [stream].Release())
+                    return retval;
+                if (retval = subq__enactor_statses    [stream].Release())
+                    return retval;
+                if (retval = subq__work_progresses    [stream].Release())
+                    return retval;
             }
             for (int i=0; i<4; i++)
             {
@@ -412,13 +424,16 @@ struct EnactorSlice
             {
                 if (retval = util::GRError(cudaStreamDestroy(fullq_stream[stream]),
                     "cudaStreamDestroy failed", __FILE__, __LINE__)) return retval;
-                if (retval = fullq_frontier_attribute[stream].output_length.Release()) return retval;
-                for (int i=0; i<2; i++)
-                {
-                    if (retval = fullq_frontier[stream].keys  [i].Release()) return retval;
-                    if (retval = fullq_frontier[stream].values[i].Release()) return retval;
-                }
-                if (retval = fullq_scanned_edge[stream].Release()) return retval;
+                if (retval = fullq_frontier_attribute[stream].Release())
+                    return retval;
+                if (retval = fullq_frontier          [stream].Release())
+                    return retval;
+                if (retval = fullq_scanned_edge      [stream].Release())
+                    return retval;
+                if (retval = fullq_enactor_stats     [stream].Release())
+                    return retval;
+                if (retval = fullq_work_progress     [stream].Release())
+                    return retval;
             }
             for (int i=0; i<4; i++)
             {
@@ -453,13 +468,12 @@ struct EnactorSlice
                 if (retval = util::GRError(cudaStreamDestroy(split_streams[stream]),
                     "cudaStreamDestory failed", __FILE__, __LINE__)) return retval;
                 if (retval = split_markers [stream].Release()) return retval;
-                if (retval = split_m_arrays[stream].Release()) return retval;
             }
             if (retval = split_streams .Release()) return retval;
             if (retval = split_contexts.Release()) return retval;
             if (retval = split_lengths .Release()) return retval;
+            if (retval = split_m_handles.Release()) return retval;
             delete[] split_markers ; split_markers  = NULL;
-            delete[] split_m_arrays; split_m_arrays = NULL;
             num_split_streams = 0;
         }
 
@@ -485,7 +499,7 @@ struct EnactorSlice
         double temp_factor   = 0.1)
     {
         cudaError_t retval = cudaSuccess;
-        SizeT  target_capacity  = 0;
+        //SizeT  target_capacity  = 0;
 
         if (num_input_streams != 0)
         {
@@ -516,6 +530,9 @@ struct EnactorSlice
 
         if (num_subq__streams != 0)
         {
+            subq__target_count[0] = util::MaxValue<SizeT>();
+            subq__target_count[1] = util::MaxValue<SizeT>();
+
             SizeT target_capacity = graph_slice->nodes * subq__factor;
             if (retval = subq__queue.Init(target_capacity, util::DEVICE, 10,
                 0, 0,
@@ -560,12 +577,18 @@ struct EnactorSlice
                 if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
             }
             for (int stream=0; stream<num_subq__streams; stream++)
-            if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
-                return retval;
+            {
+                if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
+                    return retval;
+                
+            }
         }
 
         if (num_fullq_stream != 0)
         {
+            fullq_target_count[0] = util::MaxValue<SizeT>();
+            fullq_target_count[0] = util::MaxValue<SizeT>();
+
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
             if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,
                 0, 0,
