@@ -144,6 +144,7 @@ cudaError_t PushNeibor(
     VertexId      *s_vertices            =   request -> vertices;
     VertexId     **s_vertex_associates   =   request -> vertex_associates;
     Value        **s_value__associates   =   request -> value__associates;
+    cudaEvent_t    event                 =   request -> event;
     VertexId      *t_vertices            =   NULL;
     VertexId      *t_vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
     Value         *t_value__associates[Enactor::NUM_VALUE__ASSOCIATES];
@@ -152,6 +153,9 @@ cudaError_t PushNeibor(
     cudaError_t    retval                =   cudaSuccess;
     cudaStream_t   s_stream              =   request -> stream;
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
+
+    if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
+        "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
 
     if (retval = t_queue->Push_Addr(length, t_vertices, t_offset, 
         num_vertex_associates, num_value__associates, 
@@ -178,8 +182,8 @@ cudaError_t PushNeibor(
             "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
     }
 
-    if (retval = s_queue->EventSet(1, t_offset, length, s_stream)) return retval;
-    if (retval = t_queue->EventSet(0, s_offset, length, t_stream, false, true)) return retval;
+    if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
+    if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true)) return retval;
     return retval;
 }
 

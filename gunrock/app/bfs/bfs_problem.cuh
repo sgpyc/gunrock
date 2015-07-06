@@ -116,7 +116,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
         {         
             cudaError_t retval = cudaSuccess;
             SizeT nodes = graph_slice->nodes;
-            SizeT edges = graph_slice->edges;
+            //SizeT edges = graph_slice->edges;
             
             // TODO: put in bfs_enactor reset
             /*for (int peer=0; peer<this->num_gpus; peer++)

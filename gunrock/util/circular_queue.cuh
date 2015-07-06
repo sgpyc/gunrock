@@ -64,7 +64,8 @@ public:
 private:
     std::string  name;      // name of the queue
     int          gpu_idx ;  // gpu index
-    int          input_count; 
+    int          input_count;
+    int          output_count; 
     SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
@@ -263,6 +264,37 @@ public:
     int GetInputCount()
     {
         return input_count;
+    }
+
+    int GetOutputCount()
+    {
+        return output_count;
+    }
+
+    void ChangeInputCount(SizeT count)
+    {
+    }
+
+    void ChangeOutputCount(SizeT count)
+    {
+    }
+
+    void ResetInputCount()
+    {
+    }
+
+    void ResetOutputCount()
+    {
+    }
+
+    void ResetCounts()
+    {
+    } 
+
+    cudaError_t Reset()
+    {
+        cudaError_t retval = cudaSuccess;
+        return retval;
     }
 
     cudaError_t Combined_Return(
@@ -1059,6 +1091,8 @@ public:
 
         if (!in_critical) queue_mutex.unlock();
     }
+
+    
 }; // end of struct CircularQueue
 
 } // namespace util

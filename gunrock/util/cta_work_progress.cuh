@@ -211,7 +211,7 @@ public:
 
 
     // Deallocates and resets the progress counters
-    cudaError_t HostReset()
+    cudaError_t Release()
     {
         cudaError_t retval = cudaSuccess;
 
@@ -250,13 +250,13 @@ public:
      */
     virtual ~CtaWorkProgressLifetime()
     {
-        HostReset();
+        Release();
     }
 
 
     // Sets up the progress counters for the next kernel launch (lazily
     // allocating and initializing them if necessary)
-    cudaError_t Setup()
+    cudaError_t Init()
     {
         cudaError_t retval = cudaSuccess;
         do {

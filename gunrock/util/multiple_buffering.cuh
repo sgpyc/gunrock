@@ -43,8 +43,8 @@ namespace util {
  */
 template <
     int BUFFER_COUNT,
-    typename _SizeType,
     typename _KeyType,
+    typename _SizeType,
     typename _ValueType = util::NullType,
     unsigned int TARGET = util::DEVICE>
 struct MultipleBuffer
@@ -71,6 +71,31 @@ struct MultipleBuffer
             values[i].SetName("values");
         }
     }
+
+    virtual ~MultipleBuffer()
+    {
+        Release();
+    }
+
+    cudaError_t Init(
+        SizeType *keys_size,
+        SizeType *values_size)
+    {
+        cudaError_t retval = cudaSuccess;
+
+        return retval;
+    }
+
+    cudaError_t Release()
+    {
+        cudaError_t retval = cudaSuccess;
+        for (int i=0; i<BUFFER_COUNT; i++)
+        {
+            if (retval = keys  [i].Release()) return retval;
+            if (retval = values[i].Release()) return retval;
+        }
+        return retval;
+    }
 };
 
 
@@ -94,13 +119,13 @@ struct MultipleBuffer
  *
  */
 template <
-    typename SizeType,
     typename KeyType,
+    typename SizeType,
     typename ValueType = util::NullType,
     unsigned int TARGET = util::DEVICE>
-struct DoubleBuffer : MultipleBuffer<2, SizeType, KeyType, ValueType, TARGET>
+struct DoubleBuffer : MultipleBuffer<2, KeyType, SizeType, ValueType, TARGET>
 {
-    typedef MultipleBuffer<2, SizeType, KeyType, ValueType, TARGET> ParentType;
+    typedef MultipleBuffer<2, KeyType, SizeType, ValueType, TARGET> ParentType;
 
     // Constructor
     DoubleBuffer() : ParentType() {}
@@ -115,8 +140,8 @@ struct DoubleBuffer : MultipleBuffer<2, SizeType, KeyType, ValueType, TARGET>
 
     // Constructor
     DoubleBuffer(
-        SizeType size,
         KeyType* keys,
+        SizeType size,
         ValueType* values) : ParentType()
     {
         this->keys  [0].SetPointer(keys  , size, TARGET);
@@ -144,13 +169,13 @@ struct DoubleBuffer : MultipleBuffer<2, SizeType, KeyType, ValueType, TARGET>
  * Triple buffer version of the multi-buffer storage abstraction above.
  */
 template <
-    typename SizeType,
     typename KeyType,
+    typename SizeType,
     typename ValueType = util::NullType,
     unsigned int TARGET = util::DEVICE>
-struct TripleBuffer : MultipleBuffer<3, SizeType, KeyType, ValueType, TARGET>
+struct TripleBuffer : MultipleBuffer<3, KeyType, SizeType, ValueType, TARGET>
 {
-    typedef MultipleBuffer<3, SizeType, KeyType, ValueType, TARGET> ParentType;
+    typedef MultipleBuffer<3, KeyType, SizeType, ValueType, TARGET> ParentType;
 
     // Constructor
     TripleBuffer() : ParentType() {}
