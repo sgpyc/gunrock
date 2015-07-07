@@ -20,6 +20,7 @@
 #include <gunrock/util/device_intrinsics.cuh>
 #include <gunrock/util/io/modified_load.cuh>
 #include <gunrock/util/io/modified_store.cuh>
+#include <gunrock/util/test_utils.h>
 
 namespace gunrock {
 namespace util {
@@ -224,8 +225,7 @@ public:
                     "CtaWorkProgress cudaGetDevice failed: ", __FILE__, __LINE__)) break;
 
                 // Deallocate
-                if (retval = util::GRError(cudaSetDevice(gpu),
-                    "CtaWorkProgress cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(gpu)) break;
                 if (retval = util::GRError(cudaFree(d_counters),
                     "CtaWorkProgress cudaFree d_counters failed: ", __FILE__, __LINE__)) break;
 
@@ -233,8 +233,7 @@ public:
                 gpu = GR_INVALID_DEVICE;
 
                 // Restore current gpu
-                if (retval = util::GRError(cudaSetDevice(current_gpu),
-                    "CtaWorkProgress cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(current_gpu)) break;
             }
 
             progress_selector = 0;

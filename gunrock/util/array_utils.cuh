@@ -36,7 +36,7 @@ static const unsigned int GPU        = 0x12;
 static const unsigned int DISK       = 0x14;
 static const unsigned int TARGETALL  = 0x1F;
 
-#define ARRAY_DEBUG false
+#define ARRAY_DEBUG true
 
 template <
     typename _SizeT,
@@ -404,7 +404,7 @@ public:
         if (size         == 0 ) 
             return retval;
         if (ARRAY_DEBUG) {
-            printf("%s Moving in from %d to %d, size = %lld, source_offset = %lld, target_offset = %lld, stream = %p, d_pointer = %p, h_pointer = %p, src = %p\n", 
+            printf("%s Moving in from %d to %d, size = %lld, source_offset = %lld, target_offset = %lld, stream = %d, d_pointer = %p, h_pointer = %p, src = %p\n", 
                 name.c_str(), source, target, (long long) size, (long long) source_offset, 
                 (long long) target_offset, stream, d_pointer, h_pointer, src);
             fflush(stdout);

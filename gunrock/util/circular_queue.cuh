@@ -22,6 +22,7 @@
 #include <gunrock/util/basic_utils.h>
 #include <gunrock/util/error_utils.cuh>
 #include <gunrock/util/array_utils.cuh>
+#include <gunrock/util/test_utils.h>
 
 namespace gunrock {
 namespace util {
@@ -320,8 +321,7 @@ public:
     {
         if (!in_critical) queue_mutex.unlock();
         if (retval == cudaSuccess)
-            retval = GRError(cudaSetDevice(org_gpu),
-                "cudaSetDevice failed", __FILE__, __LINE__);
+            retval = util::SetDevice(org_gpu);
         return retval;
     }
 
@@ -491,6 +491,7 @@ public:
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
 
+        printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
         if (retval = ReduceSize(min_length, max_length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
         length = lengths[0] + lengths[1];
@@ -509,9 +510,7 @@ public:
                 if (retval = GRError(cudaGetDevice(&org_gpu),
                     "cudaGetDevice failed", __FILE__, __LINE__))
                     return retval;
-                if (retval = GRError(cudaSetDevice(gpu_idx),
-                    "cudaSetDevice failed", __FILE__, __LINE__))
-                    return retval;
+                if (retval = SetDevice(gpu_idx)) return retval;
             } 
 
             if (retval = EnsureTempCapacity(length, length, length, false))
@@ -539,9 +538,7 @@ public:
             }
             if (set_gpu && allocated == DEVICE)
             {
-                if (retval = GRError(cudaSetDevice(org_gpu),
-                    "cudaSetDevice failed", __FILE__, __LINE__))
-                    return retval;
+                if (retval = SetDevice(org_gpu)) return retval;
             }
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
@@ -686,6 +683,7 @@ public:
                     }
                 }
                 if (!got_content) {
+                    printf("waiting for content, size_soli = %d, min_length = %d\n", size_soli, min_length);fflush(stdout);
                     std::this_thread::sleep_for(std::chrono::microseconds(10));
                 }
             }
@@ -746,9 +744,7 @@ public:
                     if (retval = GRError(cudaGetDevice(&org_gpu),
                         "cudaGetDevice failed", __FILE__, __LINE__))
                         return retval;
-                    if (retval = GRError(cudaSetDevice(gpu_idx),
-                        "cudaSetDevice failed", __FILE__, __LINE__))
-                        return retval;
+                    if (retval = SetDevice(gpu_idx)) return retval;
                 }
                 if (retval = temp_array            .EnsureSize(
                     temp_capacity                        , false, 0, allocated))
@@ -761,9 +757,7 @@ public:
                     return retval;
                 if (set_gpu && allocated == DEVICE)
                 {
-                    if (retval = GRError(cudaSetDevice(org_gpu),
-                        "cudaSetDevice failed", __FILE__, __LINE__))
-                        return retval;
+                    if (retval = SetDevice(org_gpu)) return retval;
                 }
             }
         }
@@ -783,9 +777,7 @@ public:
             if (retval = GRError(cudaGetDevice(&org_gpu),
                 "cudaGetDevice failed", __FILE__, __LINE__))
                 return retval;
-            if (retval = GRError(cudaSetDevice(gpu_idx),
-                "cudaSetDevice failed", __FILE__, __LINE__))
-                return retval;
+            if (retval = SetDevice(gpu_idx)) return retval;
         }
 
         if (!in_critical) queue_mutex.lock();

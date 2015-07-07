@@ -137,8 +137,7 @@ public:
                     "KernelRuntimeStatsLifetime cudaGetDevice failed: ", __FILE__, __LINE__)) break;
 
                 // Deallocate
-                if (retval = util::GRError(cudaSetDevice(gpu),
-                    "KernelRuntimeStatsLifetime cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(gpu)) break;
                 if (retval = util::GRError(cudaFree(d_stat),
                     "KernelRuntimeStatsLifetime cudaFree d_stat failed: ", __FILE__, __LINE__)) break;
 
@@ -146,8 +145,7 @@ public:
                 gpu = GR_INVALID_DEVICE;
 
                 // Restore current gpu
-                if (retval = util::GRError(cudaSetDevice(current_gpu),
-                    "KernelRuntimeStatsLifetime cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(current_gpu)) break;
             }
 
             stat_bytes = 0;
@@ -221,8 +219,7 @@ public:
                 if (retval = util::GRError(cudaGetDevice(&current_gpu),
                     "KernelRuntimeStatsLifetime cudaGetDevice failed: ", __FILE__, __LINE__)) break;
 
-                if (retval = util::GRError(cudaSetDevice(gpu),
-                    "KernelRuntimeStatsLifetime cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(gpu)) break;
             }
              
             // Copy out stats
@@ -239,8 +236,7 @@ public:
             if (check_gpu)
             {
                 // Restore current gpu
-                if (retval = util::GRError(cudaSetDevice(current_gpu),
-                    "KernelRuntimeStatsLifetime cudaSetDevice failed: ", __FILE__, __LINE__)) break;
+                if (retval = util::SetDevice(current_gpu)) break;
             }
 
             // Compute runtimes, find max
