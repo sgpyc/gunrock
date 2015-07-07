@@ -19,19 +19,23 @@
 namespace gunrock {
 namespace app {
 
-template <typename Enactor>
-bool All_Done(Enactor *enactor,
+template <typename ThreadSlice>
+bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
 {
+    typedef typename ThreadSlice::Enactor Enactor;
+
     EnactorSlice<Enactor> *enactor_slices 
         = (EnactorSlice<Enactor>*) enactor->enactor_slices;
+    ThreadSlice *thread_slices = (ThreadSlice*) enactor->thread_slices;
+    
     for (int i=0; i<enactor->num_threads; i++)
     {
-        cudaError_t retval = enactor->thread_slices[i].retval;
+        cudaError_t retval = thread_slices[i].retval;
         if (retval == cudaSuccess) continue;
         printf("(CUDA error %d @ GPU %d, thread %d: %s\n",
-            retval, enactor->thread_slices[i].gpu_num, 
-            enactor->thread_slices[i].thread_num,
+            retval, thread_slices[i].gpu_num, 
+            thread_slices[i].thread_num,
             cudaGetErrorString(retval)); 
         fflush(stdout);
         return true;
@@ -40,11 +44,11 @@ bool All_Done(Enactor *enactor,
     for (int gpu=0; gpu < enactor->num_gpus; gpu++)
     {
         EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu];
-        for (int stream=0; stream < enactor->num_subq__streams + enactor->num_fullq_streams; stream++)
+        for (int stream=0; stream < enactor->num_subq__streams + enactor->num_fullq_stream ; stream++)
         {
-            typename Enactor::FrontierA *frontier_attribute = (stream < enactor->num_subq_streams) ? 
+            typename Enactor::FrontierA *frontier_attribute = (stream < enactor->num_subq__streams) ? 
                 enactor_slice->subq__frontier_attributes + stream :
-                enactor_slice->fullq_frontier_attributes + stream - enactor->num_subq_streams;
+                enactor_slice->fullq_frontier_attribute  + stream - enactor->num_subq__streams;
             if (frontier_attribute->queue_length != 0 ||
                 frontier_attribute->has_incoming)
             {
@@ -54,24 +58,24 @@ bool All_Done(Enactor *enactor,
         }
 
         for (int i=0; i<2; i++)
-        if (!enactor_slice -> input_queues[i].empty())
+        if (!enactor_slice -> input_queues[i].Empty())
         {
             //printf("data_slice[%d]->in_length[%d][%d] = %d\n", gpu, i, peer, data_slice[gpu]->in_length[i][peer]);
             return false;
         }
 
-        if (!enactor_slice -> outpu_queue.empty())
+        if (!enactor_slice -> outpu_queue.Empty())
         {
             //printf("data_slice[%d]->out_length[%d] = %d\n", gpu, peer, data_slice[gpu]->out_length[peer]);
             return false;
         }
 
-        if (!enactor_slice -> subq__queue.empty())
+        if (!enactor_slice -> subq__queue.Empty())
         {
             return false;
         }
 
-        if (!enactor_slice -> fullq_queue.empty())
+        if (!enactor_slice -> fullq_queue.Empty())
         {
             return false;
         }

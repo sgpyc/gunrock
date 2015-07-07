@@ -499,7 +499,17 @@ struct EnactorSlice
         double temp_factor   = 0.1)
     {
         cudaError_t retval = cudaSuccess;
-        //SizeT  target_capacity  = 0;
+
+        if (subq__factor  < 0) subq__factor  = 1.0;
+        if (subq__factor0 < 0) subq__factor0 = 1.0;
+        if (subq__factor1 < 0) subq__factor1 = 1.0;
+        if (fullq_factor  < 0) fullq_factor  = 1.0;
+        if (fullq_factor0 < 0) fullq_factor0 = 1.0;
+        if (fullq_factor1 < 0) fullq_factor1 = 1.0;
+        if (input_factor  < 0) input_factor  = 1.0;
+        if (outpu_factor  < 0) outpu_factor  = 1.0;
+        if (split_factor  < 0) split_factor  = 1.0;
+        if (temp_factor   < 0) temp_factor   = 0.1;
 
         if (num_input_streams != 0)
         {
@@ -566,6 +576,8 @@ struct EnactorSlice
                 }
                 for (int stream=0; stream<num_subq__streams; stream++)
                 {
+                    printf("frontier_sizes[%d] = %d\n", i, frontier_sizes[i]);
+                    fflush(stdout);
                     if (retval = subq__frontiers[stream].keys[i].Allocate(
                         frontier_sizes[i], util::DEVICE)) return retval;
                     if (use_double_buffer) {

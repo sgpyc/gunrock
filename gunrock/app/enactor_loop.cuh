@@ -22,6 +22,12 @@ namespace gunrock {
 namespace app {
 
 template <
+    typename _AdvanceKernelPolicy, 
+    typename _FilterKernelPolicy, 
+    typename _Enactor>
+class ThreadSlice;
+
+template <
     typename AdvanceKernelPolicy, 
     typename FilterKernelPolicy, 
     typename Enactor>
@@ -30,7 +36,7 @@ struct IterationBase
 public:
     enum Status {
         New,
-        Init,
+        //Init,
         Running
     };
 
@@ -91,6 +97,7 @@ public:
     cudaEvent_t       wait_event;
     int              *done_markers;
     EnactorSlice     *enactor_slice;
+    Enactor          *enactor;
 
     typename MakeOutHandle::Direction direction;
     int               grid_size;
@@ -121,26 +128,19 @@ public:
     std::mutex       *rqueue_mutex;
     typename std::list<PushRequest> *request_queue;
 
-    IterationBase(
-        int  _num_gpus, 
-        int  _num_streams,
-        bool _has_subq,
-        bool _has_fullq,
-        bool _backward,
-        bool _forward,
-        bool _update_predecessors) :
+    IterationBase() :
         iteration         (0   ),
         status            (Status::New),
-        has_subq          (_has_subq),
-        has_fullq         (_has_fullq),
-        backward          (_backward),
-        forward           (_forward),
-        update_predecessors(_update_predecessors),
-        num_gpus          (_num_gpus),
+        has_subq          (false),
+        has_fullq         (false),
+        backward          (false),
+        forward           (false),
+        update_predecessors(false),
+        num_gpus          (0),
         thread_num        (0   ),
         gpu_num           (0   ),
         stream_num        (0   ),
-        num_streams       (_num_streams),
+        num_streams       (0   ),
         num_elements      (0   ),
         num_vertex_associates(0),
         num_value__associates(0),
@@ -171,13 +171,33 @@ public:
         express           (false),
         t_out_lengths      (NULL)
     {
-        //t_out_length = new SizeT[num_streams];
-        done_markers = new int  [num_streams];
     }
 
     virtual ~IterationBase()
     {
         Release();
+    }
+
+    cudaError_t Init(
+        int  num_gpus, 
+        int  num_streams,
+        bool has_subq,
+        bool has_fullq,
+        bool backward,
+        bool forward,
+        bool update_predecessors)
+    {
+        cudaError_t retval = cudaSuccess;
+        this-> num_gpus    = num_gpus;
+        this-> num_streams = num_streams;
+        this-> has_subq    = has_subq;
+        this-> has_fullq   = has_fullq;
+        this-> backward    = backward;
+        this-> forward     = forward;
+        this-> update_predecessors = update_predecessors;
+         //t_out_length = new SizeT[num_streams];
+        done_markers = new int  [num_streams];
+        return retval;
     }
 
     cudaError_t Release()
@@ -219,7 +239,7 @@ public:
 
     virtual bool        Stop_Condition  ()
     {
-        return All_Done(enactor_stats,frontier_attribute,data_slice,num_gpus);
+        return All_Done<ThreadSlice <AdvanceKernelPolicy, FilterKernelPolicy, Enactor> >(enactor, gpu_num);
     }
 
     virtual cudaError_t Iteration_Change (long long &iterations)
