@@ -344,6 +344,8 @@ public:
     BFSEnactor(int num_gpus = 1, int* gpu_idx = NULL) :
         BaseEnactor(VERTEX_FRONTIERS, num_gpus, gpu_idx)//,
     {
+        printf("BFSEnactor() begin.\n");fflush(stdout);
+        printf("BFSEnactor() end.\n"); fflush(stdout);
     }
 
     /**
@@ -351,6 +353,8 @@ public:
      */
     virtual ~BFSEnactor()
     {
+        printf("~BFSEnactor() begin.\n");fflush(stdout);
+        printf("~BFSEanctor() end.\n");fflush(stdout);
     }
 
     /**
@@ -415,6 +419,7 @@ public:
             IterationT;  
         cudaError_t retval = cudaSuccess;
 
+        printf("BFSEnactor::Init begin.\n");fflush(stdout);
         if (num_input_streams < 0) num_input_streams = this->num_gpus - 1;
         if (num_outpu_streams < 0) num_outpu_streams = this->num_gpus - 1;
         if (num_subq__streams < 0) num_subq__streams = this->num_gpus;
@@ -481,6 +486,7 @@ public:
                     (void*) iteration_loops;
             }
         }
+        printf("BFSEnactor::Init end.\n");fflush(stdout);
         return retval;
     }
 
@@ -500,6 +506,7 @@ public:
         double temp_factor   = 0.1) // Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively). 0.0 is unspecified.
     {
         cudaError_t retval = cudaSuccess;
+        printf("BFSEnactor::Reset begin.\n");fflush(stdout);
         int         gpu    = 0;
         VertexId    tsrc   = src;
         Problem   *problem = (Problem*) this->problem;
@@ -513,6 +520,7 @@ public:
             input_factor, outpu_factor, split_factor,
             temp_factor)) return retval;
 
+        this -> using_subq = true;
         EnactorSlice<Enactor> *enactor_slices 
             = (EnactorSlice<Enactor>*) this->enactor_slices; 
         // Fillin the initial input_queue for BFS problem
@@ -526,7 +534,9 @@ public:
             enactor_slices[gpu].subq__frontiers[0].keys[0].GetPointer(util::DEVICE),
             &tsrc, sizeof(VertexId), cudaMemcpyHostToDevice),
             "BFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__)) 
-            return retval; 
+            return retval;
+        if (retval = enactor_slices[gpu].subq__queue.Push(1,
+            enactor_slices[gpu].subq__frontiers[0].keys[0].GetPointer(util::DEVICE))) return retval;
         
         VertexId src_label = 0;
         if (retval = util::GRError(cudaMemcpy(
@@ -544,6 +554,7 @@ public:
                 return retval; 
         }   
 
+        printf("BFSEnactor::Reset end.\n");fflush(stdout);
         return retval;
     }
 
@@ -585,7 +596,7 @@ public:
             }             
         } while(0);
 
-        if (this->DEBUG) printf("\nGPU BFS Done.\n");
+        if (this->DEBUG) printf("GPU BFS Done.\n");
         return retval;
     }
 

@@ -171,11 +171,15 @@ public:
         express           (false),
         t_out_lengths      (NULL)
     {
+        printf("IterationBase() begin.\n");fflush(stdout);
+        printf("IterationBase() end.\n"); fflush(stdout);
     }
 
     virtual ~IterationBase()
     {
+        printf("~IterationBase begin.\n");fflush(stdout);
         Release();
+        printf("~IterationBase end.\n");fflush(stdout);
     }
 
     cudaError_t Init(
@@ -188,6 +192,7 @@ public:
         bool update_predecessors)
     {
         cudaError_t retval = cudaSuccess;
+        printf("Iteration::Init begin.\n");fflush(stdout);
         this-> num_gpus    = num_gpus;
         this-> num_streams = num_streams;
         this-> has_subq    = has_subq;
@@ -197,11 +202,13 @@ public:
         this-> update_predecessors = update_predecessors;
          //t_out_length = new SizeT[num_streams];
         done_markers = new int  [num_streams];
+        printf("Iteration::Init end.\n");fflush(stdout);
         return retval;
     }
 
     cudaError_t Release()
     {
+        printf("iteration::Release begin.\n");fflush(stdout);
         cudaError_t retval = cudaSuccess;
         frontier_queue     = NULL;
         scanned_edge       = NULL;
@@ -220,22 +227,51 @@ public:
         d_indices          = NULL;
         d_in_key_queue     = NULL;
         delete[] done_markers; done_markers = NULL;
+        printf("Iteration::Release end.\n");fflush(stdout);
         return retval;
     }
 
-    virtual cudaError_t SubQueue_Gather () {return cudaSuccess;}
+    virtual cudaError_t SubQueue_Gather () 
+    {
+        printf("Iteration::SubQueue_Gather default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t Compute_OutputLength() {return cudaSuccess;}
+    virtual cudaError_t Compute_OutputLength() 
+    {
+        printf("Iteration::Compute_OutputLength default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t SubQueue_Core   () {return cudaSuccess;}
+    virtual cudaError_t SubQueue_Core   () 
+    {
+        printf("Iteration::SubQueue_Core default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t FullQueue_Gather() {return cudaSuccess;}
+    virtual cudaError_t FullQueue_Gather() 
+    {
+        printf("Iteration::FullQueue_Gather default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t FullQueue_Core  () {return cudaSuccess;}
+    virtual cudaError_t FullQueue_Core  () 
+    {
+        printf("Iteration::FullQueue_Core default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t Expand_Incoming () {return cudaSuccess;}
+    virtual cudaError_t Expand_Incoming () 
+    {
+        printf("Iteration::Expand_Incoming default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
-    virtual cudaError_t End_Action      () {return cudaSuccess;}
+    virtual cudaError_t End_Action      ()
+    {
+        printf("Iteration::End_Action default called.\n");fflush(stdout);
+        return cudaSuccess;
+    }
 
     virtual bool        Stop_Condition  ()
     {
@@ -244,6 +280,7 @@ public:
 
     virtual cudaError_t Iteration_Change (long long &iterations)
     {
+        printf("Iteration::Iteration_change default called.\n");fflush(stdout);
         iterations++;
         return cudaSuccess;
     }
@@ -336,6 +373,8 @@ public:
         cudaEvent_t event;
         PushRequest push_request;
 
+        printf("Iteration::Make_Output begin. gpu_num = %d, num_elements = %d\n", 
+            gpu_num, num_elements);fflush(stdout);
         //typename Enactor::Array<SizeT>  *markers  =  enactor_slice -> split_markers;
         //typename Enactor::Array<SizeT*> *markerss = &enactor_slice -> split_markerss;
         //cudaEvent_t *events         = enactor_slice -> split_events + 0;
@@ -524,7 +563,8 @@ public:
 
             start_peer += num_streams;
         } // end of while start_peer
-   
+  
+        printf("Iteration::Make_Output end. gpu_num = %d\n", gpu_num);fflush(stdout); 
         return retval;
     }
 

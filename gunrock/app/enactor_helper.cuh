@@ -24,6 +24,7 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
 {
     typedef typename ThreadSlice::Enactor Enactor;
+    printf("All_Done begin. gpu_num = %d\n", gpu_num); fflush(stdout);
 
     EnactorSlice<Enactor> *enactor_slices 
         = (EnactorSlice<Enactor>*) enactor->enactor_slices;
@@ -52,7 +53,9 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
             if (frontier_attribute->queue_length != 0 ||
                 frontier_attribute->has_incoming)
             {
-                //printf("frontier_attribute[%d].queue_length = %d\n",gpu,frontier_attribute[gpu].queue_length);   
+                printf("gpu %d : frontier_attribute[%d].queue_length = %d\n",
+                    gpu, stream, frontier_attribute -> queue_length);   
+                fflush(stdout);
                 return false;
             }
         }
@@ -60,27 +63,34 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         for (int i=0; i<2; i++)
         if (!enactor_slice -> input_queues[i].Empty())
         {
-            //printf("data_slice[%d]->in_length[%d][%d] = %d\n", gpu, i, peer, data_slice[gpu]->in_length[i][peer]);
+            printf("gpu %d : input_queues[%d] not empty\n", gpu, i);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> outpu_queue.Empty())
         {
-            //printf("data_slice[%d]->out_length[%d] = %d\n", gpu, peer, data_slice[gpu]->out_length[peer]);
+            printf("gpu %d : outpu_queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> subq__queue.Empty())
         {
+            printf("gpu %d : subq__queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> fullq_queue.Empty())
         {
+            printf("gpu %d : fullq_queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
     }
 
+    printf("All_Done return true. gpu_num = %d\n", gpu_num); fflush(stdout);
     return true;
 } 
 
