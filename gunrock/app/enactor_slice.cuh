@@ -131,6 +131,8 @@ struct EnactorSlice
         split_markers      (NULL)
         //split_m_arrays     (NULL)
     {
+        printf("EnactorSlice() begin.\n");fflush(stdout);
+
         vertex_associate_orgs .SetName("vertex_associate_orgs");
         value__associate_orgs .SetName("value__associate_orgs");
         input_streams         .SetName("input_streams"        );
@@ -177,11 +179,14 @@ struct EnactorSlice
         split_contexts        .SetName("split_contexts"       );
         split_lengths         .SetName("split_lengths"        );
         split_m_handles       .SetName("split_m_handles"      );
+        printf("EnactorSlice() end.\n");fflush(stdout);
     }
 
     virtual ~EnactorSlice()
     {
+        printf("~EnactorSlice() begin.\n");fflush(stdout);
         Release();
+        printf("~EnactorSlice() end.\n");fflush(stdout);
     }
 
     cudaError_t Init(
@@ -195,6 +200,8 @@ struct EnactorSlice
         int num_split_streams = 0)
     {
         cudaError_t retval = cudaSuccess;
+        printf("EnactorSlice::Init begin. gpu_num = %d\n", gpu_num);fflush(stdout);
+
         this->num_gpus = num_gpus;
         this->gpu_num  = gpu_num;
         this->gpu_idx  = gpu_idx;
@@ -336,12 +343,16 @@ struct EnactorSlice
                 }
             }
         }
+
+        printf("EnactorSlice::Init end. gpu_num = %d\n", gpu_num);fflush(stdout);
         return retval;
     }
 
     cudaError_t Release()
     {
         cudaError_t retval = cudaSuccess;
+        printf("EnactorSlice::Release begin. gpu_num = %d\n", gpu_num);fflush(stdout);
+        
         if (retval = util::SetDevice(gpu_idx)) return retval;
         if (retval = vertex_associate_orgs.Release()) return retval;
         if (retval = value__associate_orgs.Release()) return retval;
@@ -477,6 +488,7 @@ struct EnactorSlice
             num_split_streams = 0;
         }
 
+        printf("EnactorSlice::Release end. gpu_num = %d\n", gpu_num);fflush(stdout);
         return retval;
     }
 
@@ -500,6 +512,7 @@ struct EnactorSlice
     {
         cudaError_t retval = cudaSuccess;
 
+        printf("EnactorSlice::Reset begin. gpu_num = %d\n", gpu_num);fflush(stdout);
         if (subq__factor  < 0) subq__factor  = 1.0;
         if (subq__factor0 < 0) subq__factor0 = 1.0;
         if (subq__factor1 < 0) subq__factor1 = 1.0;
@@ -590,6 +603,7 @@ struct EnactorSlice
             }
             for (int stream=0; stream<num_subq__streams; stream++)
             {
+                subq__stages[stream] = 0;
                 if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
                     return retval;
                 
@@ -645,8 +659,11 @@ struct EnactorSlice
                 if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
             }
             for (int stream=0; stream<num_fullq_stream; stream++)
-            if (retval = fullq_scanned_edge[stream].Allocate(max_elements, util::DEVICE))
-                return retval;
+            {
+                fullq_stage[stream] = 0;
+                if (retval = fullq_scanned_edge[stream].Allocate(max_elements, util::DEVICE))
+                    return retval;
+            }
         }
 
         if (num_split_streams != 0)
@@ -658,6 +675,7 @@ struct EnactorSlice
                     return retval;
             }
         }
+        printf("EnactorSlice::Reset end. gpu_num = %d\n", gpu_num);fflush(stdout);
         return retval;
     }
 }; // end of EnactorSlice

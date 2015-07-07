@@ -192,8 +192,7 @@ struct GraphSlice
 
         do {
             // Set device using slice index
-            if (retval = util::GRError(cudaSetDevice(index), 
-                             "GpuSlice cudaSetDevice failed", __FILE__, __LINE__)) break;
+            if (retval = util::SetDevice(index)) break;
 
             // Allocate and initialize row_offsets
             if (retval = this->row_offsets.Allocate(nodes+1      ,util::DEVICE)) break;

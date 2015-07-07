@@ -292,7 +292,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
             for (int gpu=0;gpu<this->num_gpus;gpu++)
             {
                 data_slices[gpu].SetName("data_slices[]");
-                if (retval = util::GRError(cudaSetDevice(this->gpu_idx[gpu]), "BFSProblem cudaSetDevice failed", __FILE__, __LINE__)) return retval;
+                if (retval = util::SetDevice(this->gpu_idx[gpu])) return retval;
                 if (retval = data_slices[gpu].Allocate(1,util::DEVICE | util::HOST)) return retval;
                 DataSlice* _data_slice = data_slices[gpu].GetPointer(util::HOST);
                 if (retval = _data_slice->Init(
