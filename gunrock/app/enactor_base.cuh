@@ -447,17 +447,19 @@ protected:
         num_split_streams    (0 ),
         using_subq           (false)
     {
+        printf("EnactorBase() begin.\n");fflush(stdout);
         cuda_props        .SetName("cuda_props"        );
         cuda_props        .Init(num_gpus         , util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable);
        
         for (int gpu=0;gpu<num_gpus;gpu++)
         {
             if (util::SetDevice(gpu_idx[gpu])) return;
-            // Setup work progress (only needs doing once since we maintain
-            // it in our kernel code)
             cuda_props   [gpu].Setup(gpu_idx[gpu]);
+            printf("Using GPU %d : %s \n", gpu_idx[gpu], cuda_props[gpu].device_props.name);
+            fflush(stdout);
         }
         problem = NULL;
+        printf("EnactorBase() end.\n");fflush(stdout);
     }
 
     /**
@@ -504,6 +506,11 @@ protected:
         typedef EnactorSlice<Enactor> EnactorSlice;
         typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
             ThreadSlice;
+
+        printf("EnactorBase Init begin. #input_streams = %d, #outpu_streams = %d, #subq__streams = %d, #fullq_streams = %d, #split_streams = %d\n",
+            num_input_streams, num_outpu_streams, num_subq__streams,
+            num_fullq_stream , num_split_streams);
+        fflush(stdout);
 
         cudaError_t retval = cudaSuccess;
         this -> num_input_streams = num_input_streams;
@@ -574,6 +581,8 @@ protected:
         }
         num_threads = thread_counter;
 
+        printf("EnactorBase Init end. #threads = %d\n", num_threads);
+        fflush(stdout);
         return retval;
     }
 
@@ -588,6 +597,7 @@ protected:
             ThreadSlice;
         cudaError_t retval = cudaSuccess;
 
+        printf("EnactorBase Release begin.\n");fflush(stdout);
         for (int i=0; i<num_threads; i++)
             threads[i].join();
 
@@ -609,6 +619,8 @@ protected:
         delete[] thread_slices;  thread_slices = NULL;
         this->enactor_slices = NULL;
         this->thrad_slices = NULL;
+
+        printf("EnactorBase Init end.\n");fflush(stdout);
         return retval;
     }
 
@@ -630,6 +642,8 @@ protected:
         double temp_factor   = 0.1)
     {
         cudaError_t retval = cudaSuccess;
+        printf("EnactorBase Reset begin.\n");fflush(stdout);
+        
         EnactorSlice<Enactor> *enactor_slices
             = (EnactorSlice<Enactor>*) this->enactor_slices;
         ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>* thread_slices
@@ -654,6 +668,7 @@ protected:
             if (retval = util::SetDevice(gpu_idx[thread_slices[i].gpu_num])) return retval;
             if (retval = thread_slices[i].Reset()) return retval;
         }
+        printf("EnactorBase Reset end.\n");fflush(stdout);
         return retval;
     }
 

@@ -92,6 +92,7 @@ public:
         name      (""  ),
         gpu_idx   (0   ),
         input_count(0  ),
+        output_count(0 ),
         capacity  (0   ),
         size_occu (0   ),
         size_soli (0   ),
@@ -121,8 +122,6 @@ public:
     {
         this->name = name;
         array                 .SetName(name+"_array"      );
-        //vertex_associates     .SetName(name+"_vertex"     );
-        //value__associates     .SetName(name+"_value"      );
         temp_array            .SetName(name+"_temp_array" );
         temp_vertex_associates.SetName(name+"_temp_vertex");
         temp_value__associates.SetName(name+"_temp_value" );
@@ -169,6 +168,7 @@ public:
         tail_a    = 0; tail_b = 0;
         size_occu = 0; size_soli = 0;
         wait_resize = 0;
+        input_count = 0; output_count = 0;
 
         if (temp_capacity != 0)
         {
@@ -279,19 +279,34 @@ public:
     {
     }
 
-    void ResetInputCount()
+    cudaError_t ResetInputCount(bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        input_count = 0;
+        return Combined_Return(retval, in_critical);
     }
 
-    void ResetOutputCount()
+    cudaError_t ResetOutputCount(bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        output_count = 0;
+        return Combined_Return(retval, in_critical);
     }
 
-    void ResetCounts()
+    cudaError_t ResetCounts(bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        if (retval = ResetInputCount(true)) 
+            return Combined_Return(retval, in_critical);
+        if (retval = ResetOutputCount(true))
+            return Combined_Return(retval, in_critical);
+        return Combined_Return(retval, in_critical);
     } 
 
-    cudaError_t Reset()
+    cudaError_t Reset(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
         return retval;
@@ -627,6 +642,7 @@ public:
             if (head_a >= capacity) head_a -= capacity;
         }
         size_occu += length;
+        input_count ++;
 
         ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
         return Combined_Return(retval, in_critical);
@@ -700,6 +716,7 @@ public:
             if (tail_a == capacity) tail_a = 0;
         }
         size_soli -= length;
+        output_count ++;
 
         ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
         return Combined_Return(retval, in_critical);
