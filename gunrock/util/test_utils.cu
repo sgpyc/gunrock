@@ -51,12 +51,13 @@ void DeviceInit(CommandLineArgs &args)
         if (!args.CheckCmdLineFlag("quiet")) {
             printf("Using device %d: %s\n", devs[i], deviceProp.name);
         }   
-    }   
+    } 
     cudaSetDevice(devs[0]);
 }
 
 cudaError_t SetDevice(int dev)
 {
+    printf("Setting device to %d\n", dev);fflush(stdout);
     return util::GRError(cudaSetDevice(dev), "cudaSetDevice failed.", __FILE__, __LINE__);
 }
 
