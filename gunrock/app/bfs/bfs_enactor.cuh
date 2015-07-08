@@ -127,6 +127,8 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
+        util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
+        util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
         this->PrintMessage("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
@@ -138,7 +140,7 @@ struct BFSIteration : public IterationBase <
             (bool*    )NULL,
             (bool*    )NULL,
             scanned_edges -> GetPointer(util::DEVICE),
-            frontier_queue-> keys  [frontier_attribute->selector  ].GetPointer(util::DEVICE),
+            this->d_keys_in,//frontier_queue-> keys  [frontier_attribute->selector  ].GetPointer(util::DEVICE),
             frontier_queue-> keys  [frontier_attribute->selector^1].GetPointer(util::DEVICE),
             (VertexId*)NULL,
             frontier_queue-> values[frontier_attribute->selector^1].GetPointer(util::DEVICE),
@@ -233,13 +235,19 @@ struct BFSIteration : public IterationBase <
         if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
             "scanned_edges", this->frontier_attribute->queue_length, 
             this-> scanned_edge, over_sized, -1, -1, -1, false)) 
-            return retval; 
+            return retval;
+        printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %d\n",
+            this-> frontier_attribute, this->d_offsets, this->d_indices, 
+            this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
+            this -> max_in, this-> max_out, this->stream);
+        fflush(stdout);
+
         retval = gunrock::oprtr::advance::ComputeOutputLength
             <AdvanceKernelPolicy, Problem, BfsFunctor>(
             this-> frontier_attribute,
             this-> d_offsets,
             this-> d_indices,
-            this-> d_in_key_queue,
+            this-> d_keys_in,
             this-> scanned_edge ->GetPointer(util::DEVICE),
             this-> max_in,
             this-> max_out,
@@ -528,7 +536,9 @@ public:
         {   
             gpu = problem->partition_tables [0][src];
             tsrc= problem->convertion_tables[0][src];
-        }   
+        }
+        printf("gpu = %d, gpu_idx[gpu] = %d\n", gpu, this->gpu_idx[gpu]);
+        fflush(stdout); 
         if (retval = util::SetDevice(this->gpu_idx[gpu])) return retval;
         if (retval = util::GRError(cudaMemcpy(
             enactor_slices[gpu].subq__frontiers[0].keys[0].GetPointer(util::DEVICE),
@@ -592,7 +602,7 @@ public:
 
             while (!All_Done<ThreadSlice>(this, -1))
             {
-                std::this_thread::sleep_for(std::chrono::microseconds(1));
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
             }             
         } while(0);
 

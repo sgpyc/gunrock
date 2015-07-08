@@ -267,6 +267,9 @@ cudaError_t Set_Record(
     cudaError_t retval = cudaSuccess;
     if (thread_type == 2) // subq
     {
+        printf("subq__events = %d, event_set = %s\n",
+            enactor_slice -> subq__events[iteration%4][stream_num][stage],
+            enactor_slice -> subq__event_sets[iteration%4][stream_num][stage] ? "true" : "false"); fflush(stdout);
         retval = cudaEventRecord(
             enactor_slice -> subq__events[iteration%4][stream_num][stage],
             enactor_slice -> subq__streams[stream_num]);

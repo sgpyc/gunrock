@@ -424,8 +424,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                                     =   enactor_slice -> subq__frontier_attributes + 0;
     WorkProgress  *work_progresses  =   enactor_slice -> subq__work_progresses + 0; 
     Array<SizeT>  *scanned_edges    =   enactor_slice -> subq__scanned_edges;
-    SizeT         *s_lengths          = enactor_slice -> subq__s_lengths;
-    SizeT         *s_offsets          = enactor_slice -> subq__s_offsets;
+    SizeT         *s_lengths          = enactor_slice -> subq__s_lengths + 0;
+    SizeT         *s_offsets          = enactor_slice -> subq__s_offsets + 0;
     int            stream_num         = 0;
     long long      iteration          = 0;
     //long long      iteration_         = 0;
@@ -456,7 +456,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     {
         if (thread_slice -> retval) return;
         if (thread_slice -> status == ThreadSlice::Status::Wait 
-            || s_queue -> Empty() || !enactor -> using_subq) 
+            || !enactor -> using_subq) 
         {
             if (show_wait)
             {
@@ -472,7 +472,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
         iteration  = thread_slice -> iteration;
         //iteration_ = iteration % 4;
         iteration_loops = (IterationT*)enactor_slice -> subq__iteration_loops;
-        if (enactor -> num_gpus > 0 || enactor -> using_fullq)
+        if (enactor -> num_gpus > 1 || enactor -> using_fullq)
         {
             t_queue = &enactor_slice -> fullq_queue;
         } else {
@@ -571,12 +571,13 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         iteration_loop -> Check_Queue_Size())
                         return;
                 }
+                enactor_stats -> iteration = thread_slice -> iteration;
                 if (thread_slice -> retval =
                     iteration_loop -> SubQueue_Core())
                     return;
                 if (thread_slice -> retval = 
-                    s_queue -> EventSet(1, s_lengths[stream_num],
-                    s_offsets[stream_num], stream)) return;
+                    s_queue -> EventSet(1, s_offsets[stream_num],
+                    s_lengths[stream_num], stream)) return;
 
                 if (thread_slice -> retval =
                     work_progress->GetQueueLength(
@@ -584,8 +585,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         frontier_attribute -> queue_length,
                         false, stream, true))
                     return;
-                Set_Record(enactor_slice, 2, iteration, stream_num,
-                        stages[stream_num]);
+                if (thread_slice -> retval = 
+                    Set_Record(enactor_slice, 2, iteration, stream_num,
+                        stages[stream_num])) return;
                 break;
 
             case 2: // Copy
@@ -630,7 +632,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
             case 3: // Accumulate
                 enactor_slice -> subq__wait_counter++;
-                if (s_queue->Empty() && enactor_slice -> subq__wait_counter == 
+                printf("count = %d, target = %d\n", enactor_slice -> subq__wait_counter, enactor_slice -> subq__target_count[iteration%2]);
+                fflush(stdout);
+                if (enactor_slice -> subq__wait_counter == 
                     enactor_slice -> subq__target_count[iteration%2])
                 {
                     if (enactor -> using_fullq || enactor -> num_gpus >1)
@@ -644,6 +648,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         s_queue -> ResetOutputCount();
                         s_queue -> ChangeInputCount(0 - enactor_slice -> subq__wait_counter); 
                     }
+                    printf("Iteration change\n");
                     enactor_slice -> subq__wait_counter = 0;
                     iteration_loop -> Iteration_Change(thread_slice -> iteration);
                 }

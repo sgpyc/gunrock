@@ -253,7 +253,11 @@ public:
     bool Empty()
     {
         if (size_soli != 0) return false;
-        if (size_occu != 0) return false;
+        if (size_occu != 0) 
+        {
+            EventCheck(1, false);
+            if (size_occu != 0) return false;
+        }
         return true;
     }
 
@@ -320,7 +324,7 @@ public:
         int         org_gpu     = 0)
     {
         if (!in_critical) queue_mutex.unlock();
-        if (retval == cudaSuccess)
+        if (retval == cudaSuccess && set_gpu)
             retval = util::SetDevice(org_gpu);
         return retval;
     }
@@ -333,7 +337,7 @@ public:
         SizeT       dsize,
         Value*      value = NULL)
     {
-        printf("%s\t %s\t %d\t %d\t ~ %d\t %d\t %d\t %d\t %d\t %d\t %d\t %d\n",
+        printf("%s\t %s\t value = %d\t %d\t ~ %d\t dsize = %d\t size_occu = %d\t size_soli = %d\t head_a = %d\t head_b = %d\t tail_a = %d\t tail_b = %d\n",
             function_name.c_str(), direction == 0? "->" : "<-",
             value == NULL ? -1 : value[0], start, end, dsize, size_occu, size_soli,
             head_a, head_b, tail_a, tail_b);
