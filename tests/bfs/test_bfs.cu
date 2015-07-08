@@ -523,13 +523,13 @@ void RunTests(Test_Parameter *parameter)
     printf("\n");
     double max_queue_sizing_[2] = {0,0}, max_in_sizing_=0;
     // TODO: find a new way to get queue sizing
-    /*for (int gpu=0;gpu<num_gpus;gpu++)
+    for (int gpu=0;gpu<num_gpus;gpu++)
     {   
         size_t gpu_free,dummy;
         cudaSetDevice(gpu_idx[gpu]);
         cudaMemGetInfo(&gpu_free,&dummy);
         printf("GPU_%d\t %ld",gpu_idx[gpu],org_size[gpu]-gpu_free);
-        for (int i=0;i<num_gpus;i++)
+        /*for (int i=0;i<num_gpus;i++)
         {  
             for (int j=0; j<2; j++)
             { 
@@ -548,8 +548,8 @@ void RunTests(Test_Parameter *parameter)
             }   
         }   
         if (num_gpus>1) printf("\t %lld", (long long)(problem->data_slices[gpu]->frontier_queues[num_gpus].keys[0].GetSize()));
-        printf("\n");
-    }*/  
+        */printf("\n");
+    } 
     printf("\t queue_sizing =\t %lf \t %lf", max_queue_sizing_[0], max_queue_sizing_[1]);
     if (num_gpus>1) printf("\t in_sizing =\t %lf", max_in_sizing_);
     printf("\n");
