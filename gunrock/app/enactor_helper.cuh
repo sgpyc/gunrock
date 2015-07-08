@@ -24,7 +24,7 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
 {
     typedef typename ThreadSlice::Enactor Enactor;
-    printf("All_Done begin. gpu_num = %d\n", gpu_num); fflush(stdout);
+    //printf("All_Done begin. gpu_num = %d\n", gpu_num); fflush(stdout);
 
     EnactorSlice<Enactor> *enactor_slices 
         = (EnactorSlice<Enactor>*) enactor->enactor_slices;
@@ -53,9 +53,9 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
             if (frontier_attribute->queue_length != 0 ||
                 frontier_attribute->has_incoming)
             {
-                printf("gpu %d : frontier_attribute[%d].queue_length = %d\n",
-                    gpu, stream, frontier_attribute -> queue_length);   
-                fflush(stdout);
+                //printf("gpu %d : frontier_attribute[%d].queue_length = %d\n",
+                //    gpu, stream, frontier_attribute -> queue_length);   
+                //fflush(stdout);
                 return false;
             }
         }
@@ -267,9 +267,9 @@ cudaError_t Set_Record(
     cudaError_t retval = cudaSuccess;
     if (thread_type == 2) // subq
     {
-        printf("subq__events = %d, event_set = %s\n",
-            enactor_slice -> subq__events[iteration%4][stream_num][stage],
-            enactor_slice -> subq__event_sets[iteration%4][stream_num][stage] ? "true" : "false"); fflush(stdout);
+        //printf("subq__events = %d, event_set = %s\n",
+        //    enactor_slice -> subq__events[iteration%4][stream_num][stage],
+        //    enactor_slice -> subq__event_sets[iteration%4][stream_num][stage] ? "true" : "false"); fflush(stdout);
         retval = cudaEventRecord(
             enactor_slice -> subq__events[iteration%4][stream_num][stage],
             enactor_slice -> subq__streams[stream_num]);
@@ -314,12 +314,12 @@ cudaError_t Check_Record(
     }
     if (!event_set[0])
     {   
-        to_show = false;stage--;
+        to_show = false;
     } else {
         retval = cudaEventQuery(event);
         if (retval == cudaErrorNotReady)
         {   
-            to_show=false;stage--;
+            to_show=false;
             retval = cudaSuccess; 
         } else if (retval == cudaSuccess)
         {

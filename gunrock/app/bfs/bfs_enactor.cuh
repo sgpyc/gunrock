@@ -127,8 +127,8 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
-        util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
-        util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
         this->PrintMessage("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
@@ -236,7 +236,7 @@ struct BFSIteration : public IterationBase <
             "scanned_edges", this->frontier_attribute->queue_length, 
             this-> scanned_edge, over_sized, -1, -1, -1, false)) 
             return retval;
-        printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %d\n",
+        printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %p\n",
             this-> frontier_attribute, this->d_offsets, this->d_indices, 
             this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
             this -> max_in, this-> max_out, this->stream);
@@ -361,8 +361,21 @@ public:
      */
     virtual ~BFSEnactor()
     {
-        printf("~BFSEnactor() begin.\n");fflush(stdout);
-        printf("~BFSEanctor() end.\n");fflush(stdout);
+        Release();
+    }
+
+    template <
+        typename AdvanceKernelPolicy,
+        typename FilterKernelPolicy>
+    cudaError_t ReleaseBFS()
+    {
+        cudaError_t retval = cudaSuccess;
+        printf("BFSEnactor::Release begin.\n");fflush(stdout);
+        if (retval = BaseEnactor::template Release
+            <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>())
+            return retval;
+        printf("BFSEanctorRelease end.\n");fflush(stdout);
+        return retval;
     }
 
     /**
@@ -603,7 +616,10 @@ public:
             while (!All_Done<ThreadSlice>(this, -1))
             {
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
-            }             
+            }
+
+            for (int i=0; i<this->num_threads; i++)
+                thread_slices[i].status = ThreadSlice::Status::Wait;
         } while(0);
 
         if (this->DEBUG) printf("GPU BFS Done.\n");
@@ -839,6 +855,26 @@ public:
                         temp_factor);
         }
     }    
+
+    cudaError_t Release()
+    {
+         if (Problem::ENABLE_IDEMPOTENCE) {
+            if (traversal_mode == 0)
+                return ReleaseBFS
+                    <     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>();
+            else
+                return ReleaseBFS
+                    <ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>();
+        } else {
+            if (traversal_mode == 0)
+                return ReleaseBFS
+                    <     LBAdvanceKernelPolicy     , FilterKernelPolicy>();
+            else
+                return ReleaseBFS
+                    <ForwardAdvanceKernelPolicy     , FilterKernelPolicy>();
+        }
+    }    
+
     /** @} */
 };
 

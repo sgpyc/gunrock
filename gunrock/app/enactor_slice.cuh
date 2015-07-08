@@ -282,7 +282,7 @@ struct EnactorSlice
                             cudaEventCreate(subq__events[i][stream] + stage),
                             "cudaEventCreate failed", __FILE__, __LINE__)) 
                             return retval;
-                        printf("subq__events[%d][%d][%d] created %d\n", i, stream, stage, subq__events[i][stream][stage]);
+                        //printf("subq__events[%d][%d][%d] created %d\n", i, stream, stage, subq__events[i][stream][stage]);
                     }
                 }
             }
@@ -563,12 +563,6 @@ struct EnactorSlice
 
         if (num_subq__streams != 0)
         {
-            for (int i=0; i<4; i++)
-            for (int stream_num=0; stream_num<num_subq__streams; stream_num++)
-            for (int stage = 0; stage < Enactor::NUM_STAGES; stage++)
-            {
-                subq__event_sets[i][stream_num][stage] = false;
-            }
             subq__wait_counter = 0;
             subq__target_count[0] = 1; //util::MaxValue<SizeT>();
             subq__target_count[1] = util::MaxValue<SizeT>();
@@ -623,7 +617,12 @@ struct EnactorSlice
                 subq__stages[stream] = 0;
                 if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
                     return retval;
-                
+                for (int i=0; i<4; i++)
+                for (int stage = 0; stage < Enactor::NUM_STAGES; stage++)
+                {
+                    subq__event_sets[i][stream][stage] = false;
+                }
+                if (retval = subq__enactor_statses[stream].Reset()) return retval; 
             }
         }
 

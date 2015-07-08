@@ -489,6 +489,15 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
             work_progress       = work_progresses     + stream_num;
             enactor_stats       = enactor_statses     + stream_num; 
             selector            = frontier_attribute -> selector;
+            enactor_stats->iteration = thread_slice -> iteration;
+            
+            if (stages[stream_num] == 0)
+            {
+                if (s_queue ->GetSoliSize() < enactor_slice -> subq__min_length)
+                {
+                    continue;
+                }
+            }
 
             if (iteration_loop -> status == IterationT::Status::New)
             {
@@ -530,6 +539,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
             }
             to_shows[stream_num] = true;
             pre_stage = stages[stream_num];
+            //printf("stream_num = %d, stage = %d\n", stream_num, stages[stream_num]);fflush(stdout);
 
             switch (stages[stream_num])
             {
@@ -643,7 +653,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                             = s_queue -> GetOutputCount();
                         s_queue -> ResetCounts();
                     } else {
-                        enactor_slice -> subq__target_count[iteration%2]
+                        enactor_slice -> subq__target_count[(iteration+1)%2]
                             = s_queue -> GetOutputCount();
                         s_queue -> ResetOutputCount();
                         s_queue -> ChangeInputCount(0 - enactor_slice -> subq__wait_counter); 
@@ -738,7 +748,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             continue;
         }
 
-        printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d\n");
+        printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d\n", gpu_num);
         fflush(stdout);
         iteration_loop = (IterationT*)enactor_slice -> fullq_iteration_loop;
         if (num_streams >0 && iteration_loop -> has_fullq)

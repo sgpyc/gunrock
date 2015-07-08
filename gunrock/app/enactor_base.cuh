@@ -598,13 +598,16 @@ protected:
         cudaError_t retval = cudaSuccess;
 
         printf("EnactorBase Release begin.\n");fflush(stdout);
-        for (int i=0; i<num_threads; i++)
-            threads[i].join();
-
         EnactorSlice *enactor_slices
             = (EnactorSlice*) this->enactor_slices;
         ThreadSlice  *thread_slices
             = (ThreadSlice*)  this->thread_slices;
+
+        for (int i=0; i<num_threads; i++)
+        {
+            thread_slices[i].status = ThreadSlice::Status::ToKill;
+            threads[i].join();
+        }
 
         for (int gpu=0; gpu<num_gpus; gpu++)
         {
@@ -618,9 +621,9 @@ protected:
         delete[] enactor_slices; enactor_slices = NULL;
         delete[] thread_slices;  thread_slices = NULL;
         this->enactor_slices = NULL;
-        this->thrad_slices = NULL;
+        this->thread_slices = NULL;
 
-        printf("EnactorBase Init end.\n");fflush(stdout);
+        printf("EnactorBase Release end.\n");fflush(stdout);
         return retval;
     }
 
