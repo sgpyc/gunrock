@@ -54,7 +54,7 @@ struct EnactorSlice
     int                   input_target_count      ;
     CircularQueue         input_queues         [2];
     Array<ExpandIncomingHandle> input_e_handles   ; // compressed data structure for expand_incoming kernel
-    void*                 input_iteration_loops   ;
+    void                 *input_iteration_loops   ;
     void                 *input_thread_slice      ;
     SizeT                 input_min_length        ;
     SizeT                 input_max_length        ;
@@ -63,7 +63,7 @@ struct EnactorSlice
     CircularQueue         outpu_queue             ;
     std::list<PRequest>   outpu_request_queue     ;
     std::mutex            outpu_request_mutex     ;
-    void*                 outpu_iteration_loops   ;
+    void                 *outpu_iteration_loops   ;
     void                 *outpu_thread_slice      ;
 
     Array<cudaStream_t>   subq__streams           ; // GPU streams
@@ -81,13 +81,13 @@ struct EnactorSlice
     Array<EnactorStats>   subq__enactor_statses   ;
     Array<util::CtaWorkProgressLifetime> 
                           subq__work_progresses   ;
-    void*                 subq__iteration_loops   ;
+    void                 *subq__iteration_loops   ;
     SizeT                 subq__target_count   [2];
     void                 *subq__thread_slice      ;
     SizeT                 subq__min_length        ;
     SizeT                 subq__max_length        ;
-    SizeT                *subq__s_lengths         ;
-    SizeT                *subq__s_offsets         ;
+    Array<SizeT>          subq__s_lengths         ;
+    Array<SizeT>          subq__s_offsets         ;
 
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
@@ -103,7 +103,7 @@ struct EnactorSlice
     Array<EnactorStats>   fullq_enactor_stats     ;
     Array<util::CtaWorkProgressLifetime>
                           fullq_work_progress     ;
-    void*                 fullq_iteration_loop    ;
+    void                 *fullq_iteration_loop    ;
     SizeT                 fullq_target_count   [2];
     void                 *fullq_thread_slice      ;
 
@@ -114,7 +114,7 @@ struct EnactorSlice
     Array<SizeT*      >   split_markerss          ;
     Array<MakeOutHandle>  split_m_handles          ; // compressed data structure for make_out kernel
     Array<cudaEvent_t >   split_events            ;
-    void*                 split_iteration_loops   ;
+    void                 *split_iteration_loops   ;
 
     EnactorSlice() :
         num_gpus           (0   ),
@@ -242,12 +242,16 @@ struct EnactorSlice
         this->num_subq__streams = num_subq__streams;
         if (num_subq__streams != 0)
         {
+            subq__min_length = 1;
+            subq__max_length = 32 * 1024 * 1024;
             if (retval = subq__streams     .Allocate(num_subq__streams)) return retval;
             if (retval = subq__contexts    .Allocate(num_subq__streams)) return retval;
             if (retval = subq__stages      .Allocate(num_subq__streams)) return retval;
             if (retval = subq__to_shows    .Allocate(num_subq__streams)) return retval;
             if (retval = subq__wait_markers.Allocate(num_subq__streams)) return retval;
             if (retval = subq__frontiers   .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__s_lengths   .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__s_offsets   .Allocate(num_subq__streams)) return retval;
             if (retval = subq__frontier_attributes.Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             if (retval = subq__enactor_statses    .Init(num_subq__streams, 
@@ -262,8 +266,7 @@ struct EnactorSlice
                 subq__contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, subq__streams[stream]);
                 subq__scanned_edges[stream].SetName("subq__scanned_edges[]");
                 subq__work_progresses[stream].Init();
-                if (retval = subq__frontier_attributes[stream].output_length.Allocate(1, 
-                    util::HOST | util::DEVICE)) return retval;
+                if (retval = subq__frontier_attributes[stream].output_length.Init(1, util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             }
             for (int i=0; i<4; i++)
             {
@@ -275,8 +278,11 @@ struct EnactorSlice
                     subq__event_sets[i][stream] = new bool       [Enactor::NUM_STAGES];
                     for (int stage=0; stage<Enactor::NUM_STAGES; stage++)
                     {
-                        if (retval = util::GRError(cudaEventCreate(subq__events[i][stream] + stage)),
-                            "cudaEventCreate failed", __FILE__, __LINE__) return retval;
+                        if (retval = util::GRError(
+                            cudaEventCreate(subq__events[i][stream] + stage),
+                            "cudaEventCreate failed", __FILE__, __LINE__)) 
+                            return retval;
+                        printf("subq__events[%d][%d][%d] created %d\n", i, stream, stage, subq__events[i][stream][stage]);
                     }
                 }
             }
@@ -290,6 +296,8 @@ struct EnactorSlice
             if (retval = fullq_stage       .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_to_show     .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_frontier    .Allocate(num_fullq_stream)) return retval;
+            //if (retval = fullq_s_length    .Allocate(num_fullq_stream)) return retval;
+            //if (retval = fullq_s_offset    .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_frontier_attribute.Init(num_fullq_stream, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             if (retval = fullq_enactor_stats     .Init(num_fullq_stream, 
@@ -425,6 +433,8 @@ struct EnactorSlice
             if (retval = subq__frontier_attributes.Release()) return retval;
             if (retval = subq__enactor_statses    .Release()) return retval;
             if (retval = subq__work_progresses    .Release()) return retval;
+            if (retval = subq__s_lengths          .Release()) return retval;
+            if (retval = subq__s_offsets          .Release()) return retval;
             delete[] subq__scanned_edges; subq__scanned_edges = NULL;
             num_subq__streams = 0;
         }
@@ -553,7 +563,14 @@ struct EnactorSlice
 
         if (num_subq__streams != 0)
         {
-            subq__target_count[0] = util::MaxValue<SizeT>();
+            for (int i=0; i<4; i++)
+            for (int stream_num=0; stream_num<num_subq__streams; stream_num++)
+            for (int stage = 0; stage < Enactor::NUM_STAGES; stage++)
+            {
+                subq__event_sets[i][stream_num][stage] = false;
+            }
+            subq__wait_counter = 0;
+            subq__target_count[0] = 1; //util::MaxValue<SizeT>();
             subq__target_count[1] = util::MaxValue<SizeT>();
 
             SizeT target_capacity = graph_slice->nodes * subq__factor;

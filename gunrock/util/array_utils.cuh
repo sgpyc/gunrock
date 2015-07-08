@@ -148,7 +148,8 @@ public:
             {
                 if (retval = util::GRError(cudaHostRegister(h_pointer, sizeof(Value)*size, flag), 
                                 name+" cudaHostRegister failed.", __FILE__, __LINE__)) return retval;
-            } allocated = allocated | HOST;    
+            } 
+            allocated = allocated | HOST;    
             if (ARRAY_DEBUG) 
                 {printf("%s\t allocated on HOST, length =\t %lld, size =\t %lld bytes, pointer =\t %p\n",name.c_str(), (long long) size, (long long) size*sizeof(Value), h_pointer);fflush(stdout);}
         }
