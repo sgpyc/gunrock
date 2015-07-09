@@ -89,6 +89,7 @@ public:
         SizeT reset_val = 0;
         util::io::ModifiedStore<util::io::st::cg>::St(
             reset_val, ((SizeT *) d_counters) + threadIdx.x);
+        printf("Reset: d_counters[%d] -> 0\n", threadIdx.x);
     }
 
     //---------------------------------------------------------------------
@@ -102,6 +103,7 @@ public:
     __device__ __forceinline__ SizeT Steal(int count)
     {
         SizeT* d_steal_counters = ((SizeT*) d_counters) + QUEUE_COUNTERS;
+        printf("Steal1: d_counters[%d] += %d\n", QUEUE_COUNTERS + progress_selector, count);
         return util::AtomicInt<SizeT>::Add(d_steal_counters + progress_selector, count);
     }
 
@@ -112,6 +114,7 @@ public:
     __device__ __forceinline__ SizeT Steal(int count, IterationT iteration)
     {
         SizeT* d_steal_counters = ((SizeT*) d_counters) + QUEUE_COUNTERS;
+        pfintf("Steal2: d_counters[%d] += %d\n", QUEUE_COUNTERS + (iteration & 1), count);
         return util::AtomicInt<SizeT>::Add(d_steal_counters + (iteration & 1), count);
     }
 
@@ -122,6 +125,7 @@ public:
     {
         SizeT   reset_val = 0;
         SizeT*  d_steal_counters = ((SizeT*) d_counters) + QUEUE_COUNTERS;
+        printf("PrepResetSteal1: d_counters[%d] -> 0\n", QUEUE_COUNTERS + (progress_selector ^1));
         util::io::ModifiedStore<util::io::st::cg>::St(
                 reset_val, d_steal_counters + (progress_selector ^ 1));
     }
@@ -133,6 +137,7 @@ public:
     {
         SizeT   reset_val = 0;
         SizeT*  d_steal_counters = ((SizeT*) d_counters) + QUEUE_COUNTERS;
+        printf("PrepResetSteal2: d_counters[%d] -> 0\n", QUEUE_COUNTERS + (iteration & 1));
         util::io::ModifiedStore<util::io::st::cg>::St(
             reset_val, d_steal_counters + (iteration & 1));
     }
@@ -146,6 +151,7 @@ public:
     template <typename SizeT, typename IterationT>
     __device__ __forceinline__ SizeT* GetQueueCounter(IterationT iteration)
     {
+        printf("GetQueueCounter: d_counters[%d] = %d\n", ((SizeT*)d_counters)[iteration&3]);
         return ((SizeT*) d_counters) + (iteration & 3);
     }
 
@@ -156,6 +162,7 @@ public:
         SizeT queue_length;
         util::io::ModifiedLoad<util::io::ld::cg>::Ld(
             queue_length, GetQueueCounter<SizeT>(iteration));
+        printf("LoadQueueLength: iteration = %d, queue_length = %d\n", iteration, queue_length);
         return queue_length;
     }
 
@@ -165,6 +172,7 @@ public:
     {
         util::io::ModifiedStore<util::io::st::cg>::St(
             queue_length, GetQueueCounter<SizeT>(iteration));
+        printf("StoreQueueLength: iteration = %d, queue_length = %d\n", iteration, queue_length);
     }
 
     // Enqueues work from the specified iteration's queue counter, returning the
@@ -173,6 +181,7 @@ public:
     template <typename SizeT, typename IterationT>
     __device__ __forceinline__ SizeT Enqueue(SizeT count, IterationT iteration)
     {
+        printf("Enqueue: iteration = %d, count = %d\n", iteration, count);
         return util::AtomicInt<SizeT>::Add(
             GetQueueCounter<SizeT>(iteration),
             count);
@@ -182,6 +191,7 @@ public:
     template <typename SizeT>
     __device__ __forceinline__ void SetOverflow ()
     {
+        printf("SetOverflow: d_counters[%d] -> 1\n", QUEUE_COUNTERS + STEAL_COUNTERS);
         ((SizeT*) d_counters)[QUEUE_COUNTERS + STEAL_COUNTERS] = 1;
     }
 
@@ -275,6 +285,7 @@ public:
                     "CtaWorkProgress cudaMalloc d_counters failed", __FILE__, __LINE__)) break;
                 if (retval = util::GRError(cudaMemcpy(d_counters, h_counters, sizeof(size_t) * COUNTERS, cudaMemcpyHostToDevice),
                     "CtaWorkProgress cudaMemcpy d_counters failed", __FILE__, __LINE__)) break;
+                printf("Init: d_counters[] -> 0\n");
             }
 
             // Update our progress counter selector to index the next progress counter
@@ -342,6 +353,7 @@ public:
              }
         } while (0);
 
+        printf("CPUGetQueueLength: iteration = %d, queue_length = %d\n", iteration, queue_length);
         return retval;
     }
 
@@ -386,6 +398,7 @@ public:
             }
         } while (0);
 
+        printf("CPUSetQueueLength: iteration = %d, queue_length = %d\n", iteration, queue_length);
         return retval;
     }
 };
