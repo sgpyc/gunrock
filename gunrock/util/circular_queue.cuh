@@ -209,7 +209,7 @@ public:
     {
         cudaError_t retval = cudaSuccess;
 
-        if (allocated == DEVICE)
+        if (allocated == DEVICE && gpu_events != NULL)
         {
             for (SizeT i=0; i<num_events; i++)
             {
@@ -244,20 +244,54 @@ public:
         return retval;
     }
 
-    void GetSize(SizeT &size_occu, SizeT &size_soli)
+    void GetSize(SizeT &size_occu, SizeT &size_soli, bool in_critical = false)
     {
+        if (size_soli != size_occu)
+        {
+            if (!in_critical) queue_mutex.lock();
+            EventCheck(0, true);
+            EventCheck(1, true);
+            if (!in_critical) queue_mutex.unlock();
+        }
         size_soli = this->size_soli;
         size_occu = this->size_occu;
     }
 
-    bool Empty()
+    SizeT GetSoliSize(bool in_critical = false)
     {
-        if (size_soli != 0) return false;
-        if (size_occu != 0) 
+        if (size_soli != size_occu)
         {
-            EventCheck(1, false);
-            if (size_occu != 0) return false;
+            if (!in_critical) queue_mutex.lock();
+            EventCheck(0, true);
+            EventCheck(1, true);
+            if (!in_critical) queue_mutex.unlock();
         }
+        return size_soli;
+    }
+
+    SizeT GetOccuSize(bool in_critical = false)
+    {
+        if (size_soli != size_occu)
+        {
+            if (!in_critical) queue_mutex.lock();
+            EventCheck(0, true);
+            EventCheck(1, true);
+            if (!in_critical) queue_mutex.unlock();
+        }
+        return size_occu;
+    }
+
+    bool Empty(bool in_critical = false)
+    {
+        if (size_soli != size_occu)
+        {
+            if (!in_critical) queue_mutex.lock();
+            EventCheck(0, true);
+            EventCheck(1, true);
+            if (!in_critical) queue_mutex.unlock();
+        }
+        if (size_soli != 0) return false;
+        if (size_occu != 0) return false; 
         return true;
     }
 
@@ -276,12 +310,20 @@ public:
         return output_count;
     }
 
-    void ChangeInputCount(SizeT count)
+    cudaError_t ChangeInputCount(SizeT count, bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        input_count = count;
+        return Combined_Return(retval, in_critical);
     }
 
-    void ChangeOutputCount(SizeT count)
+    cudaError_t ChangeOutputCount(SizeT count, bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
+        if (!in_critical) queue_mutex.lock();
+        output_count = count;
+        return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ResetInputCount(bool in_critical = false)
@@ -500,7 +542,7 @@ public:
         offset = offsets[0];
         length = lengths[0] + lengths[1];
 
-        if (offsets[1] == 0)
+        if (lengths[1] == 0)
         { // single chunk
             array = this->array.GetPointer(allocated) + offset;
             for (SizeT j=0; j<num_vertex_associates; j++)
@@ -525,18 +567,18 @@ public:
                 if (lengths[i] == 0) continue;
                 if (retval = this->array.Move_Out(
                     allocated, allocated, temp_array.GetPointer(allocated), 
-                    lengths[i], sum, offsets[i], stream)) return retval;
+                    lengths[i], offsets[i], sum, stream)) return retval;
                 for (SizeT j=0; j<num_vertex_associates; j++)
                 {
                     if (retval = this->vertex_associates[j].Move_Out(
                         allocated, allocated, temp_vertex_associates.GetPointer(allocated), 
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                        lengths[i], offsets[i], j*length + sum, stream)) return retval;
                 }
                 for (SizeT j=0; j<num_value__associates; j++)
                 {
                     if (retval = this->value__associates[j].Move_Out(
                         allocated, allocated, temp_value__associates.GetPointer(allocated),
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                        lengths[i], offsets[i], j*length + sum, stream)) return retval;
                 }
                 sum += lengths[i];
             }
@@ -913,63 +955,79 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         if (allocated != DEVICE) return retval;
+        SizeT offsets[2] = {0, 0};
+        SizeT lengths[2] = {0, 0};
 
-        if (offset + length > capacity && direction == 0)
+        if (offset + length > capacity)
         { // single chunk crossing the end, and in event
-            SizeT offsets[2] = {0, 0};
-            SizeT lengths[2] = {0, 0};
             SizeT sum        = 0;
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = capacity - offset; lengths[1] = length - lengths[0];
 
-            for (int i=0; i<2; i++)
+            if (direction == 0)
             {
-                if (lengths[i] == 0) continue;
-                if (retval = array.Move_In(
-                    allocated, allocated, temp_array.GetPointer(allocated), 
-                    lengths[i], sum, offsets[i], stream)) return retval;
-                for (SizeT j=0; j<num_vertex_associates; j++)
+                for (int i=0; i<2; i++)
                 {
-                    if (retval = vertex_associates[j].Move_In(
-                        allocated, allocated, temp_vertex_associates.GetPointer(allocated),
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval; 
-                }
-                for (SizeT j=0; j<num_value__associates; j++)
-                {
-                    if (retval = value__associates[j].Move_In(
-                        allocated, allocated, temp_value__associates.GetPointer(allocated),
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                    if (lengths[i] == 0) continue;
+                    if (retval = array.Move_In(
+                        allocated, allocated, temp_array.GetPointer(allocated), 
+                        lengths[i], sum, offsets[i], stream)) return retval;
+                    for (SizeT j=0; j<num_vertex_associates; j++)
+                    {
+                        if (retval = vertex_associates[j].Move_In(
+                            allocated, allocated, temp_vertex_associates.GetPointer(allocated),
+                            lengths[i], j*length + sum, offsets[i], stream)) return retval; 
+                    }
+                    for (SizeT j=0; j<num_value__associates; j++)
+                    {
+                        if (retval = value__associates[j].Move_In(
+                            allocated, allocated, temp_value__associates.GetPointer(allocated),
+                            lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                    }
+                    sum += lengths[i];
                 }
             }
+        } else {
+            offsets[0] = offset; offsets[1] = 0;
+            lengths[0] = length; lengths[1] = 0;
         }
 
         if (!in_critical) queue_mutex.lock();
- 
-        if (empty_gpu_events.empty())
-        {
-            retval = util::GRError(cudaErrorLaunchOutOfResources,
-                (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
-            if (!in_critical) queue_mutex.unlock();
-            return retval;    
-        }
-        cudaEvent_t event = empty_gpu_events.front();
-        empty_gpu_events.pop_front();
-        if (retval = cudaEventRecord(event, stream))
-        {
-            if (!in_critical) queue_mutex.unlock();
-            return retval;
-        }
 
-        typename std::list<CqEvent>::iterator it = events[direction].begin();
-        for (it  = events[direction].begin(); 
-             it != events[direction].end(); it ++)
+        for (int i=0; i<2; i++)
         {
-            if ((offset == (*it).offset) && (length == (*it).length)) // matched event
+            if (lengths[i] == 0) continue;
+            if (empty_gpu_events.empty())
             {
-                printf("Event %d,%d,%d sets\n", direction, offset, length);//fflush(stdout);
-                (*it).event = event;
-                (*it).status = CqEvent::Assigned;
-                break;
+                retval = util::GRError(cudaErrorLaunchOutOfResources,
+                    (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
+                if (!in_critical) queue_mutex.unlock();
+                return retval;    
+            }
+            cudaEvent_t event = empty_gpu_events.front();
+            empty_gpu_events.pop_front();
+            if (retval = cudaEventRecord(event, stream))
+            {
+                if (!in_critical) queue_mutex.unlock();
+                return retval;
+            }
+
+            typename std::list<CqEvent>::iterator it = events[direction].begin();
+            for (it  = events[direction].begin(); 
+                 it != events[direction].end(); it ++)
+            {
+                if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
+                {
+                    printf("Event %d,%d,%d sets\n", direction, offsets[i], lengths[i]);//fflush(stdout);
+                    (*it).event = event;
+                    (*it).status = CqEvent::Assigned;
+                    break;
+                }
+            }
+
+            if (it == events[direction].end())
+            {
+                printf("EventSet %d,%d,%d can not be found\n", direction, offsets[i], lengths[i]);fflush(stdout);
             }
         }
         EventCheck(direction, true);
@@ -986,31 +1044,36 @@ public:
     {
         cudaError_t retval = cudaSuccess;
 
-        if (offset + length > capacity && direction == 0)
+        SizeT offsets[2] = {0, 0};
+        SizeT lengths[2] = {0, 0};
+
+        if (offset + length > capacity)
         { // single chunk crossing the end, and in event
-            SizeT offsets[2] = {0, 0};
-            SizeT lengths[2] = {0, 0};
             SizeT sum        = 0;
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = capacity - offset; lengths[1] = length - lengths[0];
 
-            for (int i=0; i<2; i++)
+            if (direction == 0)
             {
-                if (lengths[i] == 0) continue;
-                if (retval = array.Move_In(
-                    allocated, allocated, temp_array.GetPointer(allocated), 
-                    lengths[i], sum, offsets[i], stream)) return retval;
-                for (SizeT j=0; j<num_vertex_associates; j++)
+                for (int i=0; i<2; i++)
                 {
-                    if (retval = vertex_associates[j].Move_In(
-                        allocated, allocated, temp_vertex_associates.GetPointer(allocated),
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval; 
-                }
-                for (SizeT j=0; j<num_value__associates; j++)
-                {
-                    if (retval = value__associates[j].Move_In(
-                        allocated, allocated, temp_value__associates.GetPointer(allocated),
-                        lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                    if (lengths[i] == 0) continue;
+                    if (retval = array.Move_In(
+                        allocated, allocated, temp_array.GetPointer(allocated), 
+                        lengths[i], sum, offsets[i], stream)) return retval;
+                    for (SizeT j=0; j<num_vertex_associates; j++)
+                    {
+                        if (retval = vertex_associates[j].Move_In(
+                            allocated, allocated, temp_vertex_associates.GetPointer(allocated),
+                            lengths[i], j*length + sum, offsets[i], stream)) return retval; 
+                    }
+                    for (SizeT j=0; j<num_value__associates; j++)
+                    {
+                        if (retval = value__associates[j].Move_In(
+                            allocated, allocated, temp_value__associates.GetPointer(allocated),
+                            lengths[i], j*length + sum, offsets[i], stream)) return retval;
+                    }
+                    sum += lengths[i];
                 }
             }
             if (allocated == DEVICE && stream != 0)
@@ -1018,18 +1081,29 @@ public:
                 if (retval = GRError(cudaStreamSynchronize(stream),
                     name + "cudaStreamSynchronize failed", __FILE__, __LINE__)) return retval;
             }
+        } else {
+            offsets[0] = offset; lengths[0] = length;
+            offsets[1] = 0; lengths[1] = 0;
         }
 
         if (!in_critical) queue_mutex.lock();
-        typename std::list<CqEvent>::iterator it = events[direction].begin();
-        for (it  = events[direction].begin(); 
-             it != events[direction].end(); it ++)
+        for (int i=0; i<2; i++)
         {
-            if ((offset == (*it).offset) && (length == (*it).length)) // matched event
+            typename std::list<CqEvent>::iterator it = events[direction].begin();
+            for (it  = events[direction].begin(); 
+                 it != events[direction].end(); it ++)
             {
-                printf("Event %d,%d,%d finishes\n", direction, offset, length);//fflush(stdout);
-                (*it).status = CqEvent::Finished;
-                break;
+                if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
+                {
+                    printf("Event %d,%d,%d finishes\n", direction, offset, length);//fflush(stdout);
+                    (*it).status = CqEvent::Finished;
+                    break;
+                }
+            }
+            if (it == events[direction].end())
+            {
+                printf("EventFinish %d,%d,%d can not be found\n", direction, offset, length);
+                fflush(stdout);
             }
         }
         SizeCheck(direction, true);
@@ -1062,7 +1136,7 @@ public:
             }
         }
         SizeCheck(direction, true);
-        ShowDebugInfo("EventC", direction, -1, -1, -1);
+        //ShowDebugInfo("EventC", direction, -1, -1, -1);
         if (!in_critical) queue_mutex.unlock();
         return retval; 
     }

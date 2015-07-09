@@ -585,9 +585,6 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 if (thread_slice -> retval =
                     iteration_loop -> SubQueue_Core())
                     return;
-                if (thread_slice -> retval = 
-                    s_queue -> EventSet(1, s_offsets[stream_num],
-                    s_lengths[stream_num], stream)) return;
 
                 if (thread_slice -> retval =
                     work_progress->GetQueueLength(
@@ -595,6 +592,11 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         frontier_attribute -> queue_length,
                         false, stream, true))
                     return;
+
+                if (thread_slice -> retval = 
+                    s_queue -> EventSet(1, s_offsets[stream_num],
+                    s_lengths[stream_num], stream)) return;
+
                 if (thread_slice -> retval = 
                     Set_Record(enactor_slice, 2, iteration, stream_num,
                         stages[stream_num])) return;
