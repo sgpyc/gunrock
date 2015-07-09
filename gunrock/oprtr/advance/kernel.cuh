@@ -54,7 +54,8 @@ cudaError_t ComputeOutputLength(
     // load edge-expand-partitioned kernel
     //util::DisplayDeviceResults(d_in_key_queue, frontier_attribute.queue_length);
     typedef typename Problem::SizeT         SizeT;
-    if (frontier_attribute->queue_length ==0) 
+    if (frontier_attribute->queue_length ==0 || 
+        !((KernelPolicy::ADVANCE_MODE == LB_BACKWARD) || (KernelPolicy::ADVANCE_MODE == LB))) 
     {
         printf("setting output_length to 0");
         util::MemsetKernel<SizeT><<<1,1,0,stream>>>(frontier_attribute->output_length.GetPointer(util::DEVICE),0,1);
@@ -64,6 +65,7 @@ cudaError_t ComputeOutputLength(
     SizeT num_block = (frontier_attribute->queue_length + KernelPolicy::LOAD_BALANCED::THREADS - 1)/KernelPolicy::LOAD_BALANCED::THREADS;
     if (KernelPolicy::ADVANCE_MODE == LB_BACKWARD)
     {
+        printf("using LB_BACKWARD\n");fflush(stdout);
         gunrock::oprtr::edge_map_partitioned_backward::GetEdgeCounts
             <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
             <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(
@@ -77,6 +79,7 @@ cudaError_t ComputeOutputLength(
                 ADVANCE_TYPE);
     } else if (KernelPolicy::ADVANCE_MODE == LB)
     {
+        printf("using LB\n");fflush(stdout);
         gunrock::oprtr::edge_map_partitioned::GetEdgeCounts
             <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
             <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(

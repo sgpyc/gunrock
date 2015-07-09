@@ -1009,6 +1009,8 @@ namespace edge_map_forward {
 
                     // Check for queue overflow due to redundant expansion
                     if (enqueue_offset + enqueue_amt > max_out_frontier) {
+                        printf("Overflowed: enqueue_offset = %d, enqueue_amt = %d, max_out_frontier = %d\n",
+                            enqueue_offset, enqueue_amt, max_out_frontier);
                         smem_storage.state.overflowed = true;
                         work_progress.SetOverflow<SizeT>();
                     }

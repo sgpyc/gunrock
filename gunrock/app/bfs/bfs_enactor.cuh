@@ -127,7 +127,7 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
-        util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
         //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
         this->PrintMessage("Advance begin", enactor_stats->iteration);
@@ -165,10 +165,12 @@ struct BFSIteration : public IterationBase <
         enactor_stats      -> Accumulate(
             work_progress  ->template GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
-        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        if (retval = cudaStreamSynchronize(stream)) return retval;
-        printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        
+        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        //if (retval = cudaStreamSynchronize(stream)) return retval;
+        //printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        //util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        return retval;
  
         // Filter
         this-> PrintMessage("Filter begin", enactor_stats->iteration);
@@ -194,10 +196,10 @@ struct BFSIteration : public IterationBase <
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        if (retval = cudaStreamSynchronize(stream)) return retval;
-        printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        //if (retval = cudaStreamSynchronize(stream)) return retval;
+        //printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        //util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
  
         return retval;
     }
