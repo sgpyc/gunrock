@@ -127,7 +127,7 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
-        //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
+        util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
         //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
         this->PrintMessage("Advance begin", enactor_stats->iteration);
@@ -166,11 +166,11 @@ struct BFSIteration : public IterationBase <
             work_progress  ->template GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
         
-        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        //if (retval = cudaStreamSynchronize(stream)) return retval;
-        //printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        if (retval = cudaStreamSynchronize(stream)) return retval;
+        printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
         //util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
-        return retval;
+        //return retval;
  
         // Filter
         this-> PrintMessage("Filter begin", enactor_stats->iteration);
@@ -196,9 +196,9 @@ struct BFSIteration : public IterationBase <
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        //if (retval = cudaStreamSynchronize(stream)) return retval;
-        //printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        if (retval = cudaStreamSynchronize(stream)) return retval;
+        printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
         //util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
  
         return retval;
@@ -270,50 +270,49 @@ struct BFSIteration : public IterationBase <
     }
 
     cudaError_t Check_Queue_Size()
-    /*    int                            thread_num,
-        int                            peer_,
-        SizeT                          request_length,
-        util::DoubleBuffer<SizeT, VertexId, Value>
-                                      *frontier_queue,
-        FrontierAttribute<SizeT>      *frontier_attribute,
-        EnactorStats                  *enactor_stats,
-        GraphSlice                    *graph_slice)*/    
     {    
-        cudaError_t retval = cudaSuccess;
-        bool over_sized = false;
-        int  selector   = this-> frontier_attribute->selector;
-        int  iteration  = this-> enactor_stats -> iteration;
+        cudaError_t   retval             = cudaSuccess;
+        bool          over_sized         = false;
+        int           gpu_num            = this -> gpu_num;
+        int           stream_num         = this -> stream_num;
+        SizeT         request_length     = this -> request_length;
+        FrontierT    *frontier_queue     = this -> frontier_queue;
+        FrontierA    *frontier_attribute = this -> frontier_attribute;
+        EnactorStats *enactor_stats      = this -> enactor_stats;
+        GraphSlice   *graph_slice        = this -> graph_slice;
+        int           selector           = frontier_attribute->selector;
+        long long     iteration          = enactor_stats -> iteration;
 
         if (Enactor::DEBUG)
         {
             printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
-                this-> thread_num, iteration, this->stream_num,
-                this-> frontier_queue->keys[selector^1].GetSize(),
-                this->request_length);
+                gpu_num, iteration, stream_num,
+                frontier_queue->keys[selector^1].GetSize(),
+                request_length);
             fflush(stdout);
         }
 
         if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", this-> request_length, 
-            &this-> frontier_queue->keys  [selector^1], over_sized, 
-            this-> thread_num, iteration, this->stream_num, false)) 
+            "queue3", request_length, 
+            &frontier_queue->keys  [selector^1], over_sized, 
+            gpu_num, iteration, stream_num, false)) 
             return retval;
         if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", this->graph_slice->nodes+2, 
-            &this-> frontier_queue->keys  [selector  ], over_sized, 
-            this-> thread_num, iteration, this->stream_num, true )) 
+            "queue3", graph_slice->nodes+2, 
+            &frontier_queue->keys  [selector  ], over_sized, 
+            gpu_num, iteration, stream_num, true )) 
             return retval;
         if (Problem::USE_DOUBLE_BUFFER)
         {    
             if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", this-> request_length, 
-                &this-> frontier_queue->values[selector^1], over_sized, 
-                this->thread_num, iteration, this->stream_num, false)) 
+                "queue3", request_length, 
+                &frontier_queue->values[selector^1], over_sized, 
+                gpu_num, iteration, stream_num, false)) 
                 return retval;
             if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", this->graph_slice->nodes+2, 
-                &this-> frontier_queue->values[selector  ], over_sized, 
-                this->thread_num, iteration, this->stream_num, true )) 
+                "queue3", graph_slice->nodes+2, 
+                &frontier_queue->values[selector  ], over_sized, 
+                gpu_num, iteration, this->stream_num, true )) 
                 return retval;
         }    
         return retval;
@@ -619,6 +618,8 @@ public:
         clock_t      start_time = clock();
         cudaError_t  retval     = cudaSuccess;
         ThreadSlice* thread_slices = (ThreadSlice*) this->thread_slices;
+        this -> using_subq = true;
+        this -> using_fullq = false;
 
         do {
             for (int i=0; i<this->num_threads; i++)

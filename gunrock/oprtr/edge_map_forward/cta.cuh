@@ -1003,6 +1003,7 @@ namespace edge_map_forward {
 
                     SizeT enqueue_amt       = coarse_count + tile.fine_count;
                     SizeT enqueue_offset    = work_progress.Enqueue(enqueue_amt, queue_index + 1);
+                    //printf("blockIdx.x = %d, enqueue_amt = %d, enqueue_offset = %d\n", blockIdx.x, enqueue_amt, enqueue_offset);
 
                     smem_storage.state.coarse_enqueue_offset = enqueue_offset;
                     smem_storage.state.fine_enqueue_offset = enqueue_offset + coarse_count;

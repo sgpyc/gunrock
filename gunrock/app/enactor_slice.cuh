@@ -614,6 +614,7 @@ struct EnactorSlice
             }
             for (int stream=0; stream<num_subq__streams; stream++)
             {
+                subq__to_shows[stream] = false;
                 subq__stages[stream] = 0;
                 if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
                     return retval;
