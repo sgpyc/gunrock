@@ -112,9 +112,10 @@ struct EnactorSlice
     Array<SizeT       >   split_lengths           ; // Number of outgoing vertices to peers  
     Array<SizeT       >  *split_markers           ; // Markers to separate vertices to peer GPUs
     Array<SizeT*      >   split_markerss          ;
-    Array<MakeOutHandle>  split_m_handles          ; // compressed data structure for make_out kernel
+    Array<MakeOutHandle>  split_m_handles         ; // compressed data structure for make_out kernel
     Array<cudaEvent_t >   split_events            ;
-    void                 *split_iteration_loops   ;
+    void                 *split_iteration_loop    ;
+    cudaEvent_t           split_wait_event        ;
 
     EnactorSlice() :
         num_gpus           (0   ),
@@ -215,6 +216,7 @@ struct EnactorSlice
                 return retval;
 
             this->num_input_streams = num_input_streams;
+            input_target_count = num_gpus - 1;
             if (num_input_streams != 0)
             {
                 if (retval = input_streams  .Allocate(num_input_streams)) return retval;
@@ -349,6 +351,11 @@ struct EnactorSlice
                     split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_streams[stream]);
                     split_markers [stream].SetName("split_marker[]");
                 }
+                if (retval = util::GRError(cudaEventCreate(&split_wait_event),
+                    "cudaEventCreate failed", __FILE__, __LINE__))
+                    return retval;
+                if (retval = split_lengths.Init(num_split_streams,
+                    util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             }
         }
 
@@ -630,7 +637,7 @@ struct EnactorSlice
         if (num_fullq_stream != 0)
         {
             fullq_target_count[0] = util::MaxValue<SizeT>();
-            fullq_target_count[0] = util::MaxValue<SizeT>();
+            fullq_target_count[1] = util::MaxValue<SizeT>();
 
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
             if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,

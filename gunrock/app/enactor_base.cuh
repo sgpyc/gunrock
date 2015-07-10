@@ -537,7 +537,7 @@ protected:
         {
             if (retval = util::SetDevice(gpu_idx[gpu_num])) return retval;
             EnactorSlice *enactor_slice = enactor_slices + gpu_num;
-            if (retval = enactor_slices->Init(
+            if (retval = enactor_slice->Init(
                 num_gpus, gpu_num, gpu_idx[gpu_num],
                 num_input_streams, num_outpu_streams,
                 num_subq__streams, num_fullq_stream ,
@@ -545,6 +545,8 @@ protected:
 
             for (int stream=0; stream < num_subq__streams + num_fullq_stream ; stream++)
             {
+                printf("gpu_num = %d, stream = %d, num_subq__streams = %d, num_fullq_stream = %d\n",
+                    gpu_num, stream, num_subq__streams, num_fullq_stream);fflush(stdout);
                 EnactorStats *enactor_stats_ = (stream < num_subq__streams) ?
                     enactor_slice->subq__enactor_statses + stream :
                     enactor_slice->fullq_enactor_stats   + stream - num_subq__streams;
@@ -575,11 +577,25 @@ protected:
                     thread_counter, gpu_num, problem, enactor, 
                     thread_type, threads[thread_counter]))
                     return retval;
+                if (thread_type == ThreadSlice::Type::Input)
+                    enactor_slice -> input_thread_slice = thread_slices + thread_counter;
+                else if (thread_type == ThreadSlice::Type::Output)
+                    enactor_slice -> outpu_thread_slice = thread_slices + thread_counter;
+                else if (thread_type == ThreadSlice::Type::SubQ)
+                    enactor_slice -> subq__thread_slice = thread_slices + thread_counter;
+                else if (thread_type == ThreadSlice::Type::FullQ)
+                    enactor_slice -> fullq_thread_slice = thread_slices + thread_counter;
                 thread_counter ++;
                 thread_type = ThreadSlice::IncreatmentType(thread_type); 
             }
         }
         num_threads = thread_counter;
+
+        for (int thread_num = 0; thread_num < num_threads; thread_num++)
+        if (thread_slices[thread_num].status != ThreadSlice::Status::Wait)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
+        }
 
         printf("EnactorBase Init end. #threads = %d\n", num_threads);
         fflush(stdout);

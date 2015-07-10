@@ -285,7 +285,7 @@ struct BFSIteration : public IterationBase <
 
         if (Enactor::DEBUG)
         {
-            printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
+            printf("%d\t %lld\t %d\t queue_length = %d, output_length = %d\n",
                 gpu_num, iteration, stream_num,
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
@@ -512,8 +512,10 @@ public:
             }
             if (num_split_streams > 0 && this->num_gpus > 1)
             {
-                iteration_loops = new IterationT[num_split_streams];
-                enactor_slice -> split_iteration_loops =
+                iteration_loops = new IterationT;
+                if (retval = iteration_loops[0].Init(
+                    this->num_gpus, num_split_streams)) return retval;
+                enactor_slice -> split_iteration_loop =
                     (void*) iteration_loops;
             }
         }
