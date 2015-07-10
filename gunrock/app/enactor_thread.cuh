@@ -217,7 +217,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
  
-    thread_slice -> status = ThreadSlice::Status::Running;
+    thread_slice -> status = ThreadSlice::Status::Wait;
     while (thread_slice -> status != ThreadSlice::Status::ToKill)
     {
         if (thread_slice -> retval) break;
@@ -301,7 +301,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     fflush(stdout);
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
-    thread_slice -> status = ThreadSlice::Status::Running;
+    thread_slice -> status = ThreadSlice::Status::Wait;
     while (thread_slice -> status != ThreadSlice::Status::ToKill)
     {
         if (thread_slice -> retval) return;
@@ -451,7 +451,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     fflush(stdout);
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
-    thread_slice -> status = ThreadSlice::Status::Running;
+    thread_slice -> status = ThreadSlice::Status::Wait;
     while (thread_slice -> status != ThreadSlice::Status::ToKill)
     {
         if (thread_slice -> retval) return;
@@ -704,7 +704,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                                         enactor -> enactor_slices) + gpu_num;
     CircularQueue *s_queue          = &(enactor_slice -> fullq_queue);
     int            num_streams      =   enactor_slice -> num_fullq_stream;
-    cudaStream_t   stream           =   enactor_slice -> fullq_stream[0];
+    cudaStream_t   stream           =   (num_streams > 0) ?
+                                        enactor_slice -> fullq_stream[0] : 
+                                        enactor_slice -> split_streams[0];
     bool          *to_shows         =   enactor_slice -> fullq_to_show  + 0;
     int           *stages           =   enactor_slice -> fullq_stage    + 0;
     FrontierT     *frontier         =   enactor_slice -> fullq_frontier + 0;
@@ -733,7 +735,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     fflush(stdout);
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
-    thread_slice -> status = ThreadSlice::Status::Running;
+    thread_slice -> status = ThreadSlice::Status::Wait;
     while (thread_slice -> status != ThreadSlice::Status::ToKill)
     {
         if (thread_slice -> retval) return;
@@ -741,20 +743,20 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         s_input_count = s_queue -> GetInputCount();
         s_target_count = enactor_slice -> fullq_target_count[iteration%2];
         if (thread_slice -> status == ThreadSlice::Status::Wait
-            || s_input_count < s_target_count || !enactor->using_fullq)
+            || s_input_count < s_target_count)
         {
-            printf("ThreadSlice::FullQ_Thread wait. gpu_num = %d, input_count = %d, target_count = %d\n", 
-                gpu_num, s_input_count, s_target_count);
-            fflush(stdout);
+            //printf("ThreadSlice::FullQ_Thread wait. gpu_num = %d, iteration = %lld, input_count = %d, target_count = %d\n", 
+            //    gpu_num, iteration, s_input_count, s_target_count);
+            //fflush(stdout);
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;
         }
 
-        printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d\n", gpu_num);
+        printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d, input_count = %d, target_count = %d\n", gpu_num, s_input_count, s_target_count);
         fflush(stdout);
-        iteration_loop = (IterationT*)enactor_slice -> fullq_iteration_loop;
-        if (num_streams >0 && iteration_loop -> has_fullq)
+        if (num_streams >0 && enactor -> using_fullq)
         {
+            iteration_loop = (IterationT*)enactor_slice -> fullq_iteration_loop;
             if (iteration_loop -> status == IterationT::Status::New)
             {
                 iteration_loop -> frontier_attribute
@@ -880,12 +882,13 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             }
         } // end of if (has_fullq)
 
-        if (iteration_loop -> has_fullq)
+        if (enactor -> using_fullq)
         {
             iteration_loop -> d_keys_in
                 = frontier->keys[frontier_attribute->selector].GetPointer(util::DEVICE);
             iteration_loop -> num_elements = frontier_attribute->queue_length;
         } else if (num_gpus > 1) {
+            iteration_loop = (IterationT*)enactor_slice -> split_iteration_loop;
             s_queue->GetSize(s_length, s_soli);
             if (thread_slice -> retval = 
                 s_queue -> Pop_Addr(
@@ -897,20 +900,23 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
 
         if (num_gpus > 1)
         { // update and distribute the queue
+            iteration_loop = (IterationT*)enactor_slice -> split_iteration_loop;
             if (iteration_loop -> status == IterationT::Status::New)
             {
-                iteration_loop -> graph_slice = graph_slice;
-                iteration_loop -> data_slice  = data_slice;
-                iteration_loop -> frontier_attribute = frontier_attribute;
-                iteration_loop -> gpu_num     = gpu_num;
-                iteration_loop -> stream      = stream;
-                iteration_loop -> num_gpus    = num_gpus;
-                iteration_loop -> scanned_edge = scanned_edge;
-                iteration_loop -> enactor_stats = enactor_stats;
-                iteration_loop -> context     = contexts[stream_num];
-                iteration_loop -> stream_num  = stream_num;
-                iteration_loop -> work_progress = work_progress;
-                iteration_loop -> status      = IterationT::Status::Running;
+                iteration_loop -> graph_slice   = graph_slice;
+                iteration_loop -> data_slice    = data_slice;
+                iteration_loop -> frontier_attribute = NULL; //frontier_attribute;
+                iteration_loop -> gpu_num       = gpu_num;
+                iteration_loop -> streams       = enactor_slice -> split_streams+ 0;
+                iteration_loop -> num_gpus      = num_gpus;
+                iteration_loop -> scanned_edge  = NULL;//scanned_edge;
+                iteration_loop -> enactor_stats = NULL;//enactor_stats;
+                //iteration_loop -> context       = contexts[stream_num];
+                //iteration_loop -> stream_num    = stream_num;
+                iteration_loop -> work_progress = NULL;//work_progress;
+                iteration_loop -> wait_event    = enactor_slice -> split_wait_event;
+                iteration_loop -> t_out_lengths = &enactor_slice -> split_lengths;
+                iteration_loop -> status        = IterationT::Status::Running;
             }
             iteration_loop -> num_streams = enactor_slice -> num_split_streams;
             iteration_loop -> streams     = enactor_slice -> split_streams + 0;
