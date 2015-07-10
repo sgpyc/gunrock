@@ -62,7 +62,7 @@ struct BFSFunctor
             }
             else new_weight = s_id +1;
             bool result = new_weight < atomicMin(problem->labels + d_id, new_weight);
-            if (result) printf("labels[%d] -> %d\n", d_id, new_weight);
+            //if (result) printf("labels[%d] -> %d\n", d_id, new_weight);
             return result;
         }
     }

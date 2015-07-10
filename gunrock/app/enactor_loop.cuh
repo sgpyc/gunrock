@@ -72,7 +72,7 @@ public:
     long long         iteration;
     Status            status;
     int               num_gpus;
-    int               thread_num;
+    //int               thread_num;
     int               gpu_num;
     int               stream_num;
     int               num_streams;
@@ -137,7 +137,7 @@ public:
         forward           (false),
         update_predecessors(false),
         num_gpus          (0),
-        thread_num        (0   ),
+        //thread_num        (0   ),
         gpu_num           (0   ),
         stream_num        (0   ),
         num_streams       (0   ),
@@ -324,7 +324,7 @@ public:
         if (Enactor::DEBUG)
         {
             printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
-                thread_num, iteration, stream_num,
+                gpu_num, iteration, stream_num,
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
             fflush(stdout);
@@ -332,21 +332,21 @@ public:
 
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, &frontier_queue->keys  [selector^1], 
-            over_sized, thread_num, iteration, stream_num, false)) 
+            over_sized, gpu_num, iteration, stream_num, false)) 
             return retval;
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, &frontier_queue->keys  [selector  ],
-            over_sized, thread_num, iteration, stream_num, true )) 
+            over_sized, gpu_num, iteration, stream_num, true )) 
             return retval;
         if (Problem::USE_DOUBLE_BUFFER)
         {
             if (retval = Check_Size<true, SizeT, Value> (
                 "queue3", request_length, &frontier_queue->values[selector^1],
-                over_sized, thread_num, iteration, stream_num, false)) 
+                over_sized, gpu_num, iteration, stream_num, false)) 
                 return retval;
             if (retval = Check_Size<true, SizeT, Value> (
                 "queue3", request_length, &frontier_queue->values[selector  ], 
-                over_sized, thread_num, iteration, stream_num, true )) 
+                over_sized, gpu_num, iteration, stream_num, true )) 
                 return retval;
         }
         return retval; 
@@ -571,7 +571,7 @@ public:
     void PrintMessage(const char* message, long long iteration = -1)
     {
         if (Enactor::DEBUG)
-            util::cpu_mt::PrintMessage(message, thread_num,
+            util::cpu_mt::PrintMessage(message, gpu_num,
             iteration, stream_num);
     }
 };
