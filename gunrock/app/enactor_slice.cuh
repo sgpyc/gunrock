@@ -579,7 +579,7 @@ struct EnactorSlice
             for (int i=0; i<2; i++)
             {
                 if (retval = input_queues[i].Init(target_capacity, util::DEVICE, 10,
-                    Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VERTEX_ASSOCIATES,
+                    Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                     temp_factor * target_capacity)) return retval;
                 if (retval = input_queues[i].Reset()) return retval;
             }
@@ -596,7 +596,7 @@ struct EnactorSlice
                 total_out_nodes += num_out_nodes[gpu];
             SizeT target_capacity = total_out_nodes * outpu_factor;
             if (retval = outpu_queue.Init(target_capacity, util::DEVICE, 10,
-                0, 0,
+                Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                 temp_factor * target_capacity)) return retval;
             if (retval = outpu_queue.Reset()) return retval;
         }

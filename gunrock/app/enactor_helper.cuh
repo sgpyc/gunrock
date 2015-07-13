@@ -146,13 +146,13 @@ cudaError_t PushNeibor(
 
     int            s_gpu_num             =   request -> gpu_num;
     int            t_gpu_num             =   request -> peer;
-    SizeT          iteration             =   request -> iteration;
+    long long      iteration             =   request -> iteration;
     SizeT          length                =   request -> length;
     EnactorSlice  *enactor_slices        = (EnactorSlice*) enactor->enactor_slices;
     EnactorSlice  *s_enactor_slice       = &(enactor_slices[s_gpu_num]);
     EnactorSlice  *t_enactor_slice       = &(enactor_slices[t_gpu_num]);
     CircularQueue *s_queue               = &(s_enactor_slice -> outpu_queue);             // source output cq
-    CircularQueue *t_queue               = &(t_enactor_slice -> input_queues[iteration%2]); // target input cq
+    CircularQueue *t_queue               = &(t_enactor_slice -> input_queues[(iteration+1)%2]); // target input cq
     SizeT          num_vertex_associates =   request -> num_vertex_associates;
     SizeT          num_value__associates =   request -> num_value__associates;
     VertexId      *s_vertices            =   request -> vertices;
@@ -168,12 +168,15 @@ cudaError_t PushNeibor(
     cudaStream_t   s_stream              =   request -> stream;
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
 
-    printf("Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
-        request -> gpu_num, request -> peer, s_stream, event, length);
+    printf("Push from %d to %d: s_stream = %p, event = %p, length = %d, iteration = %lld\n",
+        request -> gpu_num, request -> peer, s_stream, event, length, iteration);
     fflush(stdout);
 
     if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
         "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
+
+    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
+    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
 
     if (retval = t_queue->Push_Addr(length, t_vertices, t_offset, 
         num_vertex_associates, num_value__associates, 
@@ -200,6 +203,7 @@ cudaError_t PushNeibor(
             "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
     }
 
+    if (retval = s_queue->EventSet(0, s_offset, length, s_stream)) return retval;
     if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
     if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true)) return retval;
     return retval;

@@ -403,25 +403,28 @@ public:
 
         for (int i=0; i<2; i++)
         {
-            if (lengths[i] == 0) continue;
+            if (lengths[i] == 0 && i != 0) continue;
             ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
-            if (retval = this->array.Move_In(
-                allocated, allocated, array, 
-                lengths[i], sum, offsets[i], stream)) 
-                return retval;
-            for (SizeT j=0; j<num_vertex_associates; j++)
+            if (lengths[i] != 0)
             {
-                if (retval = this->vertex_associates[j].Move_In(
-                    allocated, allocated, vertex_associates[j], 
-                    lengths[i], sum, offsets[i], stream))
+                if (retval = this->array.Move_In(
+                    allocated, allocated, array, 
+                    lengths[i], sum, offsets[i], stream)) 
                     return retval;
-            }
-            for (SizeT j=0; j<num_value__associates; j++)
-            {
-                if (retval = this->value__associates[j].Move_In(
-                    allocated, allocated, value__associates[j], 
-                    lengths[i], sum, offsets[i], stream))
-                    return retval;
+                for (SizeT j=0; j<num_vertex_associates; j++)
+                {
+                    if (retval = this->vertex_associates[j].Move_In(
+                        allocated, allocated, vertex_associates[j], 
+                        lengths[i], sum, offsets[i], stream))
+                        return retval;
+                }
+                for (SizeT j=0; j<num_value__associates; j++)
+                {
+                    if (retval = this->value__associates[j].Move_In(
+                        allocated, allocated, value__associates[j], 
+                        lengths[i], sum, offsets[i], stream))
+                        return retval;
+                }
             }
 
             // in_event finish
@@ -429,7 +432,8 @@ public:
             else if (allocated == DEVICE)
                 EventSet(0, offsets[i], lengths[i], stream);
             sum += lengths[i];
-        } 
+        }
+         
         return retval;
     }
 
@@ -483,7 +487,8 @@ public:
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
         //SizeT sum        = 0;
-        if (retval = AddSize(length, offsets, lengths, set_gpu)) return retval;
+        if (retval = AddReduceSize(
+            length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
 
         if (lengths[1] == 0)
@@ -727,6 +732,112 @@ public:
         return Combined_Return(retval, in_critical);
     }
 
+    cudaError_t AddReduceSize(
+        SizeT  length, 
+        SizeT *offsets, 
+        SizeT *lengths, 
+        bool   in_critical = false,
+        bool   single_chunk = false)
+    {
+        cudaError_t retval = cudaSuccess;
+
+        // in critical sectioin
+        while (wait_resize != 0)
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        if (!in_critical) queue_mutex.lock();
+        bool past_wait = false;
+        while (!past_wait)
+        {
+            if (wait_resize == 0) {past_wait = true; break;}
+            else {
+                queue_mutex.unlock();
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+                queue_mutex.lock();
+            }
+        }
+       
+        if (allocated == DEVICE)
+        {
+            if (retval = EventCheck(1, true)) 
+                return Combined_Return(retval, in_critical);
+        }
+         
+        if (length + size_occu > capacity) 
+        { // queue full
+            if (AUTO_RESIZE)
+            {
+                if (retval = EnsureCapacity(length + size_occu, true)) 
+                    return Combined_Return(retval, in_critical);
+            } else {
+                if (length > capacity)
+                { // too large for the queue
+                    retval = util::GRError(cudaErrorLaunchOutOfResources, 
+                        (name + " oversize ").c_str(), __FILE__, __LINE__);
+                    return Combined_Return(retval, in_critical);
+                } else {
+                    queue_mutex.unlock();
+                    bool got_space = false;
+                    while (!got_space)
+                    {
+                        if (length + size_occu < capacity)
+                        {
+                            queue_mutex.lock();
+                            if (length + size_occu < capacity)
+                            {
+                                got_space = true;
+                            } else {
+                                queue_mutex.unlock();
+                            }
+                        }
+                        if (!got_space) {
+                            std::this_thread::sleep_for(std::chrono::microseconds(10));
+                        }
+                    }
+                }
+            }
+        }
+
+        if (head_a + length > capacity)
+        { // splict
+            offsets[0] = head_a;
+            lengths[0] = capacity - head_a;
+            offsets[1] = 0;
+            lengths[1] = length - lengths[0];
+            if (single_chunk)
+            { // only single event
+                EventStart(0, offsets[0], length    , true);
+                EventStart(1, offsets[0], length    , true);
+            } else { // two events
+                EventStart(0, offsets[0], lengths[0], true);
+                EventStart(1, offsets[0], lengths[0], true);
+                EventStart(0, offsets[1], lengths[1], true);
+                EventStart(1, offsets[1], lengths[1], true);
+            }
+            head_a     = lengths[1];
+            tail_a     = lengths[1];
+        } else { // no splict
+            offsets[0] = head_a;
+            lengths[0] = length;
+            EventStart(0, offsets[0], lengths[0], true);
+            EventStart(1, offsets[0], lengths[0], true);
+            offsets[1] = 0;
+            lengths[1] = 0;
+            head_a += length;
+            tail_a += length;
+            if (head_a >= capacity) head_a -= capacity;
+            if (tail_a >= capacity) tail_a -= capacity;
+        }
+        size_occu += length;
+        size_soli -= length;
+        input_count ++;
+        output_count ++;
+
+        ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
+        ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
+ 
+        return Combined_Return(retval, in_critical);
+    }
+
     cudaError_t ReduceSize(
         SizeT  min_length, 
         SizeT  max_length, 
@@ -750,23 +861,27 @@ public:
         
         if (size_soli < min_length)
         { // too small
-            queue_mutex.unlock();
+            //queue_mutex.unlock();
             bool got_content = false;
             while (!got_content)
             {
                 if (size_soli >= min_length)
                 {
-                    queue_mutex.lock();
+                    //queue_mutex.lock();
+                    if (retval = EventCheck(0, true))
+                        return Combined_Return(retval, in_critical);
                     if (size_soli >= min_length)
                     {
                         got_content = true;
                     } else {
-                        queue_mutex.unlock();
+                        //queue_mutex.unlock();
                     }
                 }
                 if (!got_content) {
-                    printf("waiting for content, size_soli = %d, min_length = %d\n", size_soli, min_length);fflush(stdout);
+                    queue_mutex.unlock();
+                    printf("waiting for content, size_soli = %d, size_occu = %d, min_length = %d\n", size_soli, size_occu, min_length);fflush(stdout);
                     std::this_thread::sleep_for(std::chrono::microseconds(10));
+                    queue_mutex.lock();
                 }
             }
         }
