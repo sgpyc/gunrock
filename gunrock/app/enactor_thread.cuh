@@ -37,7 +37,7 @@ public:
     typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
             ThreadSlice_;
     typedef typename Enactor::PRequest      PRequest;
-    typedef typename std::list<PRequest>    PRList;
+    typedef typename std::list<PRequest*>   PRList;
     typedef typename PRList::iterator       PRIterator;
     typedef EnactorSlice<Enactor> EnactorSlice;
     typedef typename Enactor::Problem       Problem      ;
@@ -210,7 +210,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
     int           stream_selector  = 0;
     //cudaStream_t  stream           = 0;
     PRIterator    it, it_;
-    PRequest   push_request;
+    PRequest     *push_request;
 
     printf("ThreadSlice::Outpu_Thread begin. gpu_num = %d\n", gpu_num);
     fflush(stdout);
@@ -233,22 +233,33 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
         while (it != request_queue->end())
         {
             it_ = it; it++;
-            push_request = (*it);
+            push_request = (*it_);
+            printf("0: Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
+                push_request -> gpu_num, push_request -> peer, 
+                push_request -> stream , push_request -> event,
+                push_request -> length);
+            fflush(stdout);
+
             request_queue -> erase(it_);
             rqueue_mutex->unlock();
-            
-            push_request.stream = streams[stream_selector];
+          
+            push_request -> stream = streams[stream_selector];
             stream_selector ++;
             stream_selector = stream_selector % num_streams;
-            if (push_request.peer < num_gpus)
+            printf("1: Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
+                push_request -> gpu_num, push_request -> peer, 
+                push_request -> stream , push_request -> event,
+                push_request -> length);
+            fflush(stdout);
+            if (push_request -> peer < num_gpus)
             { // local peer
                 if (thread_slice -> retval = 
-                    PushNeibor<Enactor> (&push_request, enactor))
+                    PushNeibor<Enactor> (push_request, enactor))
                     break;
             } else { // remote peer
             }
             rqueue_mutex->lock();
-            enactor_slice -> empty_events.push_front(push_request.event);
+            enactor_slice -> outpu_empty_queue.push_front(push_request);
         }
         if (!thread_slice -> retval)
             rqueue_mutex->unlock();
@@ -283,8 +294,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     SizeT          s_offset         = 0;
     SizeT          t_offset         = 0;
     SizeT          grid_size        = 0;
-    SizeT          min_length       = 1;
-    SizeT          max_length       = 32 * 1024 * 1024;
+    //SizeT          min_length       = 1;
+    //SizeT          max_length       = 32 * 1024 * 1024;
     cudaStream_t   stream           = 0;
     int            stream_selector  = 0;
     CircularQueue *s_queue          = NULL;
@@ -356,7 +367,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         num_value__associates = enactor -> num_value__associates;
 
         if (thread_slice -> retval = s_queue->Pop_Addr(
-            min_length, max_length, e_handle -> keys_in, 
+            enactor_slice -> input_min_length, 
+            enactor_slice -> input_max_length, 
+            e_handle -> keys_in, 
             length, s_offset, stream,
             num_vertex_associates, num_value__associates,
             e_handle -> vertex_ins, e_handle -> value__ins)) return;
@@ -653,6 +666,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     {
                         enactor_slice -> fullq_target_count[iteration%2]
                             = s_queue -> GetOutputCount();
+                        enactor_slice -> fullq_target_set  [iteration%2]
+                            = true;
                         s_queue -> ResetCounts();
                     } else {
                         enactor_slice -> subq__target_count[(iteration+1)%2]
@@ -730,6 +745,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     SizeT          s_input_count      = 0;
     SizeT          s_target_count     = 0;
     VertexId      *t_vertex           = NULL;
+    bool           s_target_set       = false;
 
     printf("ThreadSlice::FullQ_Thread begin. gpu_num = %d\n", gpu_num);
     fflush(stdout);
@@ -740,10 +756,14 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     {
         if (thread_slice -> retval) return;
         iteration  = thread_slice -> iteration;
-        s_input_count = s_queue -> GetInputCount();
-        s_target_count = enactor_slice -> fullq_target_count[iteration%2];
+        s_target_set   = enactor_slice -> fullq_target_set  [iteration%2];
+        if (s_target_set)
+        {
+            s_input_count = s_queue -> GetInputCount();
+            s_target_count = enactor_slice -> fullq_target_count[iteration%2];
+        }
         if (thread_slice -> status == ThreadSlice::Status::Wait
-            || s_input_count < s_target_count)
+            || !s_target_set || s_input_count < s_target_count)
         {
             //printf("ThreadSlice::FullQ_Thread wait. gpu_num = %d, iteration = %lld, input_count = %d, target_count = %d\n", 
             //    gpu_num, iteration, s_input_count, s_target_count);
@@ -754,6 +774,8 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
 
         printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d, input_count = %d, target_count = %d\n", gpu_num, s_input_count, s_target_count);
         fflush(stdout);
+        enactor_slice -> fullq_target_set [(iteration+1)%2] = false;
+
         if (num_streams >0 && enactor -> using_fullq)
         {
             iteration_loop = (IterationT*)enactor_slice -> fullq_iteration_loop;
@@ -911,11 +933,22 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                 iteration_loop -> num_gpus      = num_gpus;
                 iteration_loop -> scanned_edge  = NULL;//scanned_edge;
                 iteration_loop -> enactor_stats = NULL;//enactor_stats;
+                iteration_loop -> contexts      = enactor_slice -> split_contexts + 0;
                 //iteration_loop -> context       = contexts[stream_num];
                 //iteration_loop -> stream_num    = stream_num;
                 iteration_loop -> work_progress = NULL;//work_progress;
+                iteration_loop -> markers       = enactor_slice -> split_markers;
+                iteration_loop -> markerss      = &enactor_slice -> split_markerss;
                 iteration_loop -> wait_event    = enactor_slice -> split_wait_event;
                 iteration_loop -> t_out_lengths = &enactor_slice -> split_lengths;
+                iteration_loop -> events        = enactor_slice -> split_events + 0;
+                iteration_loop -> m_handles     = &enactor_slice -> split_m_handles;
+                iteration_loop -> outpu_queue   = &enactor_slice -> outpu_queue;
+                iteration_loop -> fullq_queue   = &enactor_slice -> fullq_queue;
+                iteration_loop -> subq__queue   = &enactor_slice -> subq__queue;
+                iteration_loop -> enactor_slice = enactor_slice;
+                iteration_loop -> rqueue_mutex  = &enactor_slice -> outpu_request_mutex;
+                iteration_loop -> request_queue  = &enactor_slice -> outpu_request_queue;
                 iteration_loop -> status        = IterationT::Status::Running;
             }
             iteration_loop -> num_streams = enactor_slice -> num_split_streams;
@@ -924,6 +957,11 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             if (thread_slice -> retval = 
                 iteration_loop -> Iteration_Update_Preds())
                 return;
+            
+            //if (thread_slice -> retval = util::GRError(
+            //    cudaStreamSynchronize(stream),
+            //    "cudaStream Synchronize failed", __FILE__, __LINE__))
+            //    return;
 
             if (thread_slice -> retval = util::GRError(cudaEventRecord(
                 iteration_loop -> wait_event, stream),

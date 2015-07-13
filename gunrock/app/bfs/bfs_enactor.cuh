@@ -515,6 +515,7 @@ public:
                 iteration_loops = new IterationT;
                 if (retval = iteration_loops[0].Init(
                     this->num_gpus, num_split_streams)) return retval;
+                iteration_loops -> direction = Enactor::MakeOutHandle::Direction::FORWARD;
                 enactor_slice -> split_iteration_loop =
                     (void*) iteration_loops;
             }

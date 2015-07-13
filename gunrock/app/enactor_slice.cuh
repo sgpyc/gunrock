@@ -45,10 +45,12 @@ struct EnactorSlice
     int num_subq__streams;
     int num_fullq_stream ;
     int num_split_streams;
+    int num_events;
     
     Array<VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
     Array<Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
-    std::list<cudaEvent_t> empty_events;
+    //std::list<cudaEvent_t> empty_events;
+    //Array<cudaEvent_t >    events;
 
     Array<cudaStream_t>   input_streams           ; // GPU streams
     int                   input_target_count      ;
@@ -61,10 +63,12 @@ struct EnactorSlice
 
     Array<cudaStream_t>   outpu_streams           ; // GPU streams
     CircularQueue         outpu_queue             ;
-    std::list<PRequest>   outpu_request_queue     ;
+    std::list<PRequest*>  outpu_request_queue     ;
     std::mutex            outpu_request_mutex     ;
     void                 *outpu_iteration_loops   ;
     void                 *outpu_thread_slice      ;
+    Array<PRequest>       outpu_requests          ;
+    std::list<PRequest*>  outpu_empty_queue       ;
 
     Array<cudaStream_t>   subq__streams           ; // GPU streams
     Array<ContextPtr  >   subq__contexts          ;
@@ -105,6 +109,7 @@ struct EnactorSlice
                           fullq_work_progress     ;
     void                 *fullq_iteration_loop    ;
     SizeT                 fullq_target_count   [2];
+    bool                  fullq_target_set     [2];
     void                 *fullq_thread_slice      ;
 
     Array<cudaStream_t>   split_streams           ; // GPU streams
@@ -201,7 +206,10 @@ struct EnactorSlice
         int num_split_streams = 0)
     {
         cudaError_t retval = cudaSuccess;
-        printf("EnactorSlice::Init begin. gpu_num = %d\n", gpu_num);fflush(stdout);
+        printf("EnactorSlice::Init begin. gpu_num = %d, num_input_streams = %d, num_outpu_streams = %d, num_subq__streams = %d, num_fullq_streams = %d, num_split_streams = %d\n", gpu_num,
+            num_input_streams, num_outpu_streams,
+            num_subq__streams, num_fullq_streams,
+            num_split_streams);fflush(stdout);
 
         this->num_gpus = num_gpus;
         this->gpu_num  = gpu_num;
@@ -219,6 +227,8 @@ struct EnactorSlice
             input_target_count = num_gpus - 1;
             if (num_input_streams != 0)
             {
+                input_min_length = 1;
+                input_max_length = 32 * 1024 * 1024;
                 if (retval = input_streams  .Allocate(num_input_streams)) return retval;
                 if (retval = input_e_handles.Init(num_input_streams,
                     util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
@@ -232,7 +242,18 @@ struct EnactorSlice
             this->num_outpu_streams = num_outpu_streams;
             if (num_outpu_streams != 0)
             {
-                if (retval = outpu_streams.Allocate(num_outpu_streams)) return retval;
+                num_events = 20;
+                if (retval = outpu_requests.Allocate(num_events)) return retval;
+                for (int i=0; i<num_events; i++)
+                {
+                    PRequest* request = outpu_requests + i;
+                    if (retval = util::GRError(cudaEventCreate(&request->event),
+                        "cudaEventCreate failed", __FILE__, __LINE__))
+                        return retval;
+                    outpu_empty_queue.push_front(request);
+                }
+
+               if (retval = outpu_streams.Allocate(num_outpu_streams)) return retval;
                 for (int stream=0; stream<num_outpu_streams; stream++)
                 {    
                     if (retval = util::GRError(cudaStreamCreate(outpu_streams + stream),
@@ -292,7 +313,9 @@ struct EnactorSlice
          
         this->num_fullq_stream = num_fullq_stream;
         if (num_fullq_stream != 0)
-        {   
+        {
+            fullq_target_set[0] = false;
+            fullq_target_set[1] = false;   
             if (retval = fullq_stream      .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_context     .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_stage       .Allocate(num_fullq_stream)) return retval;
@@ -341,7 +364,10 @@ struct EnactorSlice
             {
                 if (retval = split_streams .Allocate(num_split_streams)) return retval;
                 if (retval = split_contexts.Allocate(num_split_streams)) return retval;
+                if (retval = split_events  .Allocate(num_split_streams)) return retval;
                 split_markers  = new Array<SizeT>[num_split_streams];
+                if (retval = split_markerss.Init(num_split_streams,
+                    util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
                 if (retval = split_m_handles.Init(num_split_streams,
                     util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
                 for (int stream=0; stream<num_split_streams; stream++)
@@ -350,6 +376,9 @@ struct EnactorSlice
                         "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
                     split_contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, split_streams[stream]);
                     split_markers [stream].SetName("split_marker[]");
+                    if (retval = util::GRError(cudaEventCreate(split_events + stream),
+                        "cudaEventCreate failed", __FILE__, __LINE__))
+                        return retval;
                 }
                 if (retval = util::GRError(cudaEventCreate(&split_wait_event),
                     "cudaEventCreate failed", __FILE__, __LINE__))
@@ -558,7 +587,11 @@ struct EnactorSlice
 
         if (num_outpu_streams != 0)
         {
-            SizeT total_out_nodes = 0;
+            while (!outpu_empty_queue.empty()) outpu_empty_queue.pop_back();
+            for (int i=0; i<num_events; i++)
+                outpu_empty_queue.push_front(outpu_requests + i);
+
+           SizeT total_out_nodes = 0;
             for (int gpu=0; gpu<num_gpus; gpu++)
                 total_out_nodes += num_out_nodes[gpu];
             SizeT target_capacity = total_out_nodes * outpu_factor;
@@ -634,59 +667,70 @@ struct EnactorSlice
             }
         }
 
-        if (num_fullq_stream != 0)
+        if (num_fullq_stream != 0 || num_split_streams != 0)
         {
-            fullq_target_count[0] = util::MaxValue<SizeT>();
+            if (num_subq__streams != 0 || num_input_streams != 0)
+            {
+                fullq_target_count[0] = util::MaxValue<SizeT>();
+                fullq_target_set  [0] = false; 
+            } else {
+                fullq_target_count[0] = 1;
+                fullq_target_set  [0] = true;
+            }
             fullq_target_count[1] = util::MaxValue<SizeT>();
+            fullq_target_set  [1] = false;
 
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
             if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,
                 0, 0,
                 temp_factor * target_capacity)) return retval;
             if (retval = fullq_queue.Reset()) return retval;
-
-            SizeT frontier_sizes[2] = {0, 0};
-            SizeT max_elements = 0;
-            for (int i=0; i<2; i++)
+            
+            if (num_fullq_stream != 0)
             {
-                double queue_sizing = (i==0)? fullq_factor0 : fullq_factor1;
-                queue_sizing *= fullq_factor;
-                switch (frontier_type) {
-                case VERTEX_FRONTIERS :
-                    // O(n) ping-pong global vertex frontiers
-                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                    frontier_sizes[1] = frontier_sizes[0];
-                    break;
+                SizeT frontier_sizes[2] = {0, 0};
+                SizeT max_elements = 0;
+                for (int i=0; i<2; i++)
+                {
+                    double queue_sizing = (i==0)? fullq_factor0 : fullq_factor1;
+                    queue_sizing *= fullq_factor;
+                    switch (frontier_type) {
+                    case VERTEX_FRONTIERS :
+                        // O(n) ping-pong global vertex frontiers
+                        frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                        frontier_sizes[1] = frontier_sizes[0];
+                        break;
 
-                case EDGE_FRONTIERS :
-                    // O(m) ping-pong global edge frontiers
-                    frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
-                    frontier_sizes[1] = frontier_sizes[0];
-                    break;
+                    case EDGE_FRONTIERS :
+                        // O(m) ping-pong global edge frontiers
+                        frontier_sizes[0] = graph_slice->edges * queue_sizing +2; 
+                        frontier_sizes[1] = frontier_sizes[0];
+                        break;
 
-                case MIXED_FRONTIERS :
-                    // O(n) global vertex frontier, O(m) global edge frontier
-                    frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
-                    frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
-                    break;
+                    case MIXED_FRONTIERS :
+                        // O(n) global vertex frontier, O(m) global edge frontier
+                        frontier_sizes[0] = graph_slice->nodes * queue_sizing +2;
+                        frontier_sizes[1] = graph_slice->edges * queue_sizing +2; 
+                        break;
+                    }
+                    for (int stream=0; stream<num_fullq_stream; stream++)
+                    {
+                        if (retval = fullq_frontier[stream].keys[i].Allocate(
+                            frontier_sizes[i], util::DEVICE)) return retval;
+                        if (use_double_buffer) {
+                            if (retval = fullq_frontier[stream].values[i].Allocate(
+                                frontier_sizes[i], util::DEVICE)) return retval;
+                        }
+                    }
+                    if (frontier_sizes[0] > max_elements) max_elements = frontier_sizes[0];
+                    if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
                 }
                 for (int stream=0; stream<num_fullq_stream; stream++)
                 {
-                    if (retval = fullq_frontier[stream].keys[i].Allocate(
-                        frontier_sizes[i], util::DEVICE)) return retval;
-                    if (use_double_buffer) {
-                        if (retval = fullq_frontier[stream].values[i].Allocate(
-                            frontier_sizes[i], util::DEVICE)) return retval;
-                    }
+                    fullq_stage[stream] = 0;
+                    if (retval = fullq_scanned_edge[stream].Allocate(max_elements, util::DEVICE))
+                        return retval;
                 }
-                if (frontier_sizes[0] > max_elements) max_elements = frontier_sizes[0];
-                if (frontier_sizes[1] > max_elements) max_elements = frontier_sizes[1];
-            }
-            for (int stream=0; stream<num_fullq_stream; stream++)
-            {
-                fullq_stage[stream] = 0;
-                if (retval = fullq_scanned_edge[stream].Allocate(max_elements, util::DEVICE))
-                    return retval;
             }
         }
 
@@ -697,7 +741,9 @@ struct EnactorSlice
             {
                 if (retval = split_markers[stream].Allocate(target_capacity, util::DEVICE))
                     return retval;
+                split_markerss[stream] = split_markers[stream].GetPointer(util::DEVICE);
             }
+            split_markerss.Move(util::HOST, util::DEVICE);
         }
         printf("EnactorSlice::Reset end. gpu_num = %d\n", gpu_num);fflush(stdout);
         return retval;
