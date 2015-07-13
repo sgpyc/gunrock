@@ -126,7 +126,7 @@ public:
     Array<Value*   > *value__associate_orgs;
 
     std::mutex       *rqueue_mutex;
-    typename std::list<PushRequest> *request_queue;
+    typename std::list<PushRequest*> *request_queue;
 
     IterationBase() :
         iteration         (0   ),
@@ -370,8 +370,8 @@ public:
         SizeT       t_offset        = 0;
         int         stream_counter  = 0;
         MakeOutHandle *m_handle       = NULL;
-        cudaEvent_t event;
-        PushRequest push_request;
+        //cudaEvent_t event;
+        PushRequest *push_request;
 
         printf("Iteration::Make_Output begin. gpu_num = %d, num_elements = %d\n", 
             gpu_num, num_elements);fflush(stdout);
@@ -400,12 +400,12 @@ public:
                 markerss[0][stream_num] = markers[stream_num].GetPointer(util::DEVICE);
         }
         if (over_sized) 
-            markerss->Move(util::HOST, util::DEVICE, num_streams, 0, stream);
+            markerss->Move(util::HOST, util::DEVICE, num_streams, 0, streams[0]);
        
         if (retval = util::GRError(cudaStreamWaitEvent(
             streams[0], wait_event, 0), 
             "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval; 
-
+        
         start_peer = 0;
         while (start_peer < num_gpus)
         {
@@ -414,6 +414,8 @@ public:
             //for (stream_num = 0; stream_num < target_num_streams; stream_num++)
             //    util::MemsetKernel<<<256, 256, 0, streams[0]>>>(
             //        markerss[0][stream_num], (SizeT)0);
+
+            printf("start_peer = %d, taget_num_streams = %d\n", start_peer, target_num_streams);fflush(stdout);
 
             Assign_Marker<VertexId, SizeT, MakeOutHandle>
                 <<<grid_size, block_size, num_streams * sizeof(SizeT*), 
@@ -430,7 +432,7 @@ public:
 
             if (target_num_streams > 1)
             {
-                if (retval = util::GRError(cudaEventRecord(events[0], streams[0]),
+                if (retval = util::GRError(cudaEventRecord(wait_event, streams[0]),
                     "cudaEventRecord failed", __FILE__, __LINE__))
                     return retval;
             }
@@ -440,7 +442,7 @@ public:
                 if (stream_num > 0)
                 {
                     if (retval = util::GRError(cudaStreamWaitEvent(
-                        streams[stream_num], events[0], 0),
+                        streams[stream_num], wait_event, 0),
                         "cudaStreamWaitEvent failed", __FILE__, __LINE__))
                         return retval;
                 }
@@ -449,7 +451,7 @@ public:
                     num_elements,
                     (SizeT)0, mgpu::plus<SizeT>(), (SizeT*)0, (SizeT*)0,
                     markerss[0][stream_num],
-                    contexts[0][stream_num]);
+                    contexts[stream_num][0]);
 
                 cudaMemcpyAsync(t_out_lengths[0] + stream_num,
                     markerss[0][stream_num] + num_elements -1,
@@ -459,9 +461,12 @@ public:
                     events[stream_num], streams[stream_num]),
                     "cudaEventRecord failed", __FILE__, __LINE__))
                     return retval;
+                printf("Event[%d] recorded\n", stream_num);fflush(stdout);
             }
 
             stream_counter = 0;
+            for (stream_num=0; stream_num<target_num_streams; stream_num++)
+                done_markers[stream_num] = 0;
             while (stream_counter < target_num_streams)
             {
                 for (stream_num=0; stream_num<target_num_streams; stream_num++)
@@ -470,10 +475,13 @@ public:
                     retval = cudaEventQuery(events[stream_num]);
                     if (retval == cudaErrorNotReady)
                     {
+                        printf("stream %d not ready\n", stream_num);fflush(stdout);
                         retval = cudaSuccess; continue;
                     }
                     if (retval != cudaSuccess) return retval;
 
+                    printf("gpu_num = %d, stream_num = %d, out_length[%d] = %d\n",
+                        gpu_num, stream_num, stream_num + start_peer, t_out_lengths[0][stream_num]);
                     done_markers[stream_num] = 1; stream_counter ++;
                     m_handle = m_handles[0] + stream_num;
                     m_handle -> direction    = direction;
@@ -506,7 +514,7 @@ public:
                         m_handle -> num_value__associates = 0;
                     } else { // peer GPU
                         t_queue = outpu_queue;
-                        if (retval = t_queue -> Push_Addr(
+                        if (retval = t_queue -> Push_Pop_Addr(
                             t_out_lengths[0][stream_num],
                             m_handle -> keys_out, t_offset,
                             num_vertex_associates, num_value__associates,
@@ -532,28 +540,37 @@ public:
 
                     if (stream_num + start_peer != 0)
                     {
-                        event = enactor_slice->empty_events.back();
-                        enactor_slice -> empty_events.pop_back();
-                        if (retval = util::GRError(cudaEventRecord(event,
+                        //event = enactor_slice->empty_events.back();
+                        //enactor_slice -> empty_events.pop_back();
+                        rqueue_mutex -> lock();
+                        push_request = enactor_slice -> outpu_empty_queue.back();
+                        enactor_slice -> outpu_empty_queue.pop_back();
+                        rqueue_mutex -> unlock();
+
+                        if (retval = util::GRError(cudaEventRecord(push_request -> event,
                             streams[stream_num]), "cudaEventRecord failed", 
                             __FILE__, __LINE__)) return retval;
-                        push_request.event = event;
-                        push_request.iteration = iteration;
-                        push_request.peer = stream_num + start_peer;
-                        push_request.gpu_num = gpu_num;
-                        push_request.length = t_out_lengths[0][stream_num];
-                        push_request.offset = t_offset;
-                        push_request.num_vertex_associates = num_vertex_associates;
-                        push_request.num_value__associates = num_value__associates;
-                        push_request.vertices = m_handle -> keys_out;
+                        //push_request -> event = event;
+                        push_request -> iteration = iteration;
+                        push_request -> peer = stream_num + start_peer;
+                        push_request -> gpu_num = gpu_num;
+                        push_request -> length = t_out_lengths[0][stream_num];
+                        push_request -> offset = t_offset;
+                        push_request -> num_vertex_associates = num_vertex_associates;
+                        push_request -> num_value__associates = num_value__associates;
+                        push_request -> vertices = m_handle -> keys_out;
                         for (int i=0; i<num_vertex_associates; i++)
-                            push_request.vertex_associates[i] =
+                            push_request -> vertex_associates[i] =
                                 m_handle -> vertex_outs[i];
                         for (int i=0; i<num_value__associates; i++)
-                            push_request.value__associates[i] =
+                            push_request -> value__associates[i] =
                                 m_handle -> value__outs[i];
-                        push_request.status = PushRequest::Status::Assigned;
+                        push_request -> status = PushRequest::Status::Assigned;
 
+                        printf("-1: Push from %d to %d, event = %d, length = %d\n",
+                            push_request -> gpu_num, push_request -> peer, 
+                            push_request -> event  , push_request -> length);
+                        fflush(stdout);
                         rqueue_mutex -> lock();
                         request_queue -> push_front(push_request);
                         rqueue_mutex -> unlock();

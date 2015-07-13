@@ -111,6 +111,7 @@ __global__ void Assign_Marker(
                     s_marker[gpu][x] = 1;
             }
         }
+        x += STRIDE;
     }
 }
 

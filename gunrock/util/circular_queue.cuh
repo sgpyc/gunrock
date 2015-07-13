@@ -469,6 +469,42 @@ public:
         return retval;
     }
  
+    cudaError_t Push_Pop_Addr(
+        SizeT         length, 
+        VertexId    *&array, 
+        SizeT        &offset,
+        SizeT         num_vertex_associates = 0, 
+        SizeT         num_value__associates = 0,
+        VertexId    **vertex_associates = NULL,
+        Value       **value__associates = NULL,
+        bool          set_gpu = false)
+    {
+        cudaError_t retval = cudaSuccess;
+        SizeT offsets[2] = {0,0};
+        SizeT lengths[2] = {0,0};
+        //SizeT sum        = 0;
+        if (retval = AddSize(length, offsets, lengths, set_gpu)) return retval;
+        offset = offsets[0];
+
+        if (lengths[1] == 0)
+        { // single chunk
+            array = this->array.GetPointer(allocated) + offsets[0];
+            for (SizeT j=0; j<num_vertex_associates; j++)
+                vertex_associates[j] = this->vertex_associates[j].GetPointer(allocated) + offsets[0];
+            for (SizeT j=0; j<num_value__associates; j++)
+                value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
+        } else { // splict at the end
+            if (retval = EnsureTempCapacity(length, length, length, set_gpu))
+                return retval;
+            array = temp_array.GetPointer(allocated);
+            for (SizeT j=0; j<num_vertex_associates; j++)
+                vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
+            for (SizeT j=0; j<num_value__associates; j++)
+                value__associates[j] = temp_value__associates.GetPointer(allocated) + j*length;
+        }
+        return retval;
+    }
+ 
     cudaError_t Pop(
         SizeT         min_length, 
         SizeT         max_length, 

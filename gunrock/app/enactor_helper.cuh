@@ -104,9 +104,9 @@ cudaError_t Check_Size(
     util::Array1D<SizeT, Type> 
                *array,
     bool       &oversized,
-    int         thread_num = -1,
-    int         iteration  = -1,
-    int         peer_      = -1,
+    int         gpu_num      = -1,
+    int         iteration    = -1,
+    int         stream_num   = -1,
     bool        keep_content = false)
 {
     cudaError_t retval = cudaSuccess;
@@ -114,7 +114,7 @@ cudaError_t Check_Size(
     if (target_length > array->GetSize())
     {
         printf("%d\t %d\t %d\t %s \t oversize :\t %d ->\t %d\n",
-            thread_num, iteration, peer_, name,
+            gpu_num, iteration, stream_num, name,
             array->GetSize(), target_length);
         fflush(stdout);
         oversized=true;
@@ -167,6 +167,10 @@ cudaError_t PushNeibor(
     cudaError_t    retval                =   cudaSuccess;
     cudaStream_t   s_stream              =   request -> stream;
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
+
+    printf("Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
+        request -> gpu_num, request -> peer, s_stream, event, length);
+    fflush(stdout);
 
     if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
         "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
