@@ -311,7 +311,7 @@ extern "C" {
     //void PrintCPUArray(const char* const name, const _Value* const array, const _SizeT limit, const int gpu=-1, const int iteration=-1, clock_t stime = -1)
     void PrintCPUArray(const char* const name, const _Value* const array, const _SizeT limit, const int gpu=-1, const int iteration=-1, int peer = -1)
     {
-        char *buffer = new char[1024 * 128];
+        char *buffer = new char[1024 * 1024 * 32];
         
         sprintf(buffer, "%s = ", name);
 
@@ -344,7 +344,7 @@ extern "C" {
         } else {
             util::Array1D<_SizeT,_Value> arr;
             arr.SetName("array");
-            arr.Init(limit, util::HOST);//, true, cudaHostAllocMapped | cudaHostAllocPortable);
+            arr.Init(limit, util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable);
             arr.SetPointer(array,-1, util::DEVICE);
             arr.Move(util::DEVICE, util::HOST, -1, 0, stream);
             cudaStreamSynchronize(stream);

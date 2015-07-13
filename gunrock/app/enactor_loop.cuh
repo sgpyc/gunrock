@@ -446,12 +446,14 @@ public:
                         "cudaStreamWaitEvent failed", __FILE__, __LINE__))
                         return retval;
                 }
+                //util::cpu_mt::PrintGPUArray("marker before scan", markerss[0][stream_num], num_elements, gpu_num, -1, stream_num, streams[stream_num]);
                 Scan<mgpu::MgpuScanTypeInc>(
                     markerss[0][stream_num],
                     num_elements,
                     (SizeT)0, mgpu::plus<SizeT>(), (SizeT*)0, (SizeT*)0,
                     markerss[0][stream_num],
                     contexts[stream_num][0]);
+                //util::cpu_mt::PrintGPUArray("marker after scan", markerss[0][stream_num], num_elements, gpu_num, -1, stream_num, streams[stream_num]);
 
                 cudaMemcpyAsync(t_out_lengths[0] + stream_num,
                     markerss[0][stream_num] + num_elements -1,
@@ -522,9 +524,9 @@ public:
                             return retval;
                         m_handle -> num_vertex_associates = num_vertex_associates;
                         m_handle -> num_value__associates = num_value__associates;
-                        memcpy(m_handle -> vertex_orgs, vertex_associate_orgs, 
+                        memcpy(m_handle -> vertex_orgs, vertex_associate_orgs[0] + 0, 
                             sizeof(VertexId*) * num_vertex_associates);
-                        memcpy(m_handle -> value__orgs, value__associate_orgs,
+                        memcpy(m_handle -> value__orgs, value__associate_orgs[0] + 0,
                             sizeof(VertexId*) * num_value__associates);
                     } // end of if
 
@@ -553,6 +555,8 @@ public:
                         //push_request -> event = event;
                         push_request -> iteration = iteration;
                         push_request -> peer = stream_num + start_peer;
+                        if (push_request -> peer <= gpu_num) 
+                            push_request -> peer --;
                         push_request -> gpu_num = gpu_num;
                         push_request -> length = t_out_lengths[0][stream_num];
                         push_request -> offset = t_offset;
@@ -567,7 +571,7 @@ public:
                                 m_handle -> value__outs[i];
                         push_request -> status = PushRequest::Status::Assigned;
 
-                        printf("-1: Push from %d to %d, event = %d, length = %d\n",
+                        printf("-1: Push from %d to %d, event = %p, length = %d\n",
                             push_request -> gpu_num, push_request -> peer, 
                             push_request -> event  , push_request -> length);
                         fflush(stdout);

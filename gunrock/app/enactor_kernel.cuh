@@ -99,7 +99,10 @@ __global__ void Assign_Marker(
         {
             gpu = forward_partition[key] - start_peer;
             if (gpu >=0 && gpu < num_peers)
+            {
                 s_marker[gpu][x] = 1;
+                //printf("forward: markers[%d][%d] -> 1\n", gpu, x);
+            }
         }
 
         if ((direction & MakeOutHandle::Direction::BACKWARD) != 0)
@@ -108,7 +111,10 @@ __global__ void Assign_Marker(
             {
                 gpu = backward_partition[i] - start_peer;
                 if (gpu>=0 && gpu < num_peers)
+                {
+                    //printf("backward: markers[%d][%d] -> 1\n", gpu, x);
                     s_marker[gpu][x] = 1;
+                }
             }
         }
         x += STRIDE;
@@ -124,6 +130,7 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
 
     __shared__ MakeOutHandle s_handle;
     const SizeT STRIDE = gridDim.x * blockDim.x;
+    //const typename MakeOutHandle::Direction direction = d_handle->direction,
     VertexId x = threadIdx.x;
     VertexId key = 0;
     int target_gpu = 0, host_gpu = 0;
@@ -147,35 +154,44 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
         { // invalid key
             x+= STRIDE; continue;
         }
-        if (s_handle.markers[x] == s_handle.markers[x+1])
+        if ((x==0 && s_handle.markers[x] == 0)
+            || s_handle.markers[x] == s_handle.markers[x-1])
         { // not marked for current GPU
             x+= STRIDE; continue;
         }
         host_gpu = s_handle.forward_partition[key];
-        if (host_gpu != 0 || target_gpu == 0)
+        //printf("x = %d, key = %d, host_gpu = %d, target_gpu = %d\n",
+        //    x, key, host_gpu, target_gpu);
+        if (host_gpu != 0 || target_gpu == 0) 
         { // remote vertex or local vertex to local GPU => forward
             start_offset = key; end_offset = key+1;
             t_partition  = s_handle.forward_partition;
             t_convertion = s_handle.forward_convertion;
+            //printf("forward, x = %d, key = %d, host_gpu = %d, target_gpu = %d, start_offset = %d, end_offset = %d\n", x, key, host_gpu, target_gpu, start_offset, end_offset);
         } else { // local vertex to remote GPU => backward
             start_offset = s_handle.backward_offset[key];
             end_offset   = s_handle.backward_offset[key+1];
             t_partition  = s_handle.backward_partition;
             t_convertion = s_handle.backward_convertion;
+            //printf("backward, x = %d, key = %d, host_gpu = %d, target_gpu = %d, start_offset = %d, end_offset = %d\n", x, key, host_gpu, target_gpu, start_offset, end_offset);
         }
         for (SizeT j=start_offset; j<end_offset; j++)
         {
             if (target_gpu != t_partition[j]) continue;
-            SizeT pos = s_handle.markers[x];
+            SizeT pos = s_handle.markers[x] - 1;
             if (host_gpu == 0 && target_gpu == 0)
+            {
                 s_handle.keys_out[pos] = key;
-            else s_handle.keys_out[pos] = t_convertion[j];
-
-            for (int i=0; i<s_handle.num_vertex_associates; i++)
-                s_handle.vertex_outs[i][pos] = s_handle.vertex_orgs[i][key];
-            for (int i=0; i<s_handle.num_value__associates; i++)
-                s_handle.value__outs[i][pos] = s_handle.value__orgs[i][key];
+            } else {
+                s_handle.keys_out[pos] = t_convertion[j];
+                for (int i=0; i<s_handle.num_vertex_associates; i++)
+                    s_handle.vertex_outs[i][pos] = s_handle.vertex_orgs[i][key];
+                for (int i=0; i<s_handle.num_value__associates; i++)
+                    s_handle.value__outs[i][pos] = s_handle.value__orgs[i][key];
+                //printf("label_out[%d] -> %d\n", pos, s_handle.vertex_orgs[0][key]);
+            }
         }
+        x += STRIDE;
     }
 }
 

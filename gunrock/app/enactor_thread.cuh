@@ -190,7 +190,10 @@ public:
         cudaError_t retval = cudaSuccess; 
         printf("ThreadSlice::Reset begin. gpu_num = %d, thread_type = %d\n",
             gpu_num, thread_type);fflush(stdout);
-        iteration = 0;
+        if (thread_type == Type::Input)
+            iteration = 1;
+        else
+            iteration = 0;
         status = Status::Wait;
         printf("ThreadSlice::Reset end. gpu_num = %d, thread_type = %d\n",
             gpu_num, thread_type);fflush(stdout);
@@ -234,7 +237,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
         {
             it_ = it; it++;
             push_request = (*it_);
-            printf("0: Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
+            printf("0: Push from %d to %d: s_stream = %p, event = %p, length = %d\n",
                 push_request -> gpu_num, push_request -> peer, 
                 push_request -> stream , push_request -> event,
                 push_request -> length);
@@ -246,7 +249,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
             push_request -> stream = streams[stream_selector];
             stream_selector ++;
             stream_selector = stream_selector % num_streams;
-            printf("1: Push from %d to %d: s_stream = %d, event = %d, length = %d\n",
+            printf("1: Push from %d to %d: s_stream = %p, event = %p, length = %d\n",
                 push_request -> gpu_num, push_request -> peer, 
                 push_request -> stream , push_request -> event,
                 push_request -> length);
@@ -278,7 +281,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                   *data_slice       = &(problem       -> data_slices[gpu_num]);
     EnactorSlice  *enactor_slice    = ((EnactorSlice*) enactor -> enactor_slices) + gpu_num;
     CircularQueue *input_queues     =   enactor_slice -> input_queues;
-    cudaStream_t  *streams          = &(enactor_slice -> input_streams[0]);
+    int            num_streams      =   enactor_slice -> num_input_streams;
+    cudaStream_t  *streams          =   enactor_slice -> input_streams + 0;
     int            target_input_count = enactor_slice -> input_target_count;
     Array<ExpandIncomingHandle> 
                   *e_handles        = &(enactor_slice -> input_e_handles);
@@ -307,6 +311,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     SizeT          num_vertex_associates = 0;
     SizeT          num_value__associates = 0;
     IterationT    *iteration_loop   = NULL;
+    int            s_input_count    = 0;
+    bool           to_show          = true;
 
     printf("ThreadSlice::Input_Thread begin. gpu_num = %d\n", gpu_num);
     fflush(stdout);
@@ -321,30 +327,54 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;
         }
+
+        iteration_loop = (IterationT*)enactor_slice -> input_iteration_loops;
         iteration = thread_slice->iteration;
         s_queue   = &(input_queues[iteration%2]);
         if (s_queue->Empty())
         {
-            if (s_queue->GetInputCount() == target_input_count)
+            s_input_count = s_queue->GetInputCount();
+            //if (to_show)
+            {
+                printf("InputThread: s_input_count = %d, target_input_count = %d, gpu_num = %d, iteration = %lld\n",
+                    s_input_count, target_input_count, gpu_num, iteration);
+                fflush(stdout);
+                to_show = false;
+            }
+
+            if (s_input_count == target_input_count)
             {
                 if (enactor->using_subq)
                 {
                     enactor_slice -> subq__target_count[iteration%2]
-                        = s_queue->GetOutputCount();
+                        = s_input_count + 1;
+                    printf("subq__target_count -> %d, gpu_num = %d, iteration = %lld\n",
+                        enactor_slice -> subq__target_count[iteration%2],
+                        gpu_num, iteration);
+                    fflush(stdout);
                 } else {
                     enactor_slice -> fullq_target_count[iteration%2]
-                        = s_queue->GetOutputCount();
+                        = s_input_count + 1;
+                    printf("fullq_target_count -> %d, gpu_num = %d, iteration = %lld\n",
+                        enactor_slice -> fullq_target_count[iteration%2],
+                        gpu_num, iteration);
+                    fflush(stdout);
                 }
                 s_queue -> ResetCounts();
                 if (thread_slice -> retval = iteration_loop -> 
                     Iteration_Change(thread_slice -> iteration))
                     return;
+                printf("InputThread: iteration changed to %lld\n, gpu_num = %d\n",
+                    thread_slice -> iteration, gpu_num);
+                fflush(stdout);
+                to_show = true;
             } else {
                 std::this_thread::sleep_for(std::chrono::microseconds(1));
                 continue;
             }
         }
 
+        to_show = true;
         if ((enactor -> using_subq && 
              thread_slice -> iteration 
                != ((ThreadSlice_*)(enactor_slice -> subq__thread_slice)) -> iteration) ||
@@ -357,6 +387,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         }
 
         e_handle =  e_handles[0] + stream_selector;
+        iteration_loop = ((IterationT*)enactor_slice -> input_iteration_loops) + stream_selector;
         s_queue -> GetSize(s_size_occu, s_size_soli);
         t_queue = (enactor -> using_subq) ? &enactor_slice -> subq__queue :
             &enactor_slice -> fullq_queue;
@@ -381,16 +412,24 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         e_handle -> num_vertex_associates = num_vertex_associates;
         e_handle -> num_value__associates = num_value__associates;
         for (int i=0; i<num_vertex_associates; i++)
-            e_handle -> vertex_ins[i] 
+            e_handle -> vertex_orgs[i] 
                 = enactor_slice -> vertex_associate_orgs[i];
         for (int i=0; i<num_value__associates; i++)
-            e_handle -> value__ins[i]
+            e_handle -> value__orgs[i]
                 = enactor_slice -> value__associate_orgs[i];
         e_handles->Move(util::HOST, util::DEVICE, 1, stream_selector, stream);
 
+        printf("Input to %d, length = %d, stream = %p, vertex_associates = %d, %p, %p, value_associates = %d, %p, %p\n",
+            gpu_num, length, stream,
+            num_vertex_associates, 
+            num_vertex_associates > 0 ? e_handle -> vertex_ins [0] : NULL, 
+            num_vertex_associates > 0 ? e_handle -> vertex_orgs[0] : NULL,
+            num_value__associates,
+            num_value__associates > 0 ? e_handle -> value__ins [0] : NULL,
+            num_value__associates > 0 ? e_handle -> value__orgs[0] : NULL);
+        fflush(stdout);
         grid_size = length/256+1;
         if (grid_size>512) grid_size=512;
-        iteration_loop = thread_slice -> iteration_loops + stream_selector;
         iteration_loop -> num_vertex_associates = num_vertex_associates;
         iteration_loop -> num_value__associates = num_value__associates;
         iteration_loop -> grid_size             = grid_size;
@@ -398,6 +437,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         iteration_loop -> stream                = stream;
         iteration_loop -> num_elements          = length;
         iteration_loop -> data_slice            = data_slice;
+        iteration_loop -> d_e_handle            = e_handles -> GetPointer(util::DEVICE) + stream_selector;
 
         if (thread_slice -> retval = iteration_loop -> Expand_Incoming())
             return;
@@ -408,9 +448,12 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         if (thread_slice -> retval = 
             t_queue -> EventSet(0, t_offset, length, stream))
             return;
+
+        stream_selector++;
+        if (stream_selector >= num_streams) stream_selector = 0;
     } // end of while
 
-    printf("ThreadSlice::Outpu_Thread end. gpu_num = %d\n", gpu_num);
+    printf("ThreadSlice::Input_Thread end. gpu_num = %d\n", gpu_num);
     fflush(stdout);
 } // end of input thread
 
@@ -657,7 +700,10 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
             case 3: // Accumulate
                 enactor_slice -> subq__wait_counter++;
-                printf("count = %d, target = %d\n", enactor_slice -> subq__wait_counter, enactor_slice -> subq__target_count[iteration%2]);
+                printf("Accumulate count = %d, target = %d, gpu_num = %d, iteration = %lld\n", 
+                    enactor_slice -> subq__wait_counter, 
+                    enactor_slice -> subq__target_count[iteration%2],
+                    gpu_num, iteration);
                 fflush(stdout);
                 if (enactor_slice -> subq__wait_counter == 
                     enactor_slice -> subq__target_count[iteration%2])
@@ -675,9 +721,11 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         s_queue -> ResetOutputCount();
                         s_queue -> ChangeInputCount(0 - enactor_slice -> subq__wait_counter); 
                     }
-                    printf("Iteration change\n");
                     enactor_slice -> subq__wait_counter = 0;
                     iteration_loop -> Iteration_Change(thread_slice -> iteration);
+                    printf("SubQThread: Iteration change to %lld, gpu_num = %d\n",
+                        thread_slice -> iteration, gpu_num);
+                    fflush(stdout);
                 }
                 to_shows[stream_num] = false;
                 stages[stream_num] = -1;
@@ -953,6 +1001,10 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             }
             iteration_loop -> num_streams = enactor_slice -> num_split_streams;
             iteration_loop -> streams     = enactor_slice -> split_streams + 0;
+            iteration_loop -> num_vertex_associates = enactor -> num_vertex_associates;
+            iteration_loop -> num_value__associates = enactor -> num_value__associates;
+            iteration_loop -> vertex_associate_orgs = &enactor_slice -> vertex_associate_orgs;
+            iteration_loop -> value__associate_orgs = &enactor_slice -> value__associate_orgs;
             iteration_loop -> iteration   = iteration;
             if (thread_slice -> retval = 
                 iteration_loop -> Iteration_Update_Preds())

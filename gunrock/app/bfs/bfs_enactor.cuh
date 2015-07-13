@@ -128,7 +128,7 @@ struct BFSIteration : public IterationBase <
         
         frontier_attribute->queue_reset = true;
         util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
-        //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
+        util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
         this->PrintMessage("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
@@ -169,7 +169,7 @@ struct BFSIteration : public IterationBase <
         work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
         if (retval = cudaStreamSynchronize(stream)) return retval;
         printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        //util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
         //return retval;
  
         // Filter
@@ -199,7 +199,7 @@ struct BFSIteration : public IterationBase <
         work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
         if (retval = cudaStreamSynchronize(stream)) return retval;
         printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        //util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
  
         return retval;
     }
@@ -590,6 +590,13 @@ public:
                 return retval; 
         }   
 
+        for (int gpu_num = 0; gpu_num < this-> num_gpus; gpu_num++)
+        {
+            if (gpu_num == gpu) continue;
+            if (retval = util::SetDevice(this->gpu_idx[gpu])) return retval;
+            if (retval = enactor_slices[gpu_num].subq__queue.Push(0, NULL))
+                return retval;
+        }
         printf("BFSEnactor::Reset end.\n");fflush(stdout);
         return retval;
     }
@@ -620,9 +627,28 @@ public:
             ThreadSlice;
         clock_t      start_time = clock();
         cudaError_t  retval     = cudaSuccess;
+        EnactorSlice<Enactor> *enactor_slices 
+            = (EnactorSlice<Enactor>*) this->enactor_slices; 
         ThreadSlice* thread_slices = (ThreadSlice*) this->thread_slices;
         this -> using_subq = true;
         this -> using_fullq = false;
+        this -> num_vertex_associates = (this-> num_gpus > 1) ? 
+            this->NUM_VERTEX_ASSOCIATES : 0;
+        this -> num_value__associates = (this-> num_gpus > 1) ?
+            this->NUM_VALUE__ASSOCIATES : 0; 
+
+        if (this-> num_gpus > 1)
+        {
+            for (int gpu_num = 0; gpu_num < this-> num_gpus; gpu_num++)
+            {
+                if (this->num_vertex_associates > 0)
+                    enactor_slices[gpu_num].vertex_associate_orgs[0]
+                        = ((Problem*)this->problem)->data_slices[gpu_num]->labels.GetPointer(util::DEVICE);
+                if (this->num_vertex_associates > 1)
+                    enactor_slices[gpu_num].vertex_associate_orgs[1]
+                        = ((Problem*)this->problem)->data_slices[gpu_num]->preds .GetPointer(util::DEVICE);
+            }
+        }
 
         do {
             for (int i=0; i<this->num_threads; i++)
