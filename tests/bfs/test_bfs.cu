@@ -655,12 +655,16 @@ template <
     typename      Value>
 void RunTests_instrumented(Test_Parameter *parameter)
 {
-    if (parameter->instrumented) RunTests_debug
-        <VertexId, SizeT, Value,
-        true > (parameter);
-    else RunTests_debug
-        <VertexId, SizeT, Value, 
-        false> (parameter);
+    if (parameter->instrumented) 
+    {
+        //RunTests_debug
+        //    <VertexId, SizeT, Value,
+        //    true > (parameter);
+    } else {
+        RunTests_debug
+            <VertexId, SizeT, Value, 
+            false> (parameter);
+    }
 }
 
 /**

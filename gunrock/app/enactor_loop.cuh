@@ -127,6 +127,7 @@ public:
 
     std::mutex       *rqueue_mutex;
     typename std::list<PushRequest*> *request_queue;
+    char              mssg[512];
 
     IterationBase() :
         iteration         (0   ),
@@ -171,15 +172,29 @@ public:
         express           (false),
         t_out_lengths      (NULL)
     {
-        printf("IterationBase() begin.\n");fflush(stdout);
-        printf("IterationBase() end.\n"); fflush(stdout);
+        ShowDebugInfo("() begin.");
+        ShowDebugInfo("() end.");
     }
 
     virtual ~IterationBase()
     {
-        printf("~IterationBase begin.\n");fflush(stdout);
+        ShowDebugInfo("~() begin.");
         Release();
-        printf("~IterationBase end.\n");fflush(stdout);
+        ShowDebugInfo("~() begin.");
+    }
+
+    void ShowDebugInfo(
+        const char* mssg, 
+        long long iteration = -1,
+        int       stream_num = -1)
+    {
+        char str[527];
+        if (!Enactor::DEBUG) return;
+        if (iteration < 0) iteration = this -> iteration;
+        if (stream_num < 0) stream_num = this -> stream_num;
+        strcpy(str, "IterationBase::");
+        strcpy(str + 15, mssg);
+        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
     }
 
     cudaError_t Init(
@@ -192,7 +207,7 @@ public:
         bool update_predecessors)
     {
         cudaError_t retval = cudaSuccess;
-        printf("Iteration::Init begin.\n");fflush(stdout);
+        ShowDebugInfo("Init() begin.");
         this-> num_gpus    = num_gpus;
         this-> num_streams = num_streams;
         this-> has_subq    = has_subq;
@@ -202,13 +217,13 @@ public:
         this-> update_predecessors = update_predecessors;
          //t_out_length = new SizeT[num_streams];
         done_markers = new int  [num_streams];
-        printf("Iteration::Init end.\n");fflush(stdout);
+        ShowDebugInfo("Init() end.");
         return retval;
     }
 
     cudaError_t Release()
     {
-        printf("iteration::Release begin.\n");fflush(stdout);
+        ShowDebugInfo("Release() begin.");
         cudaError_t retval = cudaSuccess;
         frontier_queue     = NULL;
         scanned_edge       = NULL;
@@ -227,49 +242,49 @@ public:
         d_indices          = NULL;
         d_in_key_queue     = NULL;
         delete[] done_markers; done_markers = NULL;
-        printf("Iteration::Release end.\n");fflush(stdout);
+        ShowDebugInfo("Release() end.");
         return retval;
     }
 
     virtual cudaError_t SubQueue_Gather () 
     {
-        printf("Iteration::SubQueue_Gather default called.\n");fflush(stdout);
+        ShowDebugInfo("SubQueue_Gather default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t Compute_OutputLength() 
     {
-        printf("Iteration::Compute_OutputLength default called.\n");fflush(stdout);
+        ShowDebugInfo("Compute_OutputLength default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t SubQueue_Core   () 
     {
-        printf("Iteration::SubQueue_Core default called.\n");fflush(stdout);
+        ShowDebugInfo("SubQueue_Core default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t FullQueue_Gather() 
     {
-        printf("Iteration::FullQueue_Gather default called.\n");fflush(stdout);
+        ShowDebugInfo("FullQueue_Gather default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t FullQueue_Core  () 
     {
-        printf("Iteration::FullQueue_Core default called.\n");fflush(stdout);
+        ShowDebugInfo("FullQueue_Core default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t Expand_Incoming () 
     {
-        printf("Iteration::Expand_Incoming default called.\n");fflush(stdout);
+        ShowDebugInfo("Expand_Incoming default called");
         return cudaSuccess;
     }
 
     virtual cudaError_t End_Action      ()
     {
-        printf("Iteration::End_Action default called.\n");fflush(stdout);
+        ShowDebugInfo("End_Action default called");
         return cudaSuccess;
     }
 
@@ -280,7 +295,7 @@ public:
 
     virtual cudaError_t Iteration_Change (long long &iterations)
     {
-        printf("Iteration::Iteration_change default called.\n");fflush(stdout);
+        //printf("Iteration::Iteration_change default called.\n");fflush(stdout);
         iterations++;
         return cudaSuccess;
     }
@@ -319,15 +334,14 @@ public:
         cudaError_t retval     = cudaSuccess;
         bool        over_sized = false;
         int         selector   = frontier_attribute->selector;
-        int         iteration  = enactor_stats -> iteration;
+        long long   iteration  = enactor_stats -> iteration;
 
         if (Enactor::DEBUG)
         {
-            printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
-                gpu_num, iteration, stream_num,
+            sprintf(mssg, "queue_length = %d, output_length = %d",
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
-            fflush(stdout);
+            ShowDebugInfo(mssg, iteration); 
         }
 
         if (retval = Check_Size<true, SizeT, VertexId > (
@@ -373,8 +387,8 @@ public:
         //cudaEvent_t event;
         PushRequest *push_request;
 
-        printf("Iteration::Make_Output begin. gpu_num = %d, num_elements = %d\n", 
-            gpu_num, num_elements);fflush(stdout);
+        sprintf(mssg, "Make_Output begin. num_elements = %d", num_elements);
+        ShowDebugInfo(mssg); 
         //typename Enactor::Array<SizeT>  *markers  =  enactor_slice -> split_markers;
         //typename Enactor::Array<SizeT*> *markerss = &enactor_slice -> split_markerss;
         //cudaEvent_t *events         = enactor_slice -> split_events + 0;
@@ -388,7 +402,7 @@ public:
             t_out_lengths[0][stream_num] = 0;
             //data_slice->out_length[peer_] = 0;
         }
-        if (num_elements ==0) return retval;
+        //if (num_elements ==0) return retval;
  
         over_sized = false;
         for (stream_num = 0; stream_num < num_streams; stream_num++)
@@ -415,8 +429,11 @@ public:
             //    util::MemsetKernel<<<256, 256, 0, streams[0]>>>(
             //        markerss[0][stream_num], (SizeT)0);
 
-            printf("start_peer = %d, taget_num_streams = %d\n", start_peer, target_num_streams);fflush(stdout);
+            sprintf(mssg, "start_peer = %d, taget_num_streams = %d", 
+                start_peer, target_num_streams);
+            ShowDebugInfo(mssg);
 
+            if (num_elements > 0)
             Assign_Marker<VertexId, SizeT, MakeOutHandle>
                 <<<grid_size, block_size, num_streams * sizeof(SizeT*), 
                 streams[0]>>> (
@@ -447,23 +464,29 @@ public:
                         return retval;
                 }
                 //util::cpu_mt::PrintGPUArray("marker before scan", markerss[0][stream_num], num_elements, gpu_num, -1, stream_num, streams[stream_num]);
-                Scan<mgpu::MgpuScanTypeInc>(
-                    markerss[0][stream_num],
-                    num_elements,
-                    (SizeT)0, mgpu::plus<SizeT>(), (SizeT*)0, (SizeT*)0,
-                    markerss[0][stream_num],
-                    contexts[stream_num][0]);
-                //util::cpu_mt::PrintGPUArray("marker after scan", markerss[0][stream_num], num_elements, gpu_num, -1, stream_num, streams[stream_num]);
+                if (num_elements > 0)
+                {
+                    Scan<mgpu::MgpuScanTypeInc>(
+                        markerss[0][stream_num],
+                        num_elements,
+                        (SizeT)0, mgpu::plus<SizeT>(), (SizeT*)0, (SizeT*)0,
+                        markerss[0][stream_num],
+                        contexts[stream_num][0]);
+                    //util::cpu_mt::PrintGPUArray("marker after scan", markerss[0][stream_num], num_elements, gpu_num, -1, stream_num, streams[stream_num]);
 
-                cudaMemcpyAsync(t_out_lengths[0] + stream_num,
-                    markerss[0][stream_num] + num_elements -1,
-                    sizeof(SizeT), cudaMemcpyDeviceToHost, streams[stream_num]);
-                done_markers[stream_num] = 0;
-                if (retval = util::GRError( cudaEventRecord(
-                    events[stream_num], streams[stream_num]),
-                    "cudaEventRecord failed", __FILE__, __LINE__))
-                    return retval;
-                printf("Event[%d] recorded\n", stream_num);fflush(stdout);
+                    cudaMemcpyAsync(t_out_lengths[0] + stream_num,
+                        markerss[0][stream_num] + num_elements -1,
+                        sizeof(SizeT), cudaMemcpyDeviceToHost, streams[stream_num]);
+                    done_markers[stream_num] = 0;
+                    if (retval = util::GRError( cudaEventRecord(
+                        events[stream_num], streams[stream_num]),
+                        "cudaEventRecord failed", __FILE__, __LINE__))
+                        return retval;
+                    ShowDebugInfo("Event recorded", -1, stream_num);
+                } else {
+                    t_out_lengths[0][stream_num] = 0;
+                    done_markers[stream_num] = 0;
+                }
             }
 
             stream_counter = 0;
@@ -474,16 +497,22 @@ public:
                 for (stream_num=0; stream_num<target_num_streams; stream_num++)
                 {
                     if (done_markers[stream_num] == 1) continue;
-                    retval = cudaEventQuery(events[stream_num]);
-                    if (retval == cudaErrorNotReady)
+                    if (num_elements > 0)
                     {
-                        printf("stream %d not ready\n", stream_num);fflush(stdout);
-                        retval = cudaSuccess; continue;
+                        retval = cudaEventQuery(events[stream_num]);
+                        if (retval == cudaErrorNotReady)
+                        {
+                            ShowDebugInfo("Stream not ready", -1, stream_num);
+                            retval = cudaSuccess; continue;
+                        }
+                        if (retval != cudaSuccess) return retval;
+                    } else {
+                        retval = cudaSuccess;
                     }
-                    if (retval != cudaSuccess) return retval;
 
-                    printf("gpu_num = %d, stream_num = %d, out_length[%d] = %d\n",
-                        gpu_num, stream_num, stream_num + start_peer, t_out_lengths[0][stream_num]);
+                    sprintf(mssg, "out_length[%d] = %d",
+                        stream_num + start_peer, t_out_lengths[0][stream_num]);
+                    ShowDebugInfo(mssg, -1, stream_num);
                     done_markers[stream_num] = 1; stream_counter ++;
                     m_handle = m_handles[0] + stream_num;
                     m_handle -> direction    = direction;
@@ -520,7 +549,8 @@ public:
                             t_out_lengths[0][stream_num],
                             m_handle -> keys_out, t_offset,
                             num_vertex_associates, num_value__associates,
-                            m_handle -> vertex_outs, m_handle -> value__outs))
+                            m_handle -> vertex_outs, 
+                            m_handle -> value__outs))
                             return retval;
                         m_handle -> num_vertex_associates = num_vertex_associates;
                         m_handle -> num_value__associates = num_value__associates;
@@ -533,12 +563,20 @@ public:
                     if (retval = m_handles-> Move(util::HOST, util::DEVICE,
                         1, stream_num, streams[stream_num]))
                         return retval;
-                    Make_Out<MakeOutHandle>
-                        <<<grid_size, block_size, 0,
-                        streams[stream_num]>>> (
-                        m_handles->GetPointer(util::DEVICE) + stream_num);
-                    if (retval = t_queue -> EventSet(0, t_offset,
-                        t_out_lengths[0][stream_num])) return retval;
+                    if (t_out_lengths[0][stream_num] > 0)
+                    {
+                        Make_Out<MakeOutHandle>
+                            <<<grid_size, block_size, 0,
+                            streams[stream_num]>>> (
+                            m_handles->GetPointer(util::DEVICE) + stream_num);
+                        if (stream_num + start_peer == 0)
+                            if (retval = t_queue -> EventSet(0, t_offset,
+                                t_out_lengths[0][stream_num])) return retval;
+                    } else {
+                        if (stream_num + start_peer == 0)
+                            if (retval = t_queue -> EventFinish(0, t_offset,
+                                t_out_lengths[0][stream_num])) return retval;
+                    }
 
                     if (stream_num + start_peer != 0)
                     {
@@ -549,9 +587,11 @@ public:
                         enactor_slice -> outpu_empty_queue.pop_back();
                         rqueue_mutex -> unlock();
 
-                        if (retval = util::GRError(cudaEventRecord(push_request -> event,
-                            streams[stream_num]), "cudaEventRecord failed", 
-                            __FILE__, __LINE__)) return retval;
+                        if (t_out_lengths[0][stream_num] > 0)
+                            if (retval = util::GRError(
+                                cudaEventRecord(push_request -> event,
+                                streams[stream_num]), "cudaEventRecord failed", 
+                                __FILE__, __LINE__)) return retval;
                         //push_request -> event = event;
                         push_request -> iteration = iteration;
                         push_request -> peer = stream_num + start_peer;
@@ -571,10 +611,6 @@ public:
                                 m_handle -> value__outs[i];
                         push_request -> status = PushRequest::Status::Assigned;
 
-                        printf("-1: Push from %d to %d, event = %p, length = %d\n",
-                            push_request -> gpu_num, push_request -> peer, 
-                            push_request -> event  , push_request -> length);
-                        fflush(stdout);
                         rqueue_mutex -> lock();
                         request_queue -> push_front(push_request);
                         rqueue_mutex -> unlock();
@@ -584,16 +620,9 @@ public:
 
             start_peer += num_streams;
         } // end of while start_peer
-  
-        printf("Iteration::Make_Output end. gpu_num = %d\n", gpu_num);fflush(stdout); 
+ 
+        ShowDebugInfo("Make_Output end."); 
         return retval;
-    }
-
-    void PrintMessage(const char* message, long long iteration = -1)
-    {
-        if (Enactor::DEBUG)
-            util::cpu_mt::PrintMessage(message, gpu_num,
-            iteration, stream_num);
     }
 };
 
