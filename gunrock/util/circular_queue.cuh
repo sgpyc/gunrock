@@ -300,13 +300,17 @@ public:
         return capacity;
     }
 
-    int GetInputCount()
+    SizeT GetInputCount()
     {
+        //printf("GetInputCount = %d\n", input_count);
+        //fflush(stdout);
         return input_count;
     }
 
-    int GetOutputCount()
+    SizeT GetOutputCount()
     {
+        //printf("GetOutputCount = %d\n", output_count);
+        //fflush(stdout);
         return output_count;
     }
 
@@ -356,7 +360,21 @@ public:
     cudaError_t Reset(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        return retval;
+        if (!in_critical) queue_mutex.lock();
+
+        head_a    = 0; head_b = 0;
+        tail_a    = 0; tail_b = 0;
+        size_occu = 0; size_soli = 0;
+        wait_resize = 0;
+        input_count = 0; output_count = 0;
+        events[0].clear();
+        events[1].clear();
+        
+        while (!empty_gpu_events.empty())
+            empty_gpu_events.pop_front();
+        for (int i=0; i<num_events; i++)
+            empty_gpu_events.push_back(gpu_events[i]);
+        return Combined_Return(retval, in_critical);
     }
 
     cudaError_t Combined_Return(
@@ -571,17 +589,22 @@ public:
         SizeT         num_value__associates = 0,
         VertexId    **vertex_associates = NULL,
         Value       **value__associates = NULL,
-        bool          set_gpu = false)
+        bool          set_gpu = false,
+        bool          allow_smaller = false,
+        int           target_input = util::MaxValue<int>())
     {
         cudaError_t retval = cudaSuccess;
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
 
-        printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
-        if (retval = ReduceSize(min_length, max_length, offsets, lengths, set_gpu)) return retval;
+        //printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
+        if (retval = ReduceSize(min_length, max_length, offsets, lengths, 
+            false, false, allow_smaller, target_input)) return retval;
         offset = offsets[0];
         length = lengths[0] + lengths[1];
+        printf("Poped, length = %d, offset = %d\n", length, offset);
+        fflush(stdout);
 
         if (lengths[1] == 0)
         { // single chunk
@@ -844,7 +867,9 @@ public:
         SizeT *offsets, 
         SizeT *lengths, 
         bool   in_critical = false,
-        bool   single_chunk = false)
+        bool   single_chunk = false,
+        bool   allow_smaller = false,
+        int    target_input = util::MaxValue<int>())
     {
         cudaError_t retval = cudaSuccess;
         SizeT length = 0;
@@ -858,10 +883,14 @@ public:
             if (retval = EventCheck(0, true))
                 return Combined_Return(retval, in_critical);
         }
-        
-        if (size_soli < min_length)
+       
+        //printf("size_soli = %d, size_occu = %d, input_count = %d, target_input = %d, min_length = %d, max_length = %d\n",
+        //    size_soli, size_occu, input_count, target_input, min_length, max_length);
+        //fflush(stdout); 
+        if (size_soli < min_length && 
+            !(allow_smaller && target_input <= input_count && size_soli == size_occu))
         { // too small
-            //queue_mutex.unlock();
+            /*//queue_mutex.unlock();
             bool got_content = false;
             while (!got_content)
             {
@@ -883,7 +912,17 @@ public:
                     std::this_thread::sleep_for(std::chrono::microseconds(10));
                     queue_mutex.lock();
                 }
-            }
+            }*/
+            retval = cudaErrorNotReady;
+            return Combined_Return(retval, in_critical);
+        }
+
+        if (size_soli < min_length && allow_smaller && 
+            target_input <= input_count && size_soli == size_occu)
+        {
+            printf("Reduce last: size_soli = %d, size_occu = %d, target_input = %d, input_count = %d\n",
+                size_soli, size_occu, target_input, input_count);
+            fflush(stdout);
         }
 
         length = size_soli < max_length ? size_soli : max_length;
@@ -1147,20 +1186,24 @@ public:
 
         for (int i=0; i<2; i++)
         {
-            if (lengths[i] == 0) continue;
-            if (empty_gpu_events.empty())
+            cudaEvent_t event = NULL;
+            if (lengths[i] == 0 && i!=0) continue;
+            if (lengths[i] != 0)
             {
-                retval = util::GRError(cudaErrorLaunchOutOfResources,
-                    (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
-                if (!in_critical) queue_mutex.unlock();
-                return retval;    
-            }
-            cudaEvent_t event = empty_gpu_events.front();
-            empty_gpu_events.pop_front();
-            if (retval = cudaEventRecord(event, stream))
-            {
-                if (!in_critical) queue_mutex.unlock();
-                return retval;
+                if (empty_gpu_events.empty())
+                {
+                    retval = util::GRError(cudaErrorLaunchOutOfResources,
+                        (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
+                    if (!in_critical) queue_mutex.unlock();
+                    return retval;    
+                }
+                event = empty_gpu_events.front();
+                empty_gpu_events.pop_front();
+                if (retval = cudaEventRecord(event, stream))
+                {
+                    if (!in_critical) queue_mutex.unlock();
+                    return retval;
+                }
             }
 
             typename std::list<CqEvent>::iterator it = events[direction].begin();
@@ -1274,7 +1317,9 @@ public:
         {
             if ((*it).status == CqEvent::Assigned)
             {
-                retval = cudaEventQuery((*it).event);
+                if ((*it).length == 0 && (*it).event == NULL)
+                    retval = cudaSuccess;
+                else retval = cudaEventQuery((*it).event);
                 if (retval == cudaSuccess)
                 {
                     (*it).status = CqEvent::Finished;
