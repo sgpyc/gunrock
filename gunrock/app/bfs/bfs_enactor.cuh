@@ -127,10 +127,10 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
-        util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
-        util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
-        this->PrintMessage("Advance begin", enactor_stats->iteration);
+        this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
             <AdvanceKernelPolicy, Problem, BfsFunctor>(
             enactor_stats[0],
@@ -156,7 +156,7 @@ struct BFSIteration : public IterationBase <
             gunrock::oprtr::advance::V2V,
             false,
             false);
-        this -> PrintMessage("Advance end", enactor_stats->iteration);
+        this -> ShowDebugInfo("Advance end", enactor_stats->iteration);
 
         // Only need to reset queue for once
         frontier_attribute -> queue_reset = false;
@@ -173,7 +173,7 @@ struct BFSIteration : public IterationBase <
         //return retval;
  
         // Filter
-        this-> PrintMessage("Filter begin", enactor_stats->iteration);
+        this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
         gunrock::oprtr::filter::Kernel
             <FilterKernelPolicy, Problem, BfsFunctor>
             <<< enactor_stats->filter_grid_size, 
@@ -192,14 +192,14 @@ struct BFSIteration : public IterationBase <
             frontier_queue     -> keys  [frontier_attribute->selector^1].GetSize(),
             enactor_stats-> filter_kernel_stats);
         //if (Enactor::DEBUG && (enactor_stats->retval = util::GRError("filter_forward::Kernel failed", __FILE__, __LINE__))) return;
-        this-> PrintMessage("Filter end", enactor_stats->iteration);
+        this-> ShowDebugInfo("Filter end", enactor_stats->iteration);
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
         work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
         if (retval = cudaStreamSynchronize(stream)) return retval;
         printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
  
         return retval;
     }
@@ -247,11 +247,11 @@ struct BFSIteration : public IterationBase <
             "scanned_edges", this->frontier_attribute->queue_length, 
             this-> scanned_edge, over_sized, -1, -1, -1, false)) 
             return retval;
-        printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %p\n",
-            this-> frontier_attribute, this->d_offsets, this->d_indices, 
-            this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
-            this -> max_in, this-> max_out, this->stream);
-        fflush(stdout);
+        //printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %p\n",
+        //    this-> frontier_attribute, this->d_offsets, this->d_indices, 
+        //    this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
+        //    this -> max_in, this-> max_out, this->stream);
+        //fflush(stdout);
 
         retval = gunrock::oprtr::advance::ComputeOutputLength
             <AdvanceKernelPolicy, Problem, BfsFunctor>(
@@ -775,17 +775,17 @@ public:
 
         if (min_sm_version >= 300)
         {
-            if (Problem::ENABLE_IDEMPOTENCE) {
-                if (traversal_mode == 0)
-                    return EnactBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
-                else
-                    return EnactBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
-            } else {
+//            if (Problem::ENABLE_IDEMPOTENCE) {
+//                if (traversal_mode == 0)
+//                    return EnactBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
+//                else
+//                    return EnactBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
+//            } else {
                 if (traversal_mode == 0)
                     return EnactBFS<     LBAdvanceKernelPolicy     , FilterKernelPolicy>(src);
-                else
-                    return EnactBFS<ForwardAdvanceKernelPolicy     , FilterKernelPolicy>(src);
-            }
+//                else
+//                    return EnactBFS<ForwardAdvanceKernelPolicy     , FilterKernelPolicy>(src);
+//            }
         }
 
         //to reduce compile time, get rid of other architecture for now
@@ -895,6 +895,7 @@ public:
                         input_factor, outpu_factor, split_factor,
                         temp_factor);
         }
+        //return cudaSuccess;
     }    
 
     cudaError_t Release()
@@ -914,6 +915,7 @@ public:
                 return ReleaseBFS
                     <ForwardAdvanceKernelPolicy     , FilterKernelPolicy>();
         }
+        //return cudaSuccess;
     }    
 
     /** @} */

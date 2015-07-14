@@ -118,17 +118,35 @@ public:
         cpu_barrier(NULL),
         iteration_loops(NULL)
     {
-        printf("ThreadSlice() begin.\n");fflush(stdout);
-        printf("ThreadSlice() end.\n");fflush(stdout); 
+        ShowDebugInfo("ThreadSlice() begin.");
+        ShowDebugInfo("ThreadSlice() end.");
     }    
+
+    void ShowDebugInfo(
+        const char* message, 
+        int stream_num = -1, 
+        long long iteration = -1)
+    {
+        char str[526];
+        if (!Enactor::DEBUG) return;
+        switch (thread_type)
+        {
+        case Type::Input  : strcpy(str, "InputThread: "); break;
+        case Type::Output : strcpy(str, "OutpuThread: "); break;
+        case Type::SubQ   : strcpy(str, "SubQ_Thread: "); break;
+        case Type::FullQ  : strcpy(str, "FullQThread: "); break;
+        default           : strcpy(str, "UnknoThread: "); break;
+        }
+        if (iteration == -1) iteration = this -> iteration;
+        strcpy(str + 13, message);
+        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
+    }
 
     virtual ~ThreadSlice()
     {
-        printf("~ThreadSlice() begin. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("~ThreadSlice() begin.");
         Release();
-        printf("~ThreadSlice() end. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("~ThreadSlice() end.");
     }
 
     cudaError_t Init(
@@ -140,8 +158,7 @@ public:
         std::thread &thread)
     {
         cudaError_t retval = cudaSuccess;
-        printf("ThreadSlice::Init begin. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Init() begin.");
         this -> thread_num = thread_num;
         this -> gpu_num    = gpu_num;
         this -> status     = Status::Inited;
@@ -166,37 +183,32 @@ public:
         default:
             break;
         }
-        printf("ThreadSlice::Init end. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Init() end.");
         return retval;
     }
 
     cudaError_t Release()
     {
-        printf("ThreadSlice::Release begin. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Release() begin.");
         cudaError_t retval = cudaSuccess;    
         problem     = NULL;
         enactor     = NULL;
         cpu_barrier = NULL;
         iteration_loops = NULL;
-        printf("ThreadSlice::Release end. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Release() end.");
         return retval;
     }    
 
     cudaError_t Reset()
     {
         cudaError_t retval = cudaSuccess; 
-        printf("ThreadSlice::Reset begin. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Reset() begin.");
         if (thread_type == Type::Input)
             iteration = 1;
         else
             iteration = 0;
         status = Status::Wait;
-        printf("ThreadSlice::Reset end. gpu_num = %d, thread_type = %d\n",
-            gpu_num, thread_type);fflush(stdout);
+        ShowDebugInfo("Reset() end.");
         return retval;
     }
 
@@ -215,8 +227,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
     PRIterator    it, it_;
     PRequest     *push_request;
 
-    printf("ThreadSlice::Outpu_Thread begin. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
  
@@ -237,23 +248,12 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
         {
             it_ = it; it++;
             push_request = (*it_);
-            printf("0: Push from %d to %d: s_stream = %p, event = %p, length = %d\n",
-                push_request -> gpu_num, push_request -> peer, 
-                push_request -> stream , push_request -> event,
-                push_request -> length);
-            fflush(stdout);
-
             request_queue -> erase(it_);
+
             rqueue_mutex->unlock();
-          
             push_request -> stream = streams[stream_selector];
             stream_selector ++;
             stream_selector = stream_selector % num_streams;
-            printf("1: Push from %d to %d: s_stream = %p, event = %p, length = %d\n",
-                push_request -> gpu_num, push_request -> peer, 
-                push_request -> stream , push_request -> event,
-                push_request -> length);
-            fflush(stdout);
             if (push_request -> peer < num_gpus)
             { // local peer
                 if (thread_slice -> retval = 
@@ -262,14 +262,14 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
             } else { // remote peer
             }
             rqueue_mutex->lock();
+
             enactor_slice -> outpu_empty_queue.push_front(push_request);
         }
         if (!thread_slice -> retval)
             rqueue_mutex->unlock();
     } // end of while
 
-    printf("ThreadSlice::Outpu_Thread end. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread end.");
 } // end of outpu thread
 
 static void Input_Thread(ThreadSlice_ *thread_slice)
@@ -292,8 +292,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     //VertexId      *t_vertices       = NULL;
     //VertexId      *s_vertex_associates[Enactor::NUM_VERTEX_ASSOCIATES];
     //Value         *s_value__associates[Enactor::NUM_VALUE__ASSOCIATES];
-    SizeT          s_size_soli      = 0;
-    SizeT          s_size_occu      = 0;
+    //SizeT          s_size_soli      = 0;
+    //SizeT          s_size_occu      = 0;
     SizeT          length           = 0;
     SizeT          s_offset         = 0;
     SizeT          t_offset         = 0;
@@ -312,11 +312,11 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     SizeT          num_value__associates = 0;
     IterationT    *iteration_loop   = NULL;
     int            s_input_count    = 0;
-    bool           to_show          = true;
+    //bool           to_show          = true;
     cudaError_t    tretval          = cudaSuccess;
+    char           mssg[512];
 
-    printf("ThreadSlice::Input_Thread begin. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
     thread_slice -> status = ThreadSlice::Status::Wait;
@@ -329,72 +329,25 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             continue;
         }
 
-        iteration_loop = (IterationT*)enactor_slice -> input_iteration_loops;
+        //if ((enactor -> using_subq && 
+        //     thread_slice -> iteration 
+        //       != ((ThreadSlice_*)(enactor_slice -> subq__thread_slice)) -> iteration) ||
+        //    (!enactor -> using_subq &&
+        //     thread_slice -> iteration
+        //       != ((ThreadSlice_*)(enactor_slice -> fullq_thread_slice)) -> iteration))
+        //{
+        //    std::this_thread::sleep_for(std::chrono::microseconds(1));
+        //    continue;
+        //}
+
         iteration = thread_slice->iteration;
         s_queue   = &(input_queues[iteration%2]);
-        if (s_queue->Empty())
-        {
-            s_input_count = s_queue->GetInputCount();
-            if (to_show)
-            {
-                printf("InputThread: s_input_count = %d, target_input_count = %d, gpu_num = %d, iteration = %lld\n",
-                    s_input_count, target_input_count, gpu_num, iteration);
-                fflush(stdout);
-                to_show = false;
-            }
-
-            if (s_input_count == target_input_count)
-            {
-                if (enactor->using_subq)
-                {
-                    enactor_slice -> subq__target_count[iteration%2]
-                        = s_input_count + 1;
-                    printf("subq__target_count -> %d, gpu_num = %d, iteration = %lld\n",
-                        enactor_slice -> subq__target_count[iteration%2],
-                        gpu_num, iteration);
-                    fflush(stdout);
-                } else {
-                    enactor_slice -> fullq_target_count[iteration%2]
-                        = s_input_count + 1;
-                    printf("fullq_target_count -> %d, gpu_num = %d, iteration = %lld\n",
-                        enactor_slice -> fullq_target_count[iteration%2],
-                        gpu_num, iteration);
-                    fflush(stdout);
-                }
-                s_queue -> ResetCounts();
-                if (thread_slice -> retval = iteration_loop -> 
-                    Iteration_Change(thread_slice -> iteration))
-                    return;
-                printf("InputThread: iteration changed to %lld\n, gpu_num = %d\n",
-                    thread_slice -> iteration, gpu_num);
-                fflush(stdout);
-                to_show = true;
-            } else {
-                std::this_thread::sleep_for(std::chrono::microseconds(1));
-                continue;
-            }
-        }
-
-        to_show = true;
-        if ((enactor -> using_subq && 
-             thread_slice -> iteration 
-               != ((ThreadSlice_*)(enactor_slice -> subq__thread_slice)) -> iteration) ||
-            (!enactor -> using_subq &&
-             thread_slice -> iteration
-               != ((ThreadSlice_*)(enactor_slice -> fullq_thread_slice)) -> iteration))
-        {
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
-            continue;
-        }
-
+        //to_show = true;
         e_handle =  e_handles[0] + stream_selector;
         iteration_loop = ((IterationT*)enactor_slice -> input_iteration_loops) + stream_selector;
-        s_queue -> GetSize(s_size_occu, s_size_soli);
         t_queue = (enactor -> using_subq) ? &enactor_slice -> subq__queue :
             &enactor_slice -> fullq_queue;
         stream  = streams[stream_selector];
-        length = (s_queue->GetInputCount() == target_input_count) ? 
-                  s_size_occu : s_size_soli;
         num_vertex_associates = enactor -> num_vertex_associates;
         num_value__associates = enactor -> num_value__associates;
 
@@ -407,12 +360,42 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 e_handle -> keys_in, 
                 length, s_offset, stream,
                 num_vertex_associates, num_value__associates,
-                e_handle -> vertex_ins, e_handle -> value__ins);
+                e_handle -> vertex_ins, e_handle -> value__ins,
+                false, true, target_input_count);
         }
         if (tretval)
         {
             thread_slice -> retval = tretval;
             return;
+        }
+
+        if (length < enactor_slice -> input_min_length)
+        {
+            s_input_count = s_queue->GetInputCount();
+            if (enactor->using_subq)
+            {
+                enactor_slice -> subq__target_count[iteration%2]
+                    = s_input_count + 1;
+                sprintf(mssg, "subq__target_count -> %d",
+                    enactor_slice -> subq__target_count[iteration%2]);
+                thread_slice -> ShowDebugInfo(mssg);
+                enactor_slice -> subq__target_set  [iteration%2]
+                    = true;
+            } else {
+                enactor_slice -> fullq_target_count[iteration%2]
+                    = s_input_count + 1;
+                sprintf(mssg, "fullq_target_count -> %d",
+                    enactor_slice -> fullq_target_count[iteration%2]);
+                thread_slice -> ShowDebugInfo(mssg);
+                enactor_slice -> fullq_target_set  [iteration%2]
+                    = true;
+            }
+            s_queue -> ResetCounts();
+            if (thread_slice -> retval = iteration_loop -> 
+                Iteration_Change(thread_slice -> iteration))
+                return;
+            thread_slice -> ShowDebugInfo("iteration changed");
+            //to_show = true;
         }
 
         if (thread_slice -> retval = t_queue->Push_Addr(
@@ -429,15 +412,17 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 = enactor_slice -> value__associate_orgs[i];
         e_handles->Move(util::HOST, util::DEVICE, 1, stream_selector, stream);
 
-        printf("Input to %d, length = %d, stream = %p, vertex_associates = %d, %p, %p, value_associates = %d, %p, %p\n",
-            gpu_num, length, stream,
+        sprintf(mssg, "GotInput, length = %d, "
+            "vertex_associates = %d, %p, %p, value_associates = %d, %p, %p",
+            length,
             num_vertex_associates, 
             num_vertex_associates > 0 ? e_handle -> vertex_ins [0] : NULL, 
             num_vertex_associates > 0 ? e_handle -> vertex_orgs[0] : NULL,
             num_value__associates,
             num_value__associates > 0 ? e_handle -> value__ins [0] : NULL,
             num_value__associates > 0 ? e_handle -> value__orgs[0] : NULL);
-        fflush(stdout);
+        thread_slice -> ShowDebugInfo(mssg, -1, stream_selector); 
+        
         grid_size = length/256+1;
         if (grid_size>512) grid_size=512;
         iteration_loop -> num_vertex_associates = num_vertex_associates;
@@ -463,8 +448,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         if (stream_selector >= num_streams) stream_selector = 0;
     } // end of while
 
-    printf("ThreadSlice::Input_Thread end. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread end.");
 } // end of input thread
 
 static void SubQ__Thread(ThreadSlice_ *thread_slice)
@@ -514,9 +498,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     int            pre_stage          = 0;
     bool           show_wait          = true;
     cudaError_t    tretval            = cudaSuccess;
+    char           cmssg[512];
  
-    printf("ThreadSlice::Subq_Thread begin. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
     thread_slice -> status = ThreadSlice::Status::Wait;
@@ -528,8 +512,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
         {
             if (show_wait)
             {
-                printf("ThreadSlice::Subq_Thread wait. gpu_num = %d\n", gpu_num);
-                fflush(stdout);
+                thread_slice -> ShowDebugInfo("Waiting...");
                 show_wait = false;
             }
             std::this_thread::sleep_for(std::chrono::microseconds(1));
@@ -595,7 +578,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
             if (Enactor::DEBUG && to_shows[stream_num])
             {
                 mssg=" "; mssg[0]='0' + enactor_slice -> subq__wait_counter;
-                ShowDebugInfo<Enactor>(
+                gunrock::app::ShowDebugInfo<Enactor>(
                     gpu_num,
                     2,
                     thread_num,
@@ -615,6 +598,12 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 //printf("gpu_num = %d, iteration = %lld, subq__target_count = %d\n",
                 //    gpu_num, iteration, enactor_slice -> subq__target_count[iteration%2]);
                 //fflush(stdout);
+                if (!enactor_slice -> subq__target_set[iteration%2])
+                {
+                    std::this_thread::sleep_for(std::chrono::microseconds(1));
+                    to_shows[stream_num] = false;
+                    continue;
+                }
                 tretval = s_queue -> Pop_Addr(
                     enactor_slice -> subq__min_length, 
                     enactor_slice -> subq__max_length, 
@@ -643,22 +632,27 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                             = s_queue -> GetOutputCount();
                         if (s_lengths[stream_num] == 0)
                             enactor_slice -> fullq_target_count[iteration%2] --;
+                        sprintf(cmssg,"fullq_target[%lld] -> %d", iteration%2, 
+                            enactor_slice -> fullq_target_count[iteration%2]);
+                        thread_slice -> ShowDebugInfo(cmssg, -1, iteration);
                         enactor_slice -> fullq_target_set  [iteration%2]
                             = true;
-                        printf("gpu_num = %d, fullq_target[%d] -> %d\n",
-                            gpu_num, iteration%2, enactor_slice -> fullq_target_count[iteration%2]);
-                        fflush(stdout);
                         s_queue -> ResetCounts();
                     } else {
                         enactor_slice -> subq__target_count[(iteration+1)%2]
                             = s_queue -> GetOutputCount();
                         s_queue -> ResetOutputCount();
-                        s_queue -> ChangeInputCount(0 - enactor_slice -> subq__wait_counter); 
+                        s_queue -> ChangeInputCount(0 - enactor_slice -> subq__target_count[iteration%2]);
+                        sprintf(cmssg, "subq__target[%lld] -> %d", 
+                            (iteration+1)%2,
+                            enactor_slice -> subq__target_count[(iteration+1)%2]);
+                        thread_slice -> ShowDebugInfo(cmssg, -1, iteration);
+                        enactor_slice -> subq__target_set[(iteration+1)%2]
+                            = true;
                     }
+                    enactor_slice -> subq__target_set[iteration%2] = false;
                     iteration_loop -> Iteration_Change(thread_slice -> iteration);
-                    printf("SubQThread: Iteration change to %lld, gpu_num = %d\n",
-                        thread_slice -> iteration, gpu_num);
-                    fflush(stdout);
+                    thread_slice -> ShowDebugInfo("Iteration change");
                     if (s_lengths[stream_num] == 0) continue;
                 }
 
@@ -755,11 +749,10 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
             case 3: // Accumulate
                 enactor_slice -> subq__wait_counter++;
-                printf("Accumulate count = %d, target = %d, gpu_num = %d, iteration = %lld\n", 
+                sprintf(cmssg, "Accumulate count = %d, target = %d", 
                     enactor_slice -> subq__wait_counter, 
-                    enactor_slice -> subq__target_count[iteration%2],
-                    gpu_num, stream_iterations[stream_num]);
-                fflush(stdout);
+                    enactor_slice -> subq__target_count[iteration%2]);
+                thread_slice -> ShowDebugInfo(cmssg, -1, stream_iterations[stream_num]);
                 if (enactor_slice -> subq__wait_counter == 
                     enactor_slice -> subq__target_count[iteration%2])
                 {
@@ -786,8 +779,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
         } // end of for stream_num   
     } // end of while
 
-    printf("ThreadSlice::SubQ_Thread end. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread end.");
 } // end of subq thread
 
 static void FullQ_Thread(ThreadSlice_ *thread_slice)
@@ -832,9 +824,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     VertexId      *t_vertex           = NULL;
     bool           s_target_set       = false;
     cudaError_t    tretval            = cudaSuccess;
+    char           cmssg[512];
 
-    printf("ThreadSlice::FullQ_Thread begin. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
         return;
     thread_slice -> status = ThreadSlice::Status::Wait;
@@ -853,17 +845,18 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         {
             if (s_target_set)
             {
-                printf("ThreadSlice::FullQ_Thread wait. gpu_num = %d, iteration = %lld, input_count = %d, target_count = %d\n", 
-                    gpu_num, iteration, s_input_count, s_target_count);
-                fflush(stdout);
+                sprintf(cmssg, "Waiting. input_count = %d, target_count = %d", 
+                    s_input_count, s_target_count);
+                thread_slice -> ShowDebugInfo(cmssg);
             }
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;
         }
 
-        printf("ThreadSlice::FullQ_Thread got job. gpu_num = %d, input_count = %d, target_count = %d\n", gpu_num, s_input_count, s_target_count);
-        fflush(stdout);
-        enactor_slice -> fullq_target_set [(iteration+1)%2] = false;
+        sprintf(cmssg, "Got job. input_count = %d, target_count = %d", 
+            s_input_count, s_target_count);
+        thread_slice -> ShowDebugInfo(cmssg);
+        enactor_slice -> fullq_target_set [iteration%2] = false;
 
         if (num_streams >0 && enactor -> using_fullq)
         {
@@ -921,7 +914,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                 stages[stream_num] = 0;
                 if (Enactor::DEBUG) {
                     mssg = "";
-                    ShowDebugInfo<Enactor>(
+                    gunrock::app::ShowDebugInfo<Enactor>(
                         gpu_num,
                         3,
                         thread_num,
@@ -993,12 +986,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                         gpu_num, iteration, stream_num, false)) return; 
                 } 
             } // end of if (queue_length != 0)
-            if (Enactor::DEBUG) 
-            {
-                printf("%d\t %lld\t \t Fullqueue finished. Queue_Length= %d\n",
-                    gpu_num, iteration, frontier_attribute->queue_length);
-                fflush(stdout);
-            }
+            sprintf(cmssg, "Fullqueue finished. Queue_Length = %d",
+                frontier_attribute->queue_length);
+            thread_slice -> ShowDebugInfo(cmssg);
         } // end of if (has_fullq)
 
         if (enactor -> using_fullq)
@@ -1101,8 +1091,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         iteration_loop -> Iteration_Change(thread_slice -> iteration);
     } // end of while
 
-    printf("ThreadSlice::FullQ_Thread end. gpu_num = %d\n", gpu_num);
-    fflush(stdout);
+    thread_slice -> ShowDebugInfo("Thread end.");
 } // end of fullq thread
 
 }; // end of ThreadSlice

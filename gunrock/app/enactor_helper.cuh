@@ -172,8 +172,9 @@ cudaError_t PushNeibor(
         request -> gpu_num, request -> peer, s_stream, event, length, iteration);
     fflush(stdout);
 
-    if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
-        "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
+    if (length > 0)
+        if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
+            "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
 
     //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
     //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
@@ -182,30 +183,37 @@ cudaError_t PushNeibor(
         num_vertex_associates, num_value__associates, 
         t_vertex_associates, t_value__associates, true)) return retval;
 
-    if (retval = util::GRError(cudaMemcpyAsync(
-        t_vertices, s_vertices, sizeof(VertexId) * length,
-        cudaMemcpyDefault, s_stream),
-        "cudaMemcpyAsync vertices failed", __FILE__, __LINE__)) return retval;
-
-    for (SizeT i=0; i<num_vertex_associates; i++)
+    if (length > 0)
     {
         if (retval = util::GRError(cudaMemcpyAsync(
-            t_vertex_associates[i], s_vertex_associates[i], sizeof(VertexId) * length,
+            t_vertices, s_vertices, sizeof(VertexId) * length,
             cudaMemcpyDefault, s_stream),
-            "cudaMemcpyAsync vertex_associates failed", __FILE__, __LINE__)) return retval;
-    }
+            "cudaMemcpyAsync vertices failed", __FILE__, __LINE__)) return retval;
 
-    for (SizeT i=0; i<num_value__associates; i++)
-    {
-        if (retval = util::GRError(cudaMemcpyAsync(
-            t_value__associates[i], s_value__associates[i], sizeof(VertexId) * length,
-            cudaMemcpyDefault, s_stream),
-            "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
-    }
+        for (SizeT i=0; i<num_vertex_associates; i++)
+        {
+            if (retval = util::GRError(cudaMemcpyAsync(
+                t_vertex_associates[i], s_vertex_associates[i], sizeof(VertexId) * length,
+                cudaMemcpyDefault, s_stream),
+                "cudaMemcpyAsync vertex_associates failed", __FILE__, __LINE__)) return retval;
+        }
 
-    if (retval = s_queue->EventSet(0, s_offset, length, s_stream)) return retval;
-    if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
-    if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true)) return retval;
+        for (SizeT i=0; i<num_value__associates; i++)
+        {
+            if (retval = util::GRError(cudaMemcpyAsync(
+                t_value__associates[i], s_value__associates[i], sizeof(VertexId) * length,
+                cudaMemcpyDefault, s_stream),
+                "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
+        }
+
+        if (retval = s_queue->EventSet(0, s_offset, length, s_stream)) return retval;
+        if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
+        if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true)) return retval;
+    } else {
+        if (retval = s_queue->EventFinish(0, s_offset, length, s_stream)) return retval;
+        if (retval = s_queue->EventFinish(1, s_offset, length, s_stream)) return retval;
+        if (retval = t_queue->EventFinish(0, t_offset, length, t_stream)) return retval;
+    }
     return retval;
 }
 

@@ -87,6 +87,7 @@ struct EnactorSlice
                           subq__work_progresses   ;
     void                 *subq__iteration_loops   ;
     SizeT                 subq__target_count   [2];
+    bool                  subq__target_set     [2];
     void                 *subq__thread_slice      ;
     SizeT                 subq__min_length        ;
     SizeT                 subq__max_length        ;
@@ -609,7 +610,9 @@ struct EnactorSlice
         {
             subq__wait_counter = 0;
             subq__target_count[0] = 1; //util::MaxValue<SizeT>();
+            subq__target_set  [0] = true;
             subq__target_count[1] = util::MaxValue<SizeT>();
+            subq__target_set  [1] = false;
 
             SizeT target_capacity = graph_slice->nodes * subq__factor;
             if (retval = subq__queue.Init(target_capacity, util::DEVICE, 10,
