@@ -169,7 +169,7 @@ struct BFSIteration : public IterationBase <
         work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
         if (retval = cudaStreamSynchronize(stream)) return retval;
         printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
-        util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
+        //util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
         //return retval;
  
         // Filter

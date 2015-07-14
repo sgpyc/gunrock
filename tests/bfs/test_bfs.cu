@@ -577,12 +577,16 @@ template <
     bool        MARK_PREDECESSORS>
 void RunTests_enable_idempotence(Test_Parameter *parameter)
 {
-    if (parameter->enable_idempotence) RunTests
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
-        true > (parameter);
-   else RunTests
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS,
-        false> (parameter);
+    if (parameter->enable_idempotence) 
+    {    
+        //RunTests
+        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
+        //    true > (parameter);
+    } else {
+        RunTests
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS,
+            false> (parameter);
+    }
 }
 
 template <
@@ -594,12 +598,16 @@ template <
     bool        SIZE_CHECK>
 void RunTests_mark_predecessors(Test_Parameter *parameter)
 {
-    if (parameter->mark_predecessors) RunTests_enable_idempotence
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
-        true > (parameter);
-   else RunTests_enable_idempotence
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, 
-        false> (parameter);
+    if (parameter->mark_predecessors) 
+    {
+        //RunTests_enable_idempotence
+        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
+        //    true > (parameter);
+    } else {
+        RunTests_enable_idempotence
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, 
+            false> (parameter);
+    }
 }
 
 template <
@@ -610,12 +618,16 @@ template <
     bool          DEBUG>
 void RunTests_size_check(Test_Parameter *parameter)
 {
-    if (parameter->size_check) RunTests_mark_predecessors
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
-        true > (parameter);
-   else RunTests_mark_predecessors
-        <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
-        false> (parameter);
+    if (parameter->size_check) 
+    {
+        RunTests_mark_predecessors
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
+            true > (parameter);
+    } else { 
+        //RunTests_mark_predecessors
+        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
+        //    false> (parameter);
+    }
 }
 
 template <
@@ -625,12 +637,16 @@ template <
     bool        INSTRUMENT>
 void RunTests_debug(Test_Parameter *parameter)
 {
-    if (parameter->debug) RunTests_size_check
-        <VertexId, SizeT, Value, INSTRUMENT, 
-        true > (parameter);
-    else RunTests_size_check
-        <VertexId, SizeT, Value, INSTRUMENT, 
-        false> (parameter);
+    if (parameter->debug) 
+    {
+        RunTests_size_check
+            <VertexId, SizeT, Value, INSTRUMENT, 
+            true > (parameter);
+    } else {
+        //RunTests_size_check
+        //    <VertexId, SizeT, Value, INSTRUMENT, 
+        //    false> (parameter);
+    }
 }
 
 template <

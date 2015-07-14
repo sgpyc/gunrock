@@ -92,6 +92,7 @@ struct EnactorSlice
     SizeT                 subq__max_length        ;
     Array<SizeT>          subq__s_lengths         ;
     Array<SizeT>          subq__s_offsets         ;
+    Array<long long>      subq__iterations        ;
 
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
@@ -275,6 +276,7 @@ struct EnactorSlice
             if (retval = subq__frontiers   .Allocate(num_subq__streams)) return retval;
             if (retval = subq__s_lengths   .Allocate(num_subq__streams)) return retval;
             if (retval = subq__s_offsets   .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__iterations  .Allocate(num_subq__streams)) return retval;
             if (retval = subq__frontier_attributes.Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             if (retval = subq__enactor_statses    .Init(num_subq__streams, 
@@ -314,6 +316,8 @@ struct EnactorSlice
         this->num_fullq_stream = num_fullq_stream;
         if (num_fullq_stream != 0)
         {
+            fullq_target_count[0] = util::MaxValue<int>();
+            fullq_target_count[1] = util::MaxValue<int>();
             fullq_target_set[0] = false;
             fullq_target_set[1] = false;   
             if (retval = fullq_stream      .Allocate(num_fullq_stream)) return retval;
