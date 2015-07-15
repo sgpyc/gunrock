@@ -318,7 +318,10 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
-        input_count = count;
+        input_count += count;
+        printf("%s @ %d : input_count -> %d\n",
+            name.c_str(), gpu_idx, input_count);
+        fflush(stdout);
         return Combined_Return(retval, in_critical);
     }
 
@@ -326,7 +329,10 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
-        output_count = count;
+        output_count += count;
+        printf("%s @ %d : output_count -> %d\n",
+            name.c_str(), gpu_idx, output_count);
+        fflush(stdout);
         return Combined_Return(retval, in_critical);
     }
 
@@ -335,6 +341,9 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         input_count = 0;
+        printf("%s @ %d : input_count -> 0\n",
+            name.c_str(), gpu_idx);
+        fflush(stdout);
         return Combined_Return(retval, in_critical);
     }
 
@@ -343,6 +352,9 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         output_count = 0;
+        printf("%s @ %d : output_count -> 0\n",
+            name.c_str(), gpu_idx);
+        fflush(stdout);
         return Combined_Return(retval, in_critical);
     }
 
@@ -374,6 +386,9 @@ public:
             empty_gpu_events.pop_front();
         for (int i=0; i<num_events; i++)
             empty_gpu_events.push_back(gpu_events[i]);
+        printf("%s @ %d : input_count -> 0, output_count -> 0\n",
+            name.c_str(), gpu_idx);
+        fflush(stdout);
         return Combined_Return(retval, in_critical);
     }
 
@@ -729,6 +744,7 @@ public:
             }
         }
 
+        input_count ++;
         if (head_a + length > capacity)
         { // splict
             offsets[0] = head_a;
@@ -753,7 +769,6 @@ public:
             if (head_a >= capacity) head_a -= capacity;
         }
         size_occu += length;
-        input_count ++;
 
         ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
         return Combined_Return(retval, in_critical);
@@ -824,6 +839,8 @@ public:
             }
         }
 
+        input_count ++;
+        output_count ++;
         if (head_a + length > capacity)
         { // splict
             offsets[0] = head_a;
@@ -856,8 +873,6 @@ public:
         }
         size_occu += length;
         size_soli -= length;
-        input_count ++;
-        output_count ++;
 
         ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
         ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
@@ -931,6 +946,7 @@ public:
             fflush(stdout);
         }
 
+        output_count ++;
         length = size_soli < max_length ? size_soli : max_length;
         if (tail_a + length > capacity)
         { // splict
@@ -956,7 +972,6 @@ public:
             if (tail_a == capacity) tail_a = 0;
         }
         size_soli -= length;
-        output_count ++;
 
         ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
         return Combined_Return(retval, in_critical);
@@ -1139,8 +1154,10 @@ public:
     void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
         if (!in_critical) queue_mutex.lock();
-        printf("%s @ %d : Event %d,%d,%d starts\n", 
-            name.c_str(), gpu_idx, direction, offset, length);
+        printf("%s @ %d : Event %d,%d,%d starts, input_count = %d, "
+            "output_count = %d\n", 
+            name.c_str(), gpu_idx, direction, offset, length,
+            input_count, output_count);
         fflush(stdout);
         events[direction].push_back(CqEvent(offset, length));
         if (!in_critical) queue_mutex.unlock();
@@ -1223,9 +1240,11 @@ public:
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
-                    printf("%s @ %d : Event %d,%d,%d sets\n", 
+                    printf("%s @ %d : Event %d,%d,%d sets, input_count = %d,"
+                        " output_count = %d\n", 
                         name.c_str(), gpu_idx, direction, 
-                        offsets[i], lengths[i]);
+                        offsets[i], lengths[i],
+                        input_count, output_count);
                     fflush(stdout);
                     (*it).event = event;
                     (*it).status = CqEvent::Assigned;
@@ -1306,8 +1325,10 @@ public:
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
-                    printf("%s @ %d : Event %d,%d,%d finishes\n", 
-                        name.c_str(), gpu_idx, direction, offset, length);
+                    printf("%s @ %d : Event %d,%d,%d done. input_count = %d,"
+                        " output_count = %d\n", 
+                        name.c_str(), gpu_idx, direction, offset, length,
+                        input_count, output_count);
                     fflush(stdout);
                     (*it).status = CqEvent::Finished;
                     break;
@@ -1343,9 +1364,11 @@ public:
                 if (retval == cudaSuccess)
                 {
                     (*it).status = CqEvent::Finished;
-                    printf("%s @ %d : Event %d,%d,%d finishes\n", 
+                    printf("%s @ %d : Event %d,%d,%d finishes, "
+                        "input_count = %d, output_count = %d\n", 
                         name.c_str(), gpu_idx, direction, 
-                        (*it).offset, (*it).length);
+                        (*it).offset, (*it).length, 
+                        input_count, output_count);
                     fflush(stdout);
                     empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {

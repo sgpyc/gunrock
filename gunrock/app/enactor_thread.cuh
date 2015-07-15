@@ -376,7 +376,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             {
                 enactor_slice -> subq__target_count[iteration%2]
                     = s_input_count + 1;
-                sprintf(mssg, "subq__target_count -> %d",
+                sprintf(mssg, "subq__target_count[%lld] -> %d",
+                    iteration%2,
                     enactor_slice -> subq__target_count[iteration%2]);
                 thread_slice -> ShowDebugInfo(mssg);
                 enactor_slice -> subq__target_set  [iteration%2]
@@ -384,7 +385,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             } else {
                 enactor_slice -> fullq_target_count[iteration%2]
                     = s_input_count + 1;
-                sprintf(mssg, "fullq_target_count -> %d",
+                sprintf(mssg, "fullq_target_count[%lld] -> %d",
+                    iteration%2,
                     enactor_slice -> fullq_target_count[iteration%2]);
                 thread_slice -> ShowDebugInfo(mssg);
                 enactor_slice -> fullq_target_set  [iteration%2]
@@ -421,7 +423,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             num_value__associates,
             num_value__associates > 0 ? e_handle -> value__ins [0] : NULL,
             num_value__associates > 0 ? e_handle -> value__orgs[0] : NULL);
-        thread_slice -> ShowDebugInfo(mssg, -1, stream_selector); 
+        thread_slice -> ShowDebugInfo(mssg, iteration, stream_selector); 
         
         grid_size = length/256+1;
         if (grid_size>512) grid_size=512;
@@ -637,7 +639,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         thread_slice -> ShowDebugInfo(cmssg, -1, iteration);
                         enactor_slice -> fullq_target_set  [iteration%2]
                             = true;
-                        s_queue -> ResetCounts();
+                        s_queue -> ResetOutputCount();
+                        s_queue -> ChangeInputCount(0 - enactor_slice -> subq__target_count[iteration%2]);
                     } else {
                         enactor_slice -> subq__target_count[(iteration+1)%2]
                             = s_queue -> GetOutputCount();
