@@ -375,7 +375,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             if (enactor->using_subq)
             {
                 enactor_slice -> subq__target_count[iteration%2]
-                    = s_input_count + 1;
+                    = s_input_count;
+                if (length != 0)
+                    enactor_slice -> subq__target_count[iteration%2] ++;
                 sprintf(mssg, "subq__target_count[%lld] -> %d",
                     iteration%2,
                     enactor_slice -> subq__target_count[iteration%2]);
@@ -384,7 +386,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                     = true;
             } else {
                 enactor_slice -> fullq_target_count[iteration%2]
-                    = s_input_count + 1;
+                    = s_input_count;
+                if (length != 0)
+                    enactor_slice -> fullq_target_count[iteration%2] ++;
                 sprintf(mssg, "fullq_target_count[%lld] -> %d",
                     iteration%2,
                     enactor_slice -> fullq_target_count[iteration%2]);
@@ -398,6 +402,13 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 return;
             thread_slice -> ShowDebugInfo("iteration changed");
             //to_show = true;
+            if (length == 0) 
+            {
+                if (thread_slice -> retval = 
+                    s_queue -> EventFinish(1, s_offset, length))
+                    return;
+                continue;
+            }
         }
 
         if (thread_slice -> retval = t_queue->Push_Addr(
@@ -860,6 +871,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             s_input_count, s_target_count);
         thread_slice -> ShowDebugInfo(cmssg);
         enactor_slice -> fullq_target_set [iteration%2] = false;
+        s_queue -> ResetCounts();
 
         if (num_streams >0 && enactor -> using_fullq)
         {

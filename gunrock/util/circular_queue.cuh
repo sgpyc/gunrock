@@ -87,6 +87,7 @@ private:
     Array1D<SizeT, VertexId> temp_array;
     Array1D<SizeT, VertexId> temp_vertex_associates;
     Array1D<SizeT, Value   > temp_value__associates;
+    char         mssg[512];
 
 public:
     CircularQueue() :
@@ -319,9 +320,8 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         input_count += count;
-        printf("%s @ %d : input_count -> %d\n",
-            name.c_str(), gpu_idx, input_count);
-        fflush(stdout);
+        sprintf(mssg, "input_count -> %d", input_count);
+        ShowDebugInfo_(mssg);
         return Combined_Return(retval, in_critical);
     }
 
@@ -330,9 +330,8 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         output_count += count;
-        printf("%s @ %d : output_count -> %d\n",
-            name.c_str(), gpu_idx, output_count);
-        fflush(stdout);
+        sprintf(mssg, "output_count -> %d", output_count);
+        ShowDebugInfo_(mssg);
         return Combined_Return(retval, in_critical);
     }
 
@@ -341,9 +340,7 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         input_count = 0;
-        printf("%s @ %d : input_count -> 0\n",
-            name.c_str(), gpu_idx);
-        fflush(stdout);
+        ShowDebugInfo_("input_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -352,9 +349,7 @@ public:
         cudaError_t retval = cudaSuccess;
         if (!in_critical) queue_mutex.lock();
         output_count = 0;
-        printf("%s @ %d : output_count -> 0\n",
-            name.c_str(), gpu_idx);
-        fflush(stdout);
+        ShowDebugInfo_("output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -386,9 +381,7 @@ public:
             empty_gpu_events.pop_front();
         for (int i=0; i<num_events; i++)
             empty_gpu_events.push_back(gpu_events[i]);
-        printf("%s @ %d : input_count -> 0, output_count -> 0\n",
-            name.c_str(), gpu_idx);
-        fflush(stdout);
+        ShowDebugInfo_("input_count -> 0, output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -412,14 +405,23 @@ public:
         SizeT       dsize,
         Value*      value = NULL)
     {
-        /*printf("%s @ %d : %s\t %s\t value = %d\t %d\t ~ %d\t "
+        char mssg[512];
+        sprintf(mssg, "%s\t %s\t value = %d\t %d\t ~ %d\t "
             "dsize = %d\t size_occu = %d\t size_soli = %d\t "
-            "head_a = %d\t head_b = %d\t tail_a = %d\t tail_b = %d\n",
-            name.c_str(), gpu_idx, function_name.c_str(), 
-            direction == 0? "->" : "<-",
+            "head_a = %d\t head_b = %d\t tail_a = %d\t tail_b = %d\t "
+            "input_count = %d\t output_count = %d",
+            function_name.c_str(), direction == 0? "->" : "<-",
             value == NULL ? -1 : value[0], start, end, dsize, size_occu, size_soli,
-            head_a, head_b, tail_a, tail_b);
-        fflush(stdout);*/
+            head_a, head_b, tail_a, tail_b,
+            input_count, output_count);
+        ShowDebugInfo_(mssg);
+    }
+
+    void ShowDebugInfo_(
+        const char* mssg)
+    {
+        printf("%s @ %d : %s\n", name.c_str(), gpu_idx, mssg);
+        fflush(stdout);
     }
 
     cudaError_t Push(
@@ -487,7 +489,7 @@ public:
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
         //SizeT sum        = 0;
-        if (retval = AddSize(length, offsets, lengths, set_gpu)) return retval;
+        if (retval = AddSize(length, offsets, lengths, false, false, set_gpu)) return retval;
         offset = offsets[0];
 
         if (lengths[1] == 0)
@@ -615,15 +617,15 @@ public:
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
+        char  mssg[512];
 
         //printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
         if (retval = ReduceSize(min_length, max_length, offsets, lengths, 
             false, false, allow_smaller, target_input)) return retval;
         offset = offsets[0];
         length = lengths[0] + lengths[1];
-        printf("%s @ %d : Poped, length = %d, offset = %d\n", 
-            name.c_str(), gpu_idx, length, offset);
-        fflush(stdout);
+        sprintf(mssg, "Poped, length = %d, offset = %d", length, offset);
+        ShowDebugInfo_(mssg);
 
         if (lengths[1] == 0)
         { // single chunk
@@ -684,7 +686,8 @@ public:
         SizeT *offsets, 
         SizeT *lengths, 
         bool   in_critical = false,
-        bool   single_chunk = false)
+        bool   single_chunk = false,
+        bool   set_gpu = false)
     {
         cudaError_t retval = cudaSuccess;
 
@@ -713,7 +716,7 @@ public:
         { // queue full
             if (AUTO_RESIZE)
             {
-                if (retval = EnsureCapacity(length + size_occu, true)) 
+                if (retval = EnsureCapacity(length + size_occu, true, set_gpu)) 
                     return Combined_Return(retval, in_critical);
             } else {
                 if (length > capacity)
@@ -939,11 +942,10 @@ public:
         if (size_soli < min_length && allow_smaller && 
             target_input <= input_count && size_soli == size_occu)
         {
-            printf("%s @ %d : Reduce last: size_soli = %d, size_occu = %d,"
-                " target_input = %d, input_count = %d\n",
-                name.c_str(), gpu_idx, size_soli, size_occu, 
-                target_input, input_count);
-            fflush(stdout);
+            sprintf(mssg, "Reduce last: size_soli = %d, size_occu = %d,"
+                " target_input = %d, input_count = %d",
+                size_soli, size_occu, target_input, input_count);
+            ShowDebugInfo_(mssg);
         }
 
         output_count ++;
@@ -1038,9 +1040,9 @@ public:
         }
 
         if (!in_critical) queue_mutex.lock();
-        printf("%s @ %d : capacity -> %d\n", 
-            name.c_str(), gpu_idx, capacity_);
-        fflush(stdout);
+        sprintf(mssg, "capacity -> %d", capacity_);
+        ShowDebugInfo_(mssg);
+
         if (capacity_ > capacity)
         {
             wait_resize = 1;
@@ -1142,23 +1144,28 @@ public:
             head_a = (tail_a + size_occu) % capacity;
             head_b = head_a;
             temp_array.Release();
-            printf("%s @ %d : EnsureCapacity: capacity -> %d, head_a -> %d\n",
-                name.c_str(), gpu_idx, capacity, head_a);
-            fflush(stdout);
+            sprintf(mssg, "EnsureCapacity: capacity -> %d, head_a -> %d",
+                capacity, head_a);
+            ShowDebugInfo_(mssg);
             wait_resize = 0;
         }
         if (!in_critical) queue_mutex.unlock();
+        if (allocated == DEVICE && set_gpu)
+        {
+            if (retval = SetDevice(org_gpu))
+                return retval;
+        }
         return retval;
     }
 
     void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
         if (!in_critical) queue_mutex.lock();
-        printf("%s @ %d : Event %d,%d,%d starts, input_count = %d, "
-            "output_count = %d\n", 
-            name.c_str(), gpu_idx, direction, offset, length,
+        sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
+            "output_count = %d", 
+            direction, offset, length,
             input_count, output_count);
-        fflush(stdout);
+        ShowDebugInfo_(mssg);
         events[direction].push_back(CqEvent(offset, length));
         if (!in_critical) queue_mutex.unlock();
     }
@@ -1240,12 +1247,11 @@ public:
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
-                    printf("%s @ %d : Event %d,%d,%d sets, input_count = %d,"
-                        " output_count = %d\n", 
-                        name.c_str(), gpu_idx, direction, 
-                        offsets[i], lengths[i],
+                    sprintf(mssg, "Event %d,%d,%d sets, input_count = %d,"
+                        " output_count = %d", 
+                        direction, offsets[i], lengths[i],
                         input_count, output_count);
-                    fflush(stdout);
+                    ShowDebugInfo_(mssg);
                     (*it).event = event;
                     (*it).status = CqEvent::Assigned;
                     break;
@@ -1254,10 +1260,9 @@ public:
 
             if (it == events[direction].end())
             {
-                printf("%s @ %d : EventSet %d,%d,%d can not be found\n", 
-                    name.c_str(), gpu_idx, direction, 
-                    offsets[i], lengths[i]);
-                fflush(stdout);
+                sprintf(mssg, "EventSet %d,%d,%d can not be found", 
+                    direction, offsets[i], lengths[i]);
+                ShowDebugInfo_(mssg);
             }
         }
         EventCheck(direction, true);
@@ -1325,20 +1330,20 @@ public:
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
-                    printf("%s @ %d : Event %d,%d,%d done. input_count = %d,"
-                        " output_count = %d\n", 
-                        name.c_str(), gpu_idx, direction, offset, length,
+                    sprintf(mssg, "Event %d,%d,%d done. input_count = %d,"
+                        " output_count = %d", 
+                        direction, offset, length,
                         input_count, output_count);
-                    fflush(stdout);
+                    ShowDebugInfo_(mssg);
                     (*it).status = CqEvent::Finished;
                     break;
                 }
             }
             if (it == events[direction].end())
             {
-                printf("%s @ %d : EventFinish %d,%d,%d can not be found\n", 
-                    name.c_str(), gpu_idx, direction, offset, length);
-                fflush(stdout);
+                sprintf(mssg, "EventFinish %d,%d,%d can not be found", 
+                    direction, offset, length);
+                ShowDebugInfo_(mssg);
             }
         }
         SizeCheck(direction, true);
@@ -1364,12 +1369,11 @@ public:
                 if (retval == cudaSuccess)
                 {
                     (*it).status = CqEvent::Finished;
-                    printf("%s @ %d : Event %d,%d,%d finishes, "
-                        "input_count = %d, output_count = %d\n", 
-                        name.c_str(), gpu_idx, direction, 
-                        (*it).offset, (*it).length, 
+                    sprintf(mssg, "Event %d,%d,%d finishes, "
+                        "input_count = %d, output_count = %d", 
+                        direction, (*it).offset, (*it).length, 
                         input_count, output_count);
-                    fflush(stdout);
+                    ShowDebugInfo_(mssg);
                     empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {
                     if (!in_critical) queue_mutex.unlock();
