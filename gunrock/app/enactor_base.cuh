@@ -622,6 +622,9 @@ protected:
         for (int i=0; i<num_threads; i++)
         {
             thread_slices[i].status = ThreadSlice::Status::ToKill;
+        }
+        for (int i=0; i<num_threads; i++)
+        {
             threads[i].join();
         }
 

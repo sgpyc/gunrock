@@ -27,6 +27,8 @@
 namespace gunrock {
 namespace util {
 
+#define CQ_DEBUG false
+
 template <
     typename VertexId,
     typename SizeT,
@@ -88,6 +90,7 @@ private:
     Array1D<SizeT, VertexId> temp_vertex_associates;
     Array1D<SizeT, Value   > temp_value__associates;
     char         mssg[512];
+    int          lock_counter;
 
 public:
     CircularQueue() :
@@ -109,7 +112,8 @@ public:
         tail_b    (0   ),
         gpu_events(NULL),
         num_events(0   ),
-        wait_resize(0  )
+        wait_resize(0  ),
+        lock_counter(0 )
         //temp_capacity(0)
     {
         SetName("cq");
@@ -118,6 +122,34 @@ public:
     ~CircularQueue()
     {
         Release();
+    }
+
+    __inline__ void Lock(bool in_critical = false)
+    {
+        if (in_critical) return;
+        queue_mutex.lock();
+        lock_counter ++;
+        if (lock_counter != 1)
+        {
+            sprintf(mssg, "Error @ Lock: lock_counter = %d", lock_counter);
+            ShowDebugInfo_(mssg);
+        //} else {
+        //    ShowDebugInfo_("Locked");
+        }
+    }
+
+    __inline__ void Unlock(bool in_critical = false)
+    {
+        if (in_critical) return;
+        lock_counter --;
+        if (lock_counter != 0)
+        {
+            sprintf(mssg, "Error @ Unlock: lock_counter = %d", lock_counter);
+            ShowDebugInfo_(mssg);
+        //} else {
+        //    ShowDebugInfo_("Unlocking");
+        }
+        queue_mutex.unlock();
     }
 
     void SetName(std::string name)
@@ -249,10 +281,10 @@ public:
     {
         if (size_soli != size_occu)
         {
-            if (!in_critical) queue_mutex.lock();
+            Lock(in_critical);
             EventCheck(0, true);
             EventCheck(1, true);
-            if (!in_critical) queue_mutex.unlock();
+            Unlock(in_critical);
         }
         size_soli = this->size_soli;
         size_occu = this->size_occu;
@@ -262,10 +294,10 @@ public:
     {
         if (size_soli != size_occu)
         {
-            if (!in_critical) queue_mutex.lock();
+            Lock(in_critical);
             EventCheck(0, true);
             EventCheck(1, true);
-            if (!in_critical) queue_mutex.unlock();
+            Unlock(in_critical);
         }
         return size_soli;
     }
@@ -274,10 +306,10 @@ public:
     {
         if (size_soli != size_occu)
         {
-            if (!in_critical) queue_mutex.lock();
+            Lock(in_critical);
             EventCheck(0, true);
             EventCheck(1, true);
-            if (!in_critical) queue_mutex.unlock();
+            Unlock(in_critical);
         }
         return size_occu;
     }
@@ -286,10 +318,10 @@ public:
     {
         if (size_soli != size_occu)
         {
-            if (!in_critical) queue_mutex.lock();
+            Lock(in_critical);
             EventCheck(0, true);
             EventCheck(1, true);
-            if (!in_critical) queue_mutex.unlock();
+            Unlock(in_critical);
         }
         if (size_soli != 0) return false;
         if (size_occu != 0) return false; 
@@ -319,45 +351,53 @@ public:
     cudaError_t ChangeInputCount(SizeT count, bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         input_count += count;
-        sprintf(mssg, "input_count -> %d", input_count);
-        ShowDebugInfo_(mssg);
+        if (CQ_DEBUG)
+        {
+            sprintf(mssg, "input_count -> %d", input_count);
+            ShowDebugInfo_(mssg);
+        }
         return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ChangeOutputCount(SizeT count, bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         output_count += count;
-        sprintf(mssg, "output_count -> %d", output_count);
-        ShowDebugInfo_(mssg);
+        if (CQ_DEBUG)
+        {
+            sprintf(mssg, "output_count -> %d", output_count);
+            ShowDebugInfo_(mssg);
+        }
         return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ResetInputCount(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         input_count = 0;
-        ShowDebugInfo_("input_count -> 0");
+        if (CQ_DEBUG)
+            ShowDebugInfo_("input_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ResetOutputCount(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         output_count = 0;
-        ShowDebugInfo_("output_count -> 0");
+        if (CQ_DEBUG)
+            ShowDebugInfo_("output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
     cudaError_t ResetCounts(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         if (retval = ResetInputCount(true)) 
             return Combined_Return(retval, in_critical);
         if (retval = ResetOutputCount(true))
@@ -368,7 +408,7 @@ public:
     cudaError_t Reset(bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
 
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
@@ -382,7 +422,8 @@ public:
             empty_gpu_events.pop_front();
         for (int i=0; i<num_events; i++)
             empty_gpu_events.push_back(gpu_events[i]);
-        ShowDebugInfo_("input_count -> 0, output_count -> 0");
+        if (CQ_DEBUG)
+            ShowDebugInfo_("input_count -> 0, output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -392,7 +433,7 @@ public:
         bool        set_gpu     = false,
         int         org_gpu     = 0)
     {
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
         if (retval == cudaSuccess && set_gpu)
             retval = util::SetDevice(org_gpu);
         return retval;
@@ -406,23 +447,29 @@ public:
         SizeT       dsize,
         Value*      value = NULL)
     {
-        char mssg[512];
-        sprintf(mssg, "%s\t %s\t value = %d\t %d\t ~ %d\t "
-            "dsize = %d\t size_occu = %d\t size_soli = %d\t "
-            "head_a = %d\t head_b = %d\t tail_a = %d\t tail_b = %d\t "
-            "input_count = %d\t output_count = %d",
-            function_name.c_str(), direction == 0? "->" : "<-",
-            value == NULL ? -1 : value[0], start, end, dsize, size_occu, size_soli,
-            head_a, head_b, tail_a, tail_b,
-            input_count, output_count);
-        ShowDebugInfo_(mssg);
+        if (!CQ_DEBUG) return;
+        else {
+            char mssg[512];
+            sprintf(mssg, "%s\t %s\t value = %d\t %d\t ~ %d\t "
+                "dsize = %d\t size_occu = %d\t size_soli = %d\t "
+                "head_a = %d\t head_b = %d\t tail_a = %d\t tail_b = %d\t "
+                "input_count = %d\t output_count = %d",
+                function_name.c_str(), direction == 0? "->" : "<-",
+                value == NULL ? -1 : value[0], start, end, dsize, size_occu, size_soli,
+                head_a, head_b, tail_a, tail_b,
+                input_count, output_count);
+            ShowDebugInfo_(mssg);
+        }
     }
 
     void ShowDebugInfo_(
         const char* mssg)
     {
-        printf("%s @ %d : %s\n", name.c_str(), gpu_idx, mssg);
-        fflush(stdout);
+        if (!CQ_DEBUG) return;
+        else {
+            printf("%s @ %d : %s\n", name.c_str(), gpu_idx, mssg);
+            fflush(stdout);
+        }
     }
 
     cudaError_t Push(
@@ -443,7 +490,8 @@ public:
         for (int i=0; i<2; i++)
         {
             if (lengths[i] == 0) continue;
-            ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
+            if (CQ_DEBUG)
+                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
             //if (lengths[i] != 0)
             //{
                 if (retval = this->array.Move_In(
@@ -573,7 +621,8 @@ public:
         for (int i=0; i<2; i++)
         {
             if (lengths[i] == 0) continue;
-            ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lengths[i], lengths[i]);
+            if (CQ_DEBUG)
+                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lengths[i], lengths[i]);
             if (retval = this->array.Move_Out(
                 allocated, allocated, array, 
                 lengths[i], sum, offsets[i], stream)) 
@@ -631,8 +680,11 @@ public:
             false, false, allow_smaller, target_input)) return retval;
         offset = offsets[0];
         length = lengths[0] + lengths[1];
-        sprintf(mssg, "Poped, length = %d, offset = %d", length, offset);
-        ShowDebugInfo_(mssg);
+        if (CQ_DEBUG)
+        {
+            sprintf(mssg, "Poped, length = %d, offset = %d", length, offset);
+            ShowDebugInfo_(mssg);
+        }
 
         if (lengths[1] == 0)
         { // single chunk
@@ -701,15 +753,15 @@ public:
         // in critical sectioin
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         bool past_wait = false;
         while (!past_wait)
         {
             if (wait_resize == 0) {past_wait = true; break;}
             else {
-                queue_mutex.unlock();
+                Unlock();
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
-                queue_mutex.lock();
+                Lock();
             }
         }
        
@@ -732,18 +784,18 @@ public:
                         (name + " oversize ").c_str(), __FILE__, __LINE__);
                     return Combined_Return(retval, in_critical);
                 } else {
-                    queue_mutex.unlock();
+                    Unlock();
                     bool got_space = false;
                     while (!got_space)
                     {
                         if (length + size_occu < capacity)
                         {
-                            queue_mutex.lock();
+                            Lock();
                             if (length + size_occu < capacity)
                             {
                                 got_space = true;
                             } else {
-                                queue_mutex.unlock();
+                                Unlock();
                             }
                         }
                         if (!got_space) {
@@ -780,7 +832,8 @@ public:
         }
         size_occu += length;
 
-        ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
+        if (CQ_DEBUG)
+            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
         return Combined_Return(retval, in_critical);
     }
 
@@ -796,15 +849,15 @@ public:
         // in critical sectioin
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         bool past_wait = false;
         while (!past_wait)
         {
             if (wait_resize == 0) {past_wait = true; break;}
             else {
-                queue_mutex.unlock();
+                Unlock();
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
-                queue_mutex.lock();
+                Lock();
             }
         }
        
@@ -827,18 +880,18 @@ public:
                         (name + " oversize ").c_str(), __FILE__, __LINE__);
                     return Combined_Return(retval, in_critical);
                 } else {
-                    queue_mutex.unlock();
+                    Unlock();
                     bool got_space = false;
                     while (!got_space)
                     {
                         if (length + size_occu < capacity)
                         {
-                            queue_mutex.lock();
+                            Lock();
                             if (length + size_occu < capacity)
                             {
                                 got_space = true;
                             } else {
-                                queue_mutex.unlock();
+                                Unlock();
                             }
                         }
                         if (!got_space) {
@@ -884,9 +937,11 @@ public:
         size_occu += length;
         size_soli -= length;
 
-        ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
-        ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
- 
+        if (CQ_DEBUG)
+        {
+            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
+            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
+        }
         return Combined_Return(retval, in_critical);
     }
 
@@ -905,7 +960,7 @@ public:
         // in critial section
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
 
         if (allocated == DEVICE)
         {
@@ -955,7 +1010,7 @@ public:
             return Combined_Return(retval, in_critical);
         }
 
-        if (size_soli < min_length && allow_smaller && 
+        if (CQ_DEBUG && size_soli < min_length && allow_smaller && 
             target_input <= input_count)
         {
             sprintf(mssg, "Reduce last: size_soli = %d, size_occu = %d,"
@@ -991,7 +1046,8 @@ public:
         }
         size_soli -= length;
 
-        ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
+        if (CQ_DEBUG)
+            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
         return Combined_Return(retval, in_critical);
     }
 
@@ -1055,22 +1111,25 @@ public:
             if (retval = SetDevice(gpu_idx)) return retval;
         }
 
-        if (!in_critical) queue_mutex.lock();
-        sprintf(mssg, "capacity -> %d", capacity_);
-        ShowDebugInfo_(mssg);
+        Lock(in_critical);
+        if (CQ_DEBUG)
+        {
+            sprintf(mssg, "capacity -> %d", capacity_);
+            ShowDebugInfo_(mssg);
+        }
 
         if (capacity_ > capacity)
         {
             wait_resize = 1;
             while ((!events[0].empty()) || (!events[1].empty()))
             {
-                queue_mutex.unlock(); 
+                Unlock();
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
-                queue_mutex.lock();
+                Lock();
                 for (int i=0; i<2; i++)
                 if (retval = EventCheck(i, true))
                 {
-                    queue_mutex.unlock();
+                    Unlock();
                     return retval;
                 }
             }
@@ -1160,12 +1219,15 @@ public:
             head_a = (tail_a + size_occu) % capacity;
             head_b = head_a;
             temp_array.Release();
-            sprintf(mssg, "EnsureCapacity: capacity -> %d, head_a -> %d",
-                capacity, head_a);
-            ShowDebugInfo_(mssg);
+            if (CQ_DEBUG)
+            {
+                sprintf(mssg, "EnsureCapacity: capacity -> %d, head_a -> %d",
+                    capacity, head_a);
+                ShowDebugInfo_(mssg);
+            }
             wait_resize = 0;
         }
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
         if (allocated == DEVICE && set_gpu)
         {
             if (retval = SetDevice(org_gpu))
@@ -1176,14 +1238,17 @@ public:
 
     void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
-        if (!in_critical) queue_mutex.lock();
-        sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
-            "output_count = %d", 
-            direction, offset, length,
-            input_count, output_count);
-        ShowDebugInfo_(mssg);
+        Lock(in_critical);
+        if (CQ_DEBUG)
+        {
+            sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
+                "output_count = %d", 
+                direction, offset, length,
+                input_count, output_count);
+            ShowDebugInfo_(mssg);
+        }
         events[direction].push_back(CqEvent(offset, length));
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
     }
 
     cudaError_t EventSet(
@@ -1233,7 +1298,7 @@ public:
             lengths[0] = length; lengths[1] = 0;
         //}
 
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
 
         int i=0;
         //for (int i=0; i<2; i++)
@@ -1246,14 +1311,14 @@ public:
                 {
                     retval = util::GRError(cudaErrorLaunchOutOfResources,
                         (name + " gpu_events oversize ").c_str(), __FILE__, __LINE__);
-                    if (!in_critical) queue_mutex.unlock();
+                    Unlock(in_critical);
                     return retval;    
                 }
                 event = empty_gpu_events.front();
                 empty_gpu_events.pop_front();
                 if (retval = cudaEventRecord(event, stream))
                 {
-                    if (!in_critical) queue_mutex.unlock();
+                    Unlock(in_critical);
                     return retval;
                 }
             //}
@@ -1264,18 +1329,21 @@ public:
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
-                    sprintf(mssg, "Event %d,%d,%d sets, input_count = %d,"
-                        " output_count = %d", 
-                        direction, offsets[i], lengths[i],
-                        input_count, output_count);
-                    ShowDebugInfo_(mssg);
+                    if (CQ_DEBUG)
+                    {
+                        sprintf(mssg, "Event %d,%d,%d sets, input_count = %d,"
+                            " output_count = %d", 
+                            direction, offsets[i], lengths[i],
+                            input_count, output_count);
+                        ShowDebugInfo_(mssg);
+                    }
                     (*it).event = event;
                     (*it).status = CqEvent::Assigned;
                     break;
                 }
             }
 
-            if (it == events[direction].end())
+            if (CQ_DEBUG && it == events[direction].end())
             {
                 sprintf(mssg, "EventSet %d,%d,%d can not be found", 
                     direction, offsets[i], lengths[i]);
@@ -1283,7 +1351,7 @@ public:
             }
         //}
         EventCheck(direction, true);
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
         return retval;
     }
 
@@ -1338,7 +1406,7 @@ public:
             offsets[1] = 0; lengths[1] = 0;
         //}
 
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
         int i=0;
         //for (int i=0; i<2; i++)
         //{
@@ -1349,16 +1417,19 @@ public:
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
                     if (direction == 0) input_count ++;
-                    sprintf(mssg, "Event %d,%d,%d done. input_count = %d,"
-                        " output_count = %d", 
-                        direction, offset, length,
-                        input_count, output_count);
-                    ShowDebugInfo_(mssg);
+                    if (CQ_DEBUG)
+                    {
+                        sprintf(mssg, "Event %d,%d,%d done. input_count = %d,"
+                            " output_count = %d", 
+                            direction, offset, length,
+                            input_count, output_count);
+                        ShowDebugInfo_(mssg);
+                    }
                     (*it).status = CqEvent::Finished;
                     break;
                 }
             }
-            if (it == events[direction].end())
+            if (CQ_DEBUG && it == events[direction].end())
             {
                 sprintf(mssg, "EventFinish %d,%d,%d can not be found", 
                     direction, offset, length);
@@ -1366,17 +1437,18 @@ public:
             }
         //}
         SizeCheck(direction, true);
-        ShowDebugInfo("EventF", direction, offset, -1, length);
-        if (!in_critical) queue_mutex.unlock();
+        if (CQ_DEBUG)
+            ShowDebugInfo("EventF", direction, offset, -1, length);
+        Unlock(in_critical);
         return retval;
     }
 
     cudaError_t EventCheck(int direction, bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
-        if (!in_critical) queue_mutex.lock();
+        Lock(in_critical);
 
-        typename std::list<CqEvent>::iterator it = events[direction].begin();
+        typename std::list<CqEvent>::iterator it;
         for (it  = events[direction].begin();
              it != events[direction].end(); it++)
         {
@@ -1389,60 +1461,85 @@ public:
                 {
                     (*it).status = CqEvent::Finished;
                     if (direction == 0) input_count ++;
-                    sprintf(mssg, "Event %d,%d,%d finishes, "
-                        "input_count = %d, output_count = %d", 
-                        direction, (*it).offset, (*it).length, 
-                        input_count, output_count);
-                    ShowDebugInfo_(mssg);
+                    if (CQ_DEBUG)
+                    {
+                        sprintf(mssg, "Event %d,%d,%d finishes, "
+                            "input_count = %d, output_count = %d", 
+                            direction, (*it).offset, (*it).length, 
+                            input_count, output_count);
+                        ShowDebugInfo_(mssg);
+                    }
                     empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {
-                    if (!in_critical) queue_mutex.unlock();
+                    if (CQ_DEBUG)
+                        ShowDebugInfo_("Error");
+                    Unlock(in_critical);
                     return retval;
                 }
             }
         }
         SizeCheck(direction, true);
         //ShowDebugInfo("EventC", direction, -1, -1, -1);
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
         return retval; 
     }
 
     void SizeCheck(int direction, bool in_critical = false)
     {
-        if (!in_critical) queue_mutex.lock();
-        typename std::list<CqEvent>::iterator it = events[direction].begin();
-       
+        Lock(in_critical);
+        //ShowDebugInfo_("SizeCheck begin.");
+        //typename std::list<CqEvent>::iterator it = events[direction].begin();
+        CqEvent *event = NULL;
+
         while (!events[direction].empty())
         {
-            it = events[direction].begin();
+            event = &(events[direction].front());
+            //it = events[direction].begin();
             //printf("Event %d, %d, %d, status = %d\n", direction, (*it).offset, (*it).length, (*it).status);fflush(stdout);
-            if ((*it).status == CqEvent::Finished) // finished event
+            if (event -> status == CqEvent::Finished) // finished event
             {
                 if (direction == 0)
                 { // in event
-                    if ((*it).offset == head_b)
+                    if (event -> offset == head_b)
                     {
-                        head_b += (*it).length;
+                        head_b += event -> length;
                         if (head_b >= capacity) head_b -= capacity;
-                        (*it).status = CqEvent::Cleared;
-                        size_soli += (*it).length;
+                        event -> status = CqEvent::Cleared;
+                        size_soli += event -> length;
+                        //sprintf(mssg, "head_b -> %d, size_soli -> %d",
+                        //    head_b, size_soli);
+                        //ShowDebugInfo_(mssg);
+                    } else {
+                        //sprintf(mssg, "offset = %d, head_b = %d",
+                        //    event -> offset, head_b);
+                        //ShowDebugInfo_(mssg);
                     } 
                 } else { // out event
-                    if ((*it).offset == tail_b)
+                    if (event -> offset == tail_b)
                     {
-                        tail_b += (*it).length;
+                        tail_b += event -> length;
                         if (tail_b >= capacity) tail_b -= capacity;
-                        (*it).status = CqEvent::Cleared;
-                        size_occu -= (*it).length;
+                        event -> status = CqEvent::Cleared;
+                        size_occu -= event -> length;
+                        //sprintf(mssg, "tail_b -> %d, size_occu -> %d",
+                        //    tail_b, size_occu);
+                        //ShowDebugInfo_(mssg);
+                    } else {
+                        //sprintf(mssg, "offset = %d, tail_b = %d", 
+                        //    event -> offset, tail_b);
+                        //ShowDebugInfo_(mssg);
                     }
                 }
                 events[direction].pop_front();
             } else {
+                //sprintf(mssg, "event %d,%d,%d not finished",
+                //    direction, event -> offset, event -> length);
+                //ShowDebugInfo_(mssg);
                 break;
             }
         }
 
-        if (!in_critical) queue_mutex.unlock();
+        Unlock(in_critical);
     }
 
     
