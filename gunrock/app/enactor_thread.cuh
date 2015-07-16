@@ -352,7 +352,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         num_value__associates = enactor -> num_value__associates;
 
         tretval = cudaErrorNotReady;
-        while (tretval == cudaErrorNotReady)
+        while (tretval == cudaErrorNotReady && 
+            thread_slice -> status != ThreadSlice::Status::ToKill)
         {
             tretval = s_queue->Pop_Addr(
                 enactor_slice -> input_min_length, 
@@ -362,7 +363,13 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 num_vertex_associates, num_value__associates,
                 e_handle -> vertex_ins, e_handle -> value__ins,
                 false, true, target_input_count);
+            if (tretval == cudaErrorNotReady)
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(1));
+            }
         }
+        if (thread_slice -> status == ThreadSlice::Status::ToKill)
+            continue;
         if (tretval)
         {
             thread_slice -> retval = tretval;
@@ -670,7 +677,14 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     enactor_slice -> subq__target_set[iteration%2] = false;
                     iteration_loop -> Iteration_Change(thread_slice -> iteration);
                     thread_slice -> ShowDebugInfo("Iteration change");
-                    if (s_lengths[stream_num] == 0) continue;
+                    if (s_lengths[stream_num] == 0) 
+                    {
+                        if (thread_slice -> retval = 
+                            s_queue -> EventFinish(1, s_offsets[stream_num], 0))
+                            return;
+                        frontier_attribute -> queue_length = 0;
+                        continue;
+                    }
                 }
 
                 frontier_attribute -> queue_length = s_lengths[stream_num];
@@ -762,9 +776,10 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 if (thread_slice -> retval = t_queue -> EventSet(
                     0, t_offset, frontier_attribute -> queue_length,
                     stream)) return;
+                frontier_attribute -> queue_length = 0;
                 break;
 
-            case 3: // Accumulate
+            /*case 3: // Accumulate
                 enactor_slice -> subq__wait_counter++;
                 sprintf(cmssg, "Accumulate count = %d, target = %d", 
                     enactor_slice -> subq__wait_counter, 
@@ -776,9 +791,11 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 }
                 to_shows[stream_num] = false;
                 stages[stream_num] = -1;
-                break;
+                break;*/
 
             default:
+                to_shows[stream_num] = false;
+                stages[stream_num] = -1;
                 break;
             }
 
@@ -862,9 +879,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         {
             if (s_target_set)
             {
-                sprintf(cmssg, "Waiting. input_count = %d, target_count = %d", 
-                    s_input_count, s_target_count);
-                thread_slice -> ShowDebugInfo(cmssg);
+                //sprintf(cmssg, "Waiting. input_count = %d, target_count = %d", 
+                //    s_input_count, s_target_count);
+                //thread_slice -> ShowDebugInfo(cmssg);
             }
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;

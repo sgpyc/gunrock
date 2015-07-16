@@ -53,9 +53,9 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
             if (frontier_attribute->queue_length != 0 ||
                 frontier_attribute->has_incoming)
             {
-                //printf("gpu %d : frontier_attribute[%d].queue_length = %d\n",
-                //    gpu, stream, frontier_attribute -> queue_length);   
-                //fflush(stdout);
+                printf("gpu %d : frontier_attribute[%d].queue_length = %d\n",
+                    gpu, stream, frontier_attribute -> queue_length);   
+                fflush(stdout);
                 return false;
             }
         }
@@ -63,29 +63,29 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         for (int i=0; i<2; i++)
         if (!enactor_slice -> input_queues[i].Empty())
         {
-            //printf("gpu %d : input_queues[%d] not empty\n", gpu, i);
-            //fflush(stdout);
+            printf("gpu %d : input_queues[%d] not empty\n", gpu, i);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> outpu_queue.Empty())
         {
-            //printf("gpu %d : outpu_queue not empty\n", gpu);
-            //fflush(stdout);
+            printf("gpu %d : outpu_queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> subq__queue.Empty())
         {
-            //printf("gpu %d : subq__queue not empty\n", gpu);
-            //fflush(stdout);
+            printf("gpu %d : subq__queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
 
         if (!enactor_slice -> fullq_queue.Empty())
         {
-            //printf("gpu %d : fullq_queue not empty\n", gpu);
-            //fflush(stdout);
+            printf("gpu %d : fullq_queue not empty\n", gpu);
+            fflush(stdout);
             return false;
         }
     }
