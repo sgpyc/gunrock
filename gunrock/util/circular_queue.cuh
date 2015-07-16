@@ -305,6 +305,7 @@ public:
     {
         //printf("GetInputCount = %d\n", input_count);
         //fflush(stdout);
+        EventCheck(0);
         return input_count;
     }
 
@@ -441,10 +442,10 @@ public:
 
         for (int i=0; i<2; i++)
         {
-            if (lengths[i] == 0 && i != 0) continue;
+            if (lengths[i] == 0) continue;
             ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
-            if (lengths[i] != 0)
-            {
+            //if (lengths[i] != 0)
+            //{
                 if (retval = this->array.Move_In(
                     allocated, allocated, array, 
                     lengths[i], sum, offsets[i], stream)) 
@@ -463,14 +464,17 @@ public:
                         lengths[i], sum, offsets[i], stream))
                         return retval;
                 }
-            }
+            //}
 
             // in_event finish
-            if (allocated == HOST) EventFinish(0, offsets[i], lengths[i]);
-            else if (allocated == DEVICE)
-                EventSet(0, offsets[i], lengths[i], stream);
+            //if (allocated == HOST) EventFinish(0, offsets[i], lengths[i]);
+            //else if (allocated == DEVICE)
+            //    EventSet(0, offsets[i], lengths[i], stream);
             sum += lengths[i];
         }
+        if (allocated == HOST) EventFinish(0, offsets[0], length);
+        else if (allocated == DEVICE)
+            EventSet(0, offsets[0], length, stream);
          
         return retval;
     }
@@ -588,12 +592,15 @@ public:
                     lengths[i], sum, offsets[i], stream))
                     return retval;
             }
-            if (allocated == HOST) EventFinish(1, offsets[i], lengths[i]);
-            else if (allocated == DEVICE)
-                EventSet(1, offsets[i], lengths[i], stream);
+            //if (allocated == HOST) EventFinish(1, offsets[i], lengths[i]);
+            //else if (allocated == DEVICE)
+            //    EventSet(1, offsets[i], lengths[i], stream);
             sum += lengths[i];
         }
         length = sum;
+        if (allocated == HOST) EventFinish(1, offsets[0], length);
+        else if (allocated == DEVICE)
+            EventSet(1, offsets[0], length, stream);
 
         return retval; 
     }
@@ -686,7 +693,7 @@ public:
         SizeT *offsets, 
         SizeT *lengths, 
         bool   in_critical = false,
-        bool   single_chunk = false,
+        bool   single_chunk = true,
         bool   set_gpu = false)
     {
         cudaError_t retval = cudaSuccess;
@@ -747,7 +754,7 @@ public:
             }
         }
 
-        input_count ++;
+        //input_count ++;
         if (head_a + length > capacity)
         { // splict
             offsets[0] = head_a;
@@ -782,7 +789,7 @@ public:
         SizeT *offsets, 
         SizeT *lengths, 
         bool   in_critical = false,
-        bool   single_chunk = false)
+        bool   single_chunk = true)
     {
         cudaError_t retval = cudaSuccess;
 
@@ -842,7 +849,7 @@ public:
             }
         }
 
-        input_count ++;
+        //input_count ++;
         output_count ++;
         if (head_a + length > capacity)
         { // splict
@@ -889,7 +896,7 @@ public:
         SizeT *offsets, 
         SizeT *lengths, 
         bool   in_critical = false,
-        bool   single_chunk = false,
+        bool   single_chunk = true,
         bool   allow_smaller = false,
         int    target_input = util::MaxValue<int>())
     {
@@ -908,9 +915,18 @@ public:
        
         //printf("size_soli = %d, size_occu = %d, input_count = %d, target_input = %d, min_length = %d, max_length = %d\n",
         //    size_soli, size_occu, input_count, target_input, min_length, max_length);
-        //fflush(stdout); 
+        //fflush(stdout);
+        //if (allow_smaller && target_input <= input_count)
+        //{
+        //    sprintf(mssg, "ToReduce, min_length = %d, allow_smaller = %s, "
+        //        "target_input = %d, input_count = %d, size_soli = %d, "
+        //        "size_occu = %d", min_length, allow_smaller ? "true":"false",
+        //        target_input, input_count, size_soli, size_occu);
+        //    ShowDebugInfo_(mssg);
+        //}
+ 
         if (size_soli < min_length && 
-            !(allow_smaller && target_input <= input_count && size_soli == size_occu))
+            !(allow_smaller && target_input <= input_count && size_soli < min_length))
         { // too small
             /*//queue_mutex.unlock();
             bool got_content = false;
@@ -940,7 +956,7 @@ public:
         }
 
         if (size_soli < min_length && allow_smaller && 
-            target_input <= input_count && size_soli == size_occu)
+            target_input <= input_count)
         {
             sprintf(mssg, "Reduce last: size_soli = %d, size_occu = %d,"
                 " target_input = %d, input_count = %d",
@@ -1212,19 +1228,20 @@ public:
                     sum += lengths[i];
                 }
             }
-        } else {
+        } //else {
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = length; lengths[1] = 0;
-        }
+        //}
 
         if (!in_critical) queue_mutex.lock();
 
-        for (int i=0; i<2; i++)
-        {
+        int i=0;
+        //for (int i=0; i<2; i++)
+        //{
             cudaEvent_t event = NULL;
-            if (lengths[i] == 0 && i!=0) continue;
-            if (lengths[i] != 0)
-            {
+            //if (lengths[i] == 0 && i!=0) continue;
+            //if (lengths[i] != 0)
+            //{
                 if (empty_gpu_events.empty())
                 {
                     retval = util::GRError(cudaErrorLaunchOutOfResources,
@@ -1239,7 +1256,7 @@ public:
                     if (!in_critical) queue_mutex.unlock();
                     return retval;
                 }
-            }
+            //}
 
             typename std::list<CqEvent>::iterator it = events[direction].begin();
             for (it  = events[direction].begin(); 
@@ -1264,7 +1281,7 @@ public:
                     direction, offsets[i], lengths[i]);
                 ShowDebugInfo_(mssg);
             }
-        }
+        //}
         EventCheck(direction, true);
         if (!in_critical) queue_mutex.unlock();
         return retval;
@@ -1316,20 +1333,22 @@ public:
                 if (retval = GRError(cudaStreamSynchronize(stream),
                     name + "cudaStreamSynchronize failed", __FILE__, __LINE__)) return retval;
             }
-        } else {
+        } //else {
             offsets[0] = offset; lengths[0] = length;
             offsets[1] = 0; lengths[1] = 0;
-        }
+        //}
 
         if (!in_critical) queue_mutex.lock();
-        for (int i=0; i<2; i++)
-        {
+        int i=0;
+        //for (int i=0; i<2; i++)
+        //{
             typename std::list<CqEvent>::iterator it = events[direction].begin();
             for (it  = events[direction].begin(); 
                  it != events[direction].end(); it ++)
             {
                 if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
                 {
+                    if (direction == 0) input_count ++;
                     sprintf(mssg, "Event %d,%d,%d done. input_count = %d,"
                         " output_count = %d", 
                         direction, offset, length,
@@ -1345,7 +1364,7 @@ public:
                     direction, offset, length);
                 ShowDebugInfo_(mssg);
             }
-        }
+        //}
         SizeCheck(direction, true);
         ShowDebugInfo("EventF", direction, offset, -1, length);
         if (!in_critical) queue_mutex.unlock();
@@ -1369,6 +1388,7 @@ public:
                 if (retval == cudaSuccess)
                 {
                     (*it).status = CqEvent::Finished;
+                    if (direction == 0) input_count ++;
                     sprintf(mssg, "Event %d,%d,%d finishes, "
                         "input_count = %d, output_count = %d", 
                         direction, (*it).offset, (*it).length, 

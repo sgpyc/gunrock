@@ -593,7 +593,7 @@ public:
         for (int gpu_num = 0; gpu_num < this-> num_gpus; gpu_num++)
         {
             if (gpu_num == gpu) continue;
-            if (retval = util::SetDevice(this->gpu_idx[gpu])) return retval;
+            if (retval = util::SetDevice(this->gpu_idx[gpu_num])) return retval;
             if (retval = enactor_slices[gpu_num].subq__queue.Push(0, NULL))
                 return retval;
         }
