@@ -371,7 +371,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
 
         if (length < enactor_slice -> input_min_length)
         {
-            s_input_count = s_queue->GetInputCount();
+            s_input_count = s_queue->GetOutputCount();
             if (enactor->using_subq)
             {
                 enactor_slice -> subq__target_count[iteration%2]
@@ -396,7 +396,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 enactor_slice -> fullq_target_set  [iteration%2]
                     = true;
             }
-            s_queue -> ResetCounts();
+            //s_queue -> ResetCounts();
+            s_queue -> ChangeInputCount(0 - target_input_count);
+            s_queue -> ResetOutputCount();
             if (thread_slice -> retval = iteration_loop -> 
                 Iteration_Change(thread_slice -> iteration))
                 return;
@@ -611,19 +613,20 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 //printf("gpu_num = %d, iteration = %lld, subq__target_count = %d\n",
                 //    gpu_num, iteration, enactor_slice -> subq__target_count[iteration%2]);
                 //fflush(stdout);
-                if (!enactor_slice -> subq__target_set[iteration%2])
-                {
-                    std::this_thread::sleep_for(std::chrono::microseconds(1));
-                    to_shows[stream_num] = false;
-                    continue;
-                }
+                //if (!enactor_slice -> subq__target_set[iteration%2])
+                //{
+                //    std::this_thread::sleep_for(std::chrono::microseconds(1));
+                //    to_shows[stream_num] = false;
+                //    continue;
+                //}
                 tretval = s_queue -> Pop_Addr(
                     enactor_slice -> subq__min_length, 
                     enactor_slice -> subq__max_length, 
                     iteration_loop -> d_keys_in,
                     s_lengths[stream_num], s_offsets[stream_num], 
                     stream, 0, 0, NULL, NULL, false,
-                    true, enactor_slice -> subq__target_count[iteration%2]);
+                    enactor_slice -> subq__target_set[iteration%2], 
+                    enactor_slice -> subq__target_count[iteration%2]);
                 if (tretval == cudaErrorNotReady) 
                 {
                     std::this_thread::sleep_for(std::chrono::microseconds(1));
@@ -871,7 +874,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             s_input_count, s_target_count);
         thread_slice -> ShowDebugInfo(cmssg);
         enactor_slice -> fullq_target_set [iteration%2] = false;
-        s_queue -> ResetCounts();
+        //s_queue -> ResetCounts();
+        s_queue -> ChangeInputCount(0 - s_target_count);
+        s_queue -> ResetOutputCount();
 
         if (num_streams >0 && enactor -> using_fullq)
         {
@@ -1104,6 +1109,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         }
 
         iteration_loop -> Iteration_Change(thread_slice -> iteration);
+        thread_slice -> ShowDebugInfo("Iteration change");
     } // end of while
 
     thread_slice -> ShowDebugInfo("Thread end.");
