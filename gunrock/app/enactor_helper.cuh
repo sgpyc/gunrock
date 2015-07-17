@@ -168,8 +168,8 @@ cudaError_t PushNeibor(
     cudaStream_t   s_stream              =   request -> stream;
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
 
-    printf("Push from %d to %d: s_stream = %p, event = %p, length = %d, iteration = %lld\n",
-        request -> gpu_num, request -> peer, s_stream, event, length, iteration);
+    printf("%d\t %lld\t \t PushNeibor\t To %d, length = %d\n",
+        request -> gpu_num, iteration, request -> peer, length);
     fflush(stdout);
 
     if (length > 0)

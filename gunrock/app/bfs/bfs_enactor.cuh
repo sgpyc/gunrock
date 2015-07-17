@@ -130,7 +130,7 @@ struct BFSIteration : public IterationBase <
         //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
         //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), graph_slice -> nodes, this -> gpu_num, enactor_stats->iteration, this->stream_num, stream);
         // Edge Map
-        this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
+        //this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
             <AdvanceKernelPolicy, Problem, BfsFunctor>(
             enactor_stats[0],
@@ -156,7 +156,7 @@ struct BFSIteration : public IterationBase <
             gunrock::oprtr::advance::V2V,
             false,
             false);
-        this -> ShowDebugInfo("Advance end", enactor_stats->iteration);
+        //this -> ShowDebugInfo("Advance end", enactor_stats->iteration);
 
         // Only need to reset queue for once
         frontier_attribute -> queue_reset = false;
@@ -166,14 +166,16 @@ struct BFSIteration : public IterationBase <
             work_progress  ->template GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
         
-        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        if (retval = cudaStreamSynchronize(stream)) return retval;
-        printf("keys1.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        //if (retval = cudaStreamSynchronize(stream)) return retval;
+        //sprintf(this -> mssg, 
+        //    "keys1.length = %d", frontier_attribute->queue_length);
+        //this -> ShowDebugInfo(this -> mssg, enactor_stats -> iteration);
         //util::cpu_mt::PrintGPUArray("keys1", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
         //return retval;
  
         // Filter
-        this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
+        //this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
         gunrock::oprtr::filter::Kernel
             <FilterKernelPolicy, Problem, BfsFunctor>
             <<< enactor_stats->filter_grid_size, 
@@ -192,13 +194,15 @@ struct BFSIteration : public IterationBase <
             frontier_queue     -> keys  [frontier_attribute->selector^1].GetSize(),
             enactor_stats-> filter_kernel_stats);
         //if (Enactor::DEBUG && (enactor_stats->retval = util::GRError("filter_forward::Kernel failed", __FILE__, __LINE__))) return;
-        this-> ShowDebugInfo("Filter end", enactor_stats->iteration);
+        //this-> ShowDebugInfo("Filter end", enactor_stats->iteration);
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-        if (retval = cudaStreamSynchronize(stream)) return retval;
-        printf("keys2.length = %d\n", frontier_attribute->queue_length);fflush(stdout);
+        //work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
+        //if (retval = cudaStreamSynchronize(stream)) return retval;
+        //sprintf(this -> mssg, "keys2.length = %d", 
+        //    frontier_attribute->queue_length);
+        //this -> ShowDebugInfo(this -> mssg, enactor_stats -> iteration);
         //util::cpu_mt::PrintGPUArray("keys2", frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), frontier_attribute->queue_length, this->gpu_num, enactor_stats -> iteration, this-> stream_num, stream);
  
         return retval;
@@ -285,11 +289,10 @@ struct BFSIteration : public IterationBase <
 
         if (Enactor::DEBUG)
         {
-            printf("%d\t %lld\t %d\t queue_length = %d, output_length = %d\n",
-                gpu_num, iteration, stream_num,
-                frontier_queue->keys[selector^1].GetSize(),
+            sprintf(this -> mssg, "queue_size = %d, request_length = %d",
+                frontier_queue -> keys[selector^1].GetSize(),
                 request_length);
-            fflush(stdout);
+            this -> ShowDebugInfo(this -> mssg, stream_num, iteration);
         }
 
         if (retval = Check_Size<true, SizeT, VertexId > (

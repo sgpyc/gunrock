@@ -131,11 +131,11 @@ public:
         if (!Enactor::DEBUG) return;
         switch (thread_type)
         {
-        case Type::Input  : strcpy(str, "InputThread: "); break;
-        case Type::Output : strcpy(str, "OutpuThread: "); break;
-        case Type::SubQ   : strcpy(str, "SubQ_Thread: "); break;
-        case Type::FullQ  : strcpy(str, "FullQThread: "); break;
-        default           : strcpy(str, "UnknoThread: "); break;
+        case Type::Input  : strcpy(str, "InputThread\t "); break;
+        case Type::Output : strcpy(str, "OutpuThread\t "); break;
+        case Type::SubQ   : strcpy(str, "SubQ_Thread\t "); break;
+        case Type::FullQ  : strcpy(str, "FullQThread\t "); break;
+        default           : strcpy(str, "UnknoThread\t "); break;
         }
         if (iteration == -1) iteration = this -> iteration;
         strcpy(str + 13, message);
@@ -434,16 +434,16 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 = enactor_slice -> value__associate_orgs[i];
         e_handles->Move(util::HOST, util::DEVICE, 1, stream_selector, stream);
 
-        sprintf(mssg, "GotInput, length = %d, "
-            "vertex_associates = %d, %p, %p, value_associates = %d, %p, %p",
-            length,
-            num_vertex_associates, 
-            num_vertex_associates > 0 ? e_handle -> vertex_ins [0] : NULL, 
-            num_vertex_associates > 0 ? e_handle -> vertex_orgs[0] : NULL,
-            num_value__associates,
-            num_value__associates > 0 ? e_handle -> value__ins [0] : NULL,
-            num_value__associates > 0 ? e_handle -> value__orgs[0] : NULL);
-        thread_slice -> ShowDebugInfo(mssg, iteration, stream_selector); 
+        sprintf(mssg, "GotInput, length = %d, ",
+            //"vertex_associates = %d, %p, %p, value_associates = %d, %p, %p",
+            length);
+            //num_vertex_associates, 
+            //num_vertex_associates > 0 ? e_handle -> vertex_ins [0] : NULL, 
+            //num_vertex_associates > 0 ? e_handle -> vertex_orgs[0] : NULL,
+            //num_value__associates,
+            //num_value__associates > 0 ? e_handle -> value__ins [0] : NULL,
+            //num_value__associates > 0 ? e_handle -> value__orgs[0] : NULL);
+        thread_slice -> ShowDebugInfo(mssg, stream_selector, iteration); 
         
         grid_size = length/256+1;
         if (grid_size>512) grid_size=512;
@@ -499,6 +499,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     Array<SizeT>  *scanned_edges    =   enactor_slice -> subq__scanned_edges;
     SizeT         *s_lengths          = enactor_slice -> subq__s_lengths + 0;
     SizeT         *s_offsets          = enactor_slice -> subq__s_offsets + 0;
+    bool          *core_dones         = enactor_slice -> subq__core_dones + 0;
     int            stream_num         = 0;
     long long      iteration          = 0;
     //long long      iteration_         = 0;
@@ -562,7 +563,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
             work_progress       = work_progresses     + stream_num;
             enactor_stats       = enactor_statses     + stream_num; 
             selector            = frontier_attribute -> selector;
-            enactor_stats->iteration = thread_slice -> iteration;
+            enactor_stats->iteration = stream_iterations[stream_num];
             
             //if (stages[stream_num] == 0)
             //{
@@ -606,7 +607,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     thread_num,
                     stream_num,
                     enactor,
-                    iteration,
+                    stream_iterations[stream_num],
                     mssg,
                     streams[stream_num]);
             }
@@ -647,6 +648,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 }
 
                 stream_iterations[stream_num] = iteration;
+                enactor_stats -> iteration = iteration;
                 if (s_lengths[stream_num] < enactor_slice -> subq__min_length)
                 { // iteration change
                     if (enactor -> using_fullq || enactor -> num_gpus >1)
@@ -735,47 +737,75 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 if (thread_slice -> retval = 
                     Set_Record(enactor_slice, 2, stream_iterations[stream_num],
                         stream_num, stages[stream_num])) return;
+                core_dones[stream_num] = false;
+                thread_slice -> ShowDebugInfo("SubQ launched", stream_num, stream_iterations[stream_num]);
                 break;
 
             case 2: // Copy
-                if (thread_slice -> retval = Check_Record(
-                    enactor_slice, 2, stream_iterations[stream_num], 
-                    stream_num, stages[stream_num] -1, stages[stream_num],
-                    to_shows[stream_num])) return;
-                if (to_shows[stream_num] == false) continue;
-                if (!Enactor::SIZE_CHECK)
+                if (!core_dones[stream_num])
                 {
-                    if (thread_slice -> retval = Check_Size
-                        <false, SizeT, VertexId>(
-                        "queue3", frontier_attribute -> output_length[0] + 2,
-                        &frontier -> keys[selector^1], over_sized,
-                        gpu_num, stream_iterations[stream_num], 
-                        stream_num, false)) return;
+                    if (thread_slice -> retval = Check_Record(
+                        enactor_slice, 2, stream_iterations[stream_num], 
+                        stream_num, stages[stream_num] -1, stages[stream_num],
+                        to_shows[stream_num])) return;
+                    if (to_shows[stream_num] == false) 
+                    {
+                        thread_slice -> ShowDebugInfo("Waiting subq...", 
+                            stream_num, stream_iterations[stream_num]);
+                        continue;
+                    }
+                    core_dones[stream_num] = true;
+                    if (!Enactor::SIZE_CHECK)
+                    {
+                        if (thread_slice -> retval = Check_Size
+                            <false, SizeT, VertexId>(
+                            "queue3", frontier_attribute -> output_length[0] + 2,
+                            &frontier -> keys[selector^1], over_sized,
+                            gpu_num, stream_iterations[stream_num], 
+                            stream_num, false)) return;
+                    }
                 }
 
                 if (enactor -> num_gpus >1 || enactor -> using_fullq)
                 {
                     if (((ThreadSlice_*)(enactor_slice -> fullq_thread_slice)) 
                         -> iteration != stream_iterations[stream_num])
+                    {
+                        to_shows[stream_num] = false;
+                        thread_slice -> ShowDebugInfo("Waiting fullq...", 
+                            stream_num, stream_iterations[stream_num]);
                         continue;
+                    }
                 }
 
                 if (thread_slice -> retval = t_queue -> Push_Addr(
                     frontier_attribute -> queue_length,
                     vertex_array, t_offset, 0, Problem::USE_DOUBLE_BUFFER?1:0,
                     NULL, &value__array)) return;
-                util::MemsetCopyVectorKernel<<<256, 256, 0, stream>>>(
-                    vertex_array,
-                    frontier -> keys[selector].GetPointer(util::DEVICE),
-                    frontier_attribute -> queue_length);
-                if (Problem::USE_DOUBLE_BUFFER)
+
+                if (frontier_attribute -> queue_length != 0)
+                {
                     util::MemsetCopyVectorKernel<<<256, 256, 0, stream>>>(
-                    value__array,
-                    frontier -> values[selector].GetPointer(util::DEVICE),
+                        vertex_array,
+                        frontier -> keys[selector].GetPointer(util::DEVICE),
+                        frontier_attribute -> queue_length);
+                    if (Problem::USE_DOUBLE_BUFFER)
+                        util::MemsetCopyVectorKernel<<<256, 256, 0, stream>>>(
+                        value__array,
+                        frontier -> values[selector].GetPointer(util::DEVICE),
+                        frontier_attribute -> queue_length);
+                    if (thread_slice -> retval = t_queue -> EventSet(
+                        0, t_offset, frontier_attribute -> queue_length,
+                        stream)) return;
+                } else {
+                    if (thread_slice -> retval = t_queue -> EventFinish(
+                        0, t_offset, frontier_attribute -> queue_length)) 
+                        return;
+                }
+                sprintf(cmssg, "pushed to fullq, length = %d", 
                     frontier_attribute -> queue_length);
-                if (thread_slice -> retval = t_queue -> EventSet(
-                    0, t_offset, frontier_attribute -> queue_length,
-                    stream)) return;
+                thread_slice -> ShowDebugInfo(cmssg,
+                    stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> queue_length = 0;
                 break;
 
@@ -879,9 +909,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         {
             if (s_target_set)
             {
-                //sprintf(cmssg, "Waiting. input_count = %d, target_count = %d", 
-                //    s_input_count, s_target_count);
-                //thread_slice -> ShowDebugInfo(cmssg);
+                sprintf(cmssg, "Waiting. input_count = %d, target_count = %d", 
+                    s_input_count, s_target_count);
+                thread_slice -> ShowDebugInfo(cmssg);
             }
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;

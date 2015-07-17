@@ -94,6 +94,7 @@ struct EnactorSlice
     Array<SizeT>          subq__s_lengths         ;
     Array<SizeT>          subq__s_offsets         ;
     Array<long long>      subq__iterations        ;
+    Array<bool>           subq__core_dones        ;
 
     Array<cudaStream_t>   fullq_stream            ; // GPU streams
     Array<ContextPtr  >   fullq_context           ;
@@ -278,6 +279,7 @@ struct EnactorSlice
             if (retval = subq__s_lengths   .Allocate(num_subq__streams)) return retval;
             if (retval = subq__s_offsets   .Allocate(num_subq__streams)) return retval;
             if (retval = subq__iterations  .Allocate(num_subq__streams)) return retval;
+            if (retval = subq__core_dones  .Allocate(num_subq__streams)) return retval;
             if (retval = subq__frontier_attributes.Init(num_subq__streams, 
                 util::HOST, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
             if (retval = subq__enactor_statses    .Init(num_subq__streams, 
@@ -663,6 +665,7 @@ struct EnactorSlice
             {
                 subq__to_shows[stream] = false;
                 subq__stages[stream] = 0;
+                subq__core_dones[stream] = false;
                 if (retval = subq__scanned_edges[stream].Allocate(max_elements, util::DEVICE))
                     return retval;
                 for (int i=0; i<4; i++)

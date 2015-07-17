@@ -192,7 +192,7 @@ public:
         if (!Enactor::DEBUG) return;
         if (iteration < 0) iteration = this -> iteration;
         if (stream_num < 0) stream_num = this -> stream_num;
-        strcpy(str, "IterationBase::");
+        strcpy(str, "IterationBase\t ");
         strcpy(str + 15, mssg);
         util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
     }
@@ -338,10 +338,10 @@ public:
 
         if (Enactor::DEBUG)
         {
-            sprintf(mssg, "queue_length = %d, output_length = %d",
+            sprintf(mssg, "queue_size = %d, request_length = %d",
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
-            ShowDebugInfo(mssg, iteration); 
+            ShowDebugInfo(mssg, stream_num, iteration); 
         }
 
         if (retval = Check_Size<true, SizeT, VertexId > (
@@ -482,7 +482,7 @@ public:
                         events[stream_num], streams[stream_num]),
                         "cudaEventRecord failed", __FILE__, __LINE__))
                         return retval;
-                    ShowDebugInfo("Event recorded", -1, stream_num);
+                    //ShowDebugInfo("Event recorded", -1, stream_num);
                 } else {
                     t_out_lengths[0][stream_num] = 0;
                     done_markers[stream_num] = 0;

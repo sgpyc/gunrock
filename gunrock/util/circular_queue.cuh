@@ -27,7 +27,7 @@
 namespace gunrock {
 namespace util {
 
-#define CQ_DEBUG false
+#define CQ_DEBUG true
 
 template <
     typename VertexId,
@@ -467,7 +467,7 @@ public:
     {
         if (!CQ_DEBUG) return;
         else {
-            printf("%s @ %d : %s\n", name.c_str(), gpu_idx, mssg);
+            printf("@ %d\t \t \t %s\t %s\n", gpu_idx, name.c_str(), mssg);
             fflush(stdout);
         }
     }
@@ -1327,7 +1327,9 @@ public:
             for (it  = events[direction].begin(); 
                  it != events[direction].end(); it ++)
             {
-                if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
+                if ((offsets[i] == (*it).offset) && 
+                    (lengths[i] == (*it).length))// &&
+                    //((*it).status == CqEvent::New)) // matched event
                 {
                     if (CQ_DEBUG)
                     {
@@ -1340,10 +1342,15 @@ public:
                     (*it).event = event;
                     (*it).status = CqEvent::Assigned;
                     break;
+                } else {
+                    sprintf(mssg, "EventSet looking for %d,%d,%d, having %d,%d,%d",
+                        direction, offsets[i], lengths[i],
+                        direction, (*it).offset, (*it).length);
+                    ShowDebugInfo_(mssg);
                 }
             }
 
-            if (CQ_DEBUG && it == events[direction].end())
+            if (it == events[direction].end())
             {
                 sprintf(mssg, "EventSet %d,%d,%d can not be found", 
                     direction, offsets[i], lengths[i]);
@@ -1414,7 +1421,10 @@ public:
             for (it  = events[direction].begin(); 
                  it != events[direction].end(); it ++)
             {
-                if ((offsets[i] == (*it).offset) && (lengths[i] == (*it).length)) // matched event
+                if ((offsets[i] == (*it).offset) && 
+                    (lengths[i] == (*it).length)) //&&
+                    //(((*it).status == CqEvent::Assigned) || 
+                    // ((*it).status == CqEvent::New))) // matched event
                 {
                     if (direction == 0) input_count ++;
                     if (CQ_DEBUG)

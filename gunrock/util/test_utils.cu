@@ -57,7 +57,7 @@ void DeviceInit(CommandLineArgs &args)
 
 cudaError_t SetDevice(int dev)
 {
-    printf("Setting device to %d\n", dev);fflush(stdout);
+    //printf("Setting device to %d\n", dev);fflush(stdout);
     return util::GRError(cudaSetDevice(dev), "cudaSetDevice failed.", __FILE__, __LINE__);
 }
 
