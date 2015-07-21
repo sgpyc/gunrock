@@ -341,7 +341,7 @@ public:
             sprintf(mssg, "queue_size = %d, request_length = %d",
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
-            ShowDebugInfo(mssg, stream_num, iteration); 
+            ShowDebugInfo(mssg, iteration, stream_num); 
         }
 
         if (retval = Check_Size<true, SizeT, VertexId > (

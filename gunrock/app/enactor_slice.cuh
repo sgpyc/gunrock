@@ -53,7 +53,7 @@ struct EnactorSlice
     //Array<cudaEvent_t >    events;
 
     Array<cudaStream_t>   input_streams           ; // GPU streams
-    int                   input_target_count      ;
+    //int                   input_target_count      ;
     CircularQueue         input_queues         [2];
     Array<ExpandIncomingHandle> input_e_handles   ; // compressed data structure for expand_incoming kernel
     void                 *input_iteration_loops   ;
@@ -86,8 +86,8 @@ struct EnactorSlice
     Array<util::CtaWorkProgressLifetime> 
                           subq__work_progresses   ;
     void                 *subq__iteration_loops   ;
-    SizeT                 subq__target_count   [2];
-    bool                  subq__target_set     [2];
+    //SizeT                 subq__target_count   [2];
+    //bool                  subq__target_set     [2];
     void                 *subq__thread_slice      ;
     SizeT                 subq__min_length        ;
     SizeT                 subq__max_length        ;
@@ -111,8 +111,8 @@ struct EnactorSlice
     Array<util::CtaWorkProgressLifetime>
                           fullq_work_progress     ;
     void                 *fullq_iteration_loop    ;
-    SizeT                 fullq_target_count   [2];
-    bool                  fullq_target_set     [2];
+    //SizeT                 fullq_target_count   [2];
+    //bool                  fullq_target_set     [2];
     void                 *fullq_thread_slice      ;
 
     Array<cudaStream_t>   split_streams           ; // GPU streams
@@ -124,6 +124,7 @@ struct EnactorSlice
     Array<cudaEvent_t >   split_events            ;
     void                 *split_iteration_loop    ;
     cudaEvent_t           split_wait_event        ;
+    char                  mssg[512];
 
     EnactorSlice() :
         num_gpus           (0   ),
@@ -140,13 +141,13 @@ struct EnactorSlice
         split_markers      (NULL)
         //split_m_arrays     (NULL)
     {
-        printf("EnactorSlice() begin.\n");fflush(stdout);
+        ShowDebugInfo("() begin.");
 
         vertex_associate_orgs .SetName("vertex_associate_orgs");
         value__associate_orgs .SetName("value__associate_orgs");
         input_streams         .SetName("input_streams"        );
-        input_queues[0]       .SetName("input_queues[0]"      );
-        input_queues[1]       .SetName("input_queues[1]"      );
+        input_queues[0]       .SetName("i_queues[0]"      );
+        input_queues[1]       .SetName("i_queues[1]"      );
         input_e_handles       .SetName("input_e_handles"      );
         outpu_streams         .SetName("outpu_streams"        );
         outpu_queue           .SetName("outpu_queue"          );
@@ -188,14 +189,26 @@ struct EnactorSlice
         split_contexts        .SetName("split_contexts"       );
         split_lengths         .SetName("split_lengths"        );
         split_m_handles       .SetName("split_m_handles"      );
-        printf("EnactorSlice() end.\n");fflush(stdout);
+        ShowDebugInfo("() end.");
     }
 
     virtual ~EnactorSlice()
     {
-        printf("~EnactorSlice() begin.\n");fflush(stdout);
+        ShowDebugInfo("~() begin.");
         Release();
-        printf("~EnactorSlice() end.\n");fflush(stdout);
+        ShowDebugInfo("~() end.");
+    }
+
+    void ShowDebugInfo(
+        const char* message,
+        int stream_num = -1,
+        long long iteration = -1)
+    {
+        if (!Enactor::DEBUG) return;
+        char str[527];
+        strcpy(str, "EnactorSlice\t ");
+        strcpy(str + 14, message);
+        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
     }
 
     cudaError_t Init(
@@ -209,10 +222,13 @@ struct EnactorSlice
         int num_split_streams = 0)
     {
         cudaError_t retval = cudaSuccess;
-        printf("EnactorSlice::Init begin. gpu_num = %d, num_input_streams = %d, num_outpu_streams = %d, num_subq__streams = %d, num_fullq_streams = %d, num_split_streams = %d\n", gpu_num,
+        sprintf(mssg, "Init() begin. #input_streams = %d, #outpu_streams = %d, "
+            "#subq__streams = %d, #fullq_streams = %d, #split_streams = %d",
+        //printf("EnactorSlice::Init begin. gpu_num = %d, num_input_streams = %d, num_outpu_streams = %d, num_subq__streams = %d, num_fullq_streams = %d, num_split_streams = %d\n", gpu_num,
             num_input_streams, num_outpu_streams,
             num_subq__streams, num_fullq_streams,
-            num_split_streams);fflush(stdout);
+            num_split_streams);
+        ShowDebugInfo(mssg);
 
         this->num_gpus = num_gpus;
         this->gpu_num  = gpu_num;
@@ -227,7 +243,7 @@ struct EnactorSlice
                 return retval;
 
             this->num_input_streams = num_input_streams;
-            input_target_count = num_gpus - 1;
+            //input_target_count = num_gpus - 1;
             if (num_input_streams != 0)
             {
                 input_min_length = 1;
@@ -245,7 +261,7 @@ struct EnactorSlice
             this->num_outpu_streams = num_outpu_streams;
             if (num_outpu_streams != 0)
             {
-                num_events = 20;
+                num_events = 30;
                 if (retval = outpu_requests.Allocate(num_events)) return retval;
                 for (int i=0; i<num_events; i++)
                 {
@@ -319,10 +335,10 @@ struct EnactorSlice
         this->num_fullq_stream = num_fullq_stream;
         if (num_fullq_stream != 0)
         {
-            fullq_target_count[0] = util::MaxValue<int>();
-            fullq_target_count[1] = util::MaxValue<int>();
-            fullq_target_set[0] = false;
-            fullq_target_set[1] = false;   
+            //fullq_target_count[0] = util::MaxValue<int>();
+            //fullq_target_count[1] = util::MaxValue<int>();
+            //fullq_target_set[0] = false;
+            //fullq_target_set[1] = false;   
             if (retval = fullq_stream      .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_context     .Allocate(num_fullq_stream)) return retval;
             if (retval = fullq_stage       .Allocate(num_fullq_stream)) return retval;
@@ -395,14 +411,14 @@ struct EnactorSlice
             }
         }
 
-        printf("EnactorSlice::Init end. gpu_num = %d\n", gpu_num);fflush(stdout);
+        ShowDebugInfo("Init() end.");
         return retval;
     }
 
     cudaError_t Release()
     {
         cudaError_t retval = cudaSuccess;
-        printf("EnactorSlice::Release begin. gpu_num = %d\n", gpu_num);fflush(stdout);
+        ShowDebugInfo("Release() begin.");
         
         if (retval = util::SetDevice(gpu_idx)) return retval;
         if (retval = vertex_associate_orgs.Release()) return retval;
@@ -541,7 +557,7 @@ struct EnactorSlice
             num_split_streams = 0;
         }
 
-        printf("EnactorSlice::Release end. gpu_num = %d\n", gpu_num);fflush(stdout);
+        ShowDebugInfo("Release() end.");
         return retval;
     }
 
@@ -565,7 +581,7 @@ struct EnactorSlice
     {
         cudaError_t retval = cudaSuccess;
 
-        printf("EnactorSlice::Reset begin. gpu_num = %d\n", gpu_num);fflush(stdout);
+        ShowDebugInfo("Reset() begin.");
         if (subq__factor  < 0) subq__factor  = 1.0;
         if (subq__factor0 < 0) subq__factor0 = 1.0;
         if (subq__factor1 < 0) subq__factor1 = 1.0;
@@ -585,10 +601,11 @@ struct EnactorSlice
             SizeT target_capacity = total_in_nodes * input_factor;
             for (int i=0; i<2; i++)
             {
-                if (retval = input_queues[i].Init(target_capacity, util::DEVICE, 10,
+                if (retval = input_queues[i].Init(target_capacity, gpu_num, util::DEVICE, 30,
                     Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                     temp_factor * target_capacity)) return retval;
                 if (retval = input_queues[i].Reset()) return retval;
+                input_queues[i].SetInputTarget(num_gpus - 1);
             }
         }
 
@@ -602,7 +619,7 @@ struct EnactorSlice
             for (int gpu=0; gpu<num_gpus; gpu++)
                 total_out_nodes += num_out_nodes[gpu];
             SizeT target_capacity = total_out_nodes * outpu_factor;
-            if (retval = outpu_queue.Init(target_capacity, util::DEVICE, 10,
+            if (retval = outpu_queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
                 Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                 temp_factor * target_capacity)) return retval;
             if (retval = outpu_queue.Reset()) return retval;
@@ -611,16 +628,17 @@ struct EnactorSlice
         if (num_subq__streams != 0)
         {
             subq__wait_counter = 0;
-            subq__target_count[0] = 1; //util::MaxValue<SizeT>();
-            subq__target_set  [0] = true;
-            subq__target_count[1] = util::MaxValue<SizeT>();
-            subq__target_set  [1] = false;
+            //subq__target_count[0] = 1; //util::MaxValue<SizeT>();
+            //subq__target_set  [0] = true;
+            //subq__target_count[1] = util::MaxValue<SizeT>();
+            //subq__target_set  [1] = false;
 
             SizeT target_capacity = graph_slice->nodes * subq__factor;
-            if (retval = subq__queue.Init(target_capacity, util::DEVICE, 10,
+            if (retval = subq__queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
                 0, 0,
                 temp_factor * target_capacity)) return retval;
             if (retval = subq__queue.Reset()) return retval;
+            if (retval = subq__queue.SetInputTarget(1)) return retval;
 
             SizeT frontier_sizes[2] = {0, 0};
             SizeT max_elements = 0;
@@ -649,8 +667,9 @@ struct EnactorSlice
                 }
                 for (int stream=0; stream<num_subq__streams; stream++)
                 {
-                    printf("frontier_sizes[%d] = %d\n", i, frontier_sizes[i]);
-                    fflush(stdout);
+                    sprintf(mssg, "frontier_sizes[%d] = %d", 
+                        i, frontier_sizes[i]);
+                    ShowDebugInfo(mssg);
                     if (retval = subq__frontiers[stream].keys[i].Allocate(
                         frontier_sizes[i], util::DEVICE)) return retval;
                     if (use_double_buffer) {
@@ -679,7 +698,7 @@ struct EnactorSlice
 
         if (num_fullq_stream != 0 || num_split_streams != 0)
         {
-            if (num_subq__streams != 0 || num_input_streams != 0)
+            /*if (num_subq__streams != 0 || num_input_streams != 0)
             {
                 fullq_target_count[0] = util::MaxValue<SizeT>();
                 fullq_target_set  [0] = false; 
@@ -688,14 +707,15 @@ struct EnactorSlice
                 fullq_target_set  [0] = true;
             }
             fullq_target_count[1] = util::MaxValue<SizeT>();
-            fullq_target_set  [1] = false;
+            fullq_target_set  [1] = false;*/
 
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
-            if (retval = fullq_queue.Init(target_capacity, util::DEVICE, 10,
+            if (retval = fullq_queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
                 0, 0,
                 temp_factor * target_capacity)) return retval;
             if (retval = fullq_queue.Reset()) return retval;
-            
+            if (retval = fullq_queue.SetInputTarget(util::MaxValue<int>())) return retval;
+
             if (num_fullq_stream != 0)
             {
                 SizeT frontier_sizes[2] = {0, 0};
@@ -755,7 +775,7 @@ struct EnactorSlice
             }
             split_markerss.Move(util::HOST, util::DEVICE);
         }
-        printf("EnactorSlice::Reset end. gpu_num = %d\n", gpu_num);fflush(stdout);
+        ShowDebugInfo("Reset() end.");
         return retval;
     }
 }; // end of EnactorSlice
