@@ -319,6 +319,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     //bool           to_show          = true;
     cudaError_t    tretval          = cudaSuccess;
     char           mssg[512];
+    bool           to_show          = true;
 
     thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
@@ -370,9 +371,13 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 false, &s_target_meet, &s_output_count);
             if (tretval == cudaErrorNotReady)
             {
+                if (to_show)
+                    thread_slice -> ShowDebugInfo("Waiting...");
+                to_show = false;
                 std::this_thread::sleep_for(std::chrono::microseconds(1));
             }
         }
+        to_show = true;
         if (thread_slice -> status == ThreadSlice::Status::ToKill)
             continue;
         if (tretval)
@@ -783,9 +788,10 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     if (((ThreadSlice_*)(enactor_slice -> fullq_thread_slice)) 
                         -> iteration != stream_iterations[stream_num])
                     {
+                        //if (to_shows[stream_num]) 
+                        //    thread_slice -> ShowDebugInfo("Waiting fullq...", 
+                        //        stream_num, stream_iterations[stream_num]);
                         to_shows[stream_num] = false;
-                        thread_slice -> ShowDebugInfo("Waiting fullq...", 
-                            stream_num, stream_iterations[stream_num]);
                         continue;
                     }
                 }
@@ -904,6 +910,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     cudaError_t    tretval            = cudaSuccess;
     char           cmssg[512];
     bool           to_show            = true;
+    bool           show_wait          = true;
 
     thread_slice -> ShowDebugInfo("Thread begin.");
     if (thread_slice -> retval = util::SetDevice(enactor->gpu_idx[gpu_num]))
@@ -912,6 +919,17 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     while (thread_slice -> status != ThreadSlice::Status::ToKill)
     {
         if (thread_slice -> retval) return;
+        if (thread_slice -> status == ThreadSlice::Status::Wait)
+        {
+            if (show_wait)
+            {
+                thread_slice -> ShowDebugInfo("Waiting...");
+                show_wait = false;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
+            continue;
+        }
+        show_wait = true;
         iteration  = thread_slice -> iteration;
 
         //s_queue -> GetSize(s_length, s_soli);

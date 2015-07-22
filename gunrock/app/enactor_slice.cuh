@@ -261,7 +261,7 @@ struct EnactorSlice
             this->num_outpu_streams = num_outpu_streams;
             if (num_outpu_streams != 0)
             {
-                num_events = 30;
+                num_events = 50;
                 if (retval = outpu_requests.Allocate(num_events)) return retval;
                 for (int i=0; i<num_events; i++)
                 {
@@ -601,7 +601,7 @@ struct EnactorSlice
             SizeT target_capacity = total_in_nodes * input_factor;
             for (int i=0; i<2; i++)
             {
-                if (retval = input_queues[i].Init(target_capacity, gpu_num, util::DEVICE, 30,
+                if (retval = input_queues[i].Init(target_capacity, gpu_num, util::DEVICE, 50,
                     Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                     temp_factor * target_capacity)) return retval;
                 if (retval = input_queues[i].Reset()) return retval;
@@ -619,7 +619,7 @@ struct EnactorSlice
             for (int gpu=0; gpu<num_gpus; gpu++)
                 total_out_nodes += num_out_nodes[gpu];
             SizeT target_capacity = total_out_nodes * outpu_factor;
-            if (retval = outpu_queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
+            if (retval = outpu_queue.Init(target_capacity, gpu_num, util::DEVICE, 100,
                 Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                 temp_factor * target_capacity)) return retval;
             if (retval = outpu_queue.Reset()) return retval;
@@ -634,7 +634,7 @@ struct EnactorSlice
             //subq__target_set  [1] = false;
 
             SizeT target_capacity = graph_slice->nodes * subq__factor;
-            if (retval = subq__queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
+            if (retval = subq__queue.Init(target_capacity, gpu_num, util::DEVICE, 50,
                 0, 0,
                 temp_factor * target_capacity)) return retval;
             if (retval = subq__queue.Reset()) return retval;
@@ -710,11 +710,11 @@ struct EnactorSlice
             fullq_target_set  [1] = false;*/
 
             SizeT target_capacity = graph_slice->nodes * fullq_factor;
-            if (retval = fullq_queue.Init(target_capacity, gpu_num, util::DEVICE, 30,
+            if (retval = fullq_queue.Init(target_capacity, gpu_num, util::DEVICE, 50,
                 0, 0,
                 temp_factor * target_capacity)) return retval;
             if (retval = fullq_queue.Reset()) return retval;
-            if (retval = fullq_queue.SetInputTarget(util::MaxValue<int>())) return retval;
+            //if (retval = fullq_queue.SetInputTarget(util::MaxValue<int>())) return retval;
 
             if (num_fullq_stream != 0)
             {

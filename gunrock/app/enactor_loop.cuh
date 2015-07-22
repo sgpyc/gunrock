@@ -336,13 +336,13 @@ public:
         int         selector   = frontier_attribute->selector;
         long long   iteration  = enactor_stats -> iteration;
 
-        if (Enactor::DEBUG)
+        /*if (Enactor::DEBUG)
         {
             sprintf(mssg, "queue_size = %d, request_length = %d",
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);
             ShowDebugInfo(mssg, iteration, stream_num); 
-        }
+        }*/
 
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, &frontier_queue->keys  [selector^1], 

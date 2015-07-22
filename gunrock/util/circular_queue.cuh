@@ -62,6 +62,15 @@ public:
             length(length_)
         {
         }
+
+        CqEvent& operator=(const CqEvent& src)
+        {
+            status = src.status;
+            offset = src.offset;
+            length = src.length;
+            event  = src.event ;
+            return *this;
+        }
     }; // end of CqEvent
 
 private:
@@ -70,8 +79,12 @@ private:
     int          gpu_num ;
     int          input_count;
     int          output_count;
-    int          target_input_count;
-    SizeT        target_output_pos; 
+    int          input_set_flip;
+    int          input_get_flip;
+    int          output_set_flip;
+    int          output_get_flip;
+    int          target_input_count[2];
+    SizeT        target_output_pos [2]; 
     SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
@@ -94,6 +107,7 @@ private:
     Array1D<SizeT, Value   > temp_value__associates;
     char         mssg[512];
     int          lock_counter;
+    bool         reduce_show;
 
 public:
     CircularQueue() :
@@ -102,8 +116,12 @@ public:
         gpu_num   (0   ),
         input_count(0  ),
         output_count(0 ),
-        target_input_count(MaxValue<int>()),
-        target_output_pos(0),
+        input_set_flip (0  ),
+        input_get_flip (0  ),
+        output_set_flip(0  ),
+        output_get_flip(0  ),
+        //target_input_count(MaxValue<int>()),
+        //target_output_pos(0),
         capacity  (0   ),
         size_occu (0   ),
         size_soli (0   ),
@@ -119,10 +137,15 @@ public:
         gpu_events(NULL),
         num_events(0   ),
         wait_resize(0  ),
-        lock_counter(0 )
+        lock_counter(0 ),
         //temp_capacity(0)
+        reduce_show(true)
     {
         SetName("cq");
+        target_input_count[0] = MaxValue<int>();
+        target_input_count[1] = MaxValue<int>();
+        target_output_pos [0] = MaxValue<SizeT>();
+        target_output_pos [1] = MaxValue<SizeT>();
     }
 
     ~CircularQueue()
@@ -211,8 +234,14 @@ public:
         size_occu = 0; size_soli = 0;
         wait_resize = 0;
         input_count = 0; output_count = 0;
-        target_input_count = MaxValue<int>();
-        target_output_pos = 0;
+        target_input_count[0] = MaxValue<int>();
+        target_input_count[1] = MaxValue<int>();
+        target_output_pos [0] = MaxValue<SizeT>();
+        target_output_pos [1] = MaxValue<SizeT>();
+        input_set_flip  = 0;
+        input_get_flip  = 0;
+        output_set_flip = 0;
+        output_get_flip = 0;
 
         if (temp_capacity != 0)
         {
@@ -287,22 +316,28 @@ public:
         return retval;
     }
 
-    void UpdateSize(bool in_critical = false)
+    cudaError_t UpdateSize(bool in_critical = false)
     {
+        cudaError_t retval = cudaSuccess;
         if (size_soli != size_occu)
         {
             Lock(in_critical);
-            EventCheck(0, true);
-            EventCheck(1, true);
-            Unlock(in_critical);
+            if (retval = EventCheck(0, true)) 
+                return Combined_Return(retval, in_critical);
+            if (retval = EventCheck(1, true))
+                return Combined_Return(retval, in_critical);
+            return Combined_Return(retval, in_critical);
         }
+        return retval;
     }
 
-    void GetSize(SizeT &size_occu, SizeT &size_soli, bool in_critical = false)
+    cudaError_t GetSize(SizeT &size_occu, SizeT &size_soli, bool in_critical = false)
     {
-        UpdateSize(in_critical);
+        cudaError_t retval = cudaSuccess;
+        if (retval = UpdateSize(in_critical)) return retval;
         size_soli = this->size_soli;
         size_occu = this->size_occu;
+        return retval;
     }
 
     SizeT GetSoliSize(bool in_critical = false)
@@ -408,14 +443,37 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         Lock(in_critical);
-        this -> target_input_count = target_input_count;
-        if (input_count == target_input_count)
-            target_output_pos = head_a;
+        this -> target_input_count[input_set_flip] = target_input_count;
         if (CQ_DEBUG)
         {
-            sprintf(mssg,"target_input_count -> %d",
-                target_input_count);
+            sprintf(mssg,"target_input_count[%d] -> %d",
+                input_set_flip, this -> target_input_count[input_set_flip]);
             ShowDebugInfo_(mssg);
+        }
+        //input_set_flip ^= 1;
+
+        if (input_count == this->target_input_count[input_get_flip])
+        {
+            target_output_pos[output_set_flip] = head_a;
+            if (CQ_DEBUG)
+            {
+                sprintf(mssg, "target_output_pos[%d] -> %d",
+                    output_set_flip, target_output_pos[output_set_flip]);
+                ShowDebugInfo_(mssg);
+            }
+            input_count -= this->target_input_count[input_get_flip];
+            this->target_input_count[input_get_flip] = MaxValue<int>();
+            //output_set_flip ^= 1;
+            //input_get_flip ^= 1;
+        } else if (input_count > this -> target_input_count[input_get_flip])
+        {
+            sprintf(mssg, "Error: target set too late,"
+                "input_count = %d, target_input_count[%d] = %d",
+                input_count, input_get_flip, 
+                this -> target_input_count[input_get_flip]);
+            ShowDebugInfo_(mssg);
+            return GRError(cudaErrorNotReady,
+                "target set too late", __FILE__, __LINE__);
         }
         return Combined_Return(retval, in_critical);
     }
@@ -443,10 +501,17 @@ public:
         size_occu = 0; size_soli = 0;
         wait_resize = 0;
         input_count = 0; output_count = 0;
-        target_input_count = MaxValue<int>();
-        target_output_pos = 0;
+        target_input_count[0] = MaxValue<int>();
+        target_input_count[1] = MaxValue<int>();
+        target_output_pos[0] = MaxValue<SizeT>();
+        target_output_pos[1] = MaxValue<SizeT>();
+        input_set_flip = 0;
+        input_get_flip = 0;
+        output_set_flip = 0;
+        output_get_flip = 0;
         events[0].clear();
         events[1].clear();
+        reduce_show = true;
         
         while (!empty_gpu_events.empty())
             empty_gpu_events.pop_front();
@@ -480,11 +545,10 @@ public:
         if (!CQ_DEBUG) return;
         else {
             char mssg[512];
-            sprintf(mssg, "%s %s\t %d ~ %d\t "
-                "dsize = %d\t size_o = %d\t size_s = %d\n"
-                " \t \t \t \t \t head_a = %d\t head_b = %d\t "
-                "tail_a = %d\t tail_b = %d\t "
-                "i_count = %d\t o_count = %d",
+            sprintf(mssg, "%s %s\t %d ~ %d, "
+                "dsize = %d, size_o = %d, size_s = %d,"
+                "head_a = %d, head_b = %d, tail_a = %d, tail_b = %d, "
+                "i_count = %d, o_count = %d",
                 function_name.c_str(), direction == 0? "->" : "<-",
                 start, end, dsize, size_occu, size_soli,
                 head_a, head_b, tail_a, tail_b,
@@ -572,7 +636,7 @@ public:
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
         //SizeT sum        = 0;
-        if (retval = AddSize(length, offsets, lengths, false, false, set_gpu)) return retval;
+        if (retval = AddSize(length, offsets, lengths, false, true, set_gpu)) return retval;
         offset = offsets[0];
 
         if (lengths[1] == 0)
@@ -711,7 +775,7 @@ public:
         //printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
         if (retval = ReduceSize(min_length, max_length, offsets, lengths, 
             //false, false, allow_smaller, target_input)) return retval;
-            false, false, target_meet, output_count)) return retval;
+            false, true, target_meet, output_count)) return retval;
 
         offset = offsets[0];
         length = lengths[0] + lengths[1];
@@ -866,13 +930,18 @@ public:
             if (head_a >= capacity) head_a -= capacity;
         }
         size_occu += length;
-        if (input_count == target_input_count)
+        if (input_count == target_input_count[input_get_flip])
         {
-            target_output_pos = head_a;
-            sprintf(mssg, "target_input_count = %d meet, "
-                "set target_output_pos -> %d",
-                target_input_count, target_output_pos);
+            target_output_pos[output_set_flip] = head_a;
+            sprintf(mssg, "target_input_count[%d] = %d meet, "
+                "set target_output_pos[%d] -> %d",
+                input_get_flip, target_input_count[input_get_flip], 
+                output_set_flip, target_output_pos[output_set_flip]);
             ShowDebugInfo_(mssg);
+            input_count -= target_input_count[input_get_flip];
+            target_input_count[input_get_flip] = MaxValue<int>();
+            //input_get_flip ^=1;
+            //output_set_flip ^= 1;
         }
 
         if (CQ_DEBUG)
@@ -906,7 +975,7 @@ public:
        
         if (allocated == DEVICE)
         {
-            if (retval = EventCheck(1, true)) 
+            if (retval = UpdateSize(true)) 
                 return Combined_Return(retval, in_critical);
         }
          
@@ -979,13 +1048,17 @@ public:
         }
         size_occu += length;
         size_soli -= length;
-        if (input_count == target_input_count)
+        if (input_count == target_input_count[input_get_flip])
         {
-            sprintf(mssg, "target_input_count = %d meet, "
-                "set target_output_pos -> %d",
-                target_input_count, target_output_pos);
+            sprintf(mssg, "target_input_count[%d] = %d meet, "
+                "set target_output_pos[%d] -> %d",
+                input_get_flip, target_input_count[input_get_flip], 
+                output_set_flip, target_output_pos[output_set_flip]);
             ShowDebugInfo_(mssg);
-            target_output_pos = head_a;
+            target_output_pos[output_set_flip] = head_a;
+            input_count -= target_input_count[input_get_flip];
+            //input_get_flip ^= 1;
+            //output_set_flip ^= 1;
         }
 
         if (CQ_DEBUG)
@@ -1021,15 +1094,26 @@ public:
             if (retval = EventCheck(0, true))
                 return Combined_Return(retval, in_critical);
         }
-       
+      
         length = size_soli < max_length ? size_soli : max_length;
-        if (input_count >= target_input_count && // target_output_pos set
-            ((target_output_pos >= tail_a &&     // normal situation
-              target_output_pos <= tail_a + length) || 
-             (target_output_pos <  tail_a &&     // warp around
-              target_output_pos + capacity < tail_a + length)))
+        if //(input_count >= target_input_count[input_get_flip] && // target_output_pos set
+           (((target_output_pos[output_get_flip] >= tail_a &&     // normal situation
+              target_output_pos[output_get_flip] <= tail_a + length) || 
+             (target_output_pos[output_get_flip] <  tail_a &&     // warp around
+              target_output_pos[output_get_flip] <= tail_a + length - capacity)))
         {
             on_target = true;
+        }
+
+        if (reduce_show || on_target)
+        {
+            sprintf(mssg, //"input_count = %d, target_input_count[%d] = %d, "
+                "target_output_pos[%d] = %d, tail_a = %d, length = %d, "
+                "capacity = %d", /*input_count, input_get_flip,
+                target_input_count[input_get_flip],*/ output_get_flip,
+                target_output_pos [output_get_flip], tail_a, length,
+                capacity);
+            ShowDebugInfo_(mssg);
         }
         //printf("size_soli = %d, size_occu = %d, input_count = %d, target_input = %d, min_length = %d, max_length = %d\n",
         //    size_soli, size_occu, input_count, target_input, min_length, max_length);
@@ -1070,6 +1154,7 @@ public:
                     queue_mutex.lock();
                 }
             }*/
+            reduce_show = false;
             retval = cudaErrorNotReady;
             return Combined_Return(retval, in_critical);
         }
@@ -1079,10 +1164,12 @@ public:
         if (CQ_DEBUG && on_target)
         {
             sprintf(mssg, "On target: size_soli = %d, size_occu = %d,"
-                " target_input = %d, input_count = %d, tail_a = %d,"
-                " length = %d, capacity = %d, target_output_pos = %d",
-                size_soli, size_occu, target_input_count, input_count,
-                tail_a, length, capacity, target_output_pos);
+                " target_input[%d] = %d, input_count = %d, tail_a = %d,"
+                " length = %d, capacity = %d, target_output_pos[%d] = %d",
+                size_soli, size_occu, input_get_flip, 
+                target_input_count[input_get_flip], 
+                input_count, tail_a, length, capacity, output_get_flip,
+                target_output_pos[output_get_flip]);
             ShowDebugInfo_(mssg);
         }
 
@@ -1114,19 +1201,22 @@ public:
 
         if (on_target)
         {
-            input_count -= target_input_count;
-            target_input_count = MaxValue<int>();
-            target_output_pos = 0;
+            //input_count -= target_input_count[input_get_flip];
+            //target_input_count[input_get_flip] = MaxValue<int>();
+            target_output_pos[output_get_flip] = MaxValue<SizeT>();
             if (target_meet != NULL) target_meet[0] = true;
             if (output_count_ != NULL) output_count_[0] = output_count;
             output_count = 0;
             if (CQ_DEBUG)
             {
-                sprintf(mssg, "target_input_count -> %d",
-                    target_input_count);
+                sprintf(mssg, //"target_input_count[%d] -> %d, "
+                    "target_output_pos[%d] -> %d, output_count -> 0",
+                    //input_get_flip, target_input_count[input_get_flip],
+                    output_get_flip, target_output_pos[output_get_flip]);
                 ShowDebugInfo_(mssg);
-                ShowDebugInfo_("output_count -> 0");
             }
+            //input_get_flip ^= 1;
+            //output_get_flip ^= 1;
         } else {
             if (target_meet != NULL) target_meet[0] = false;
         }
@@ -1211,12 +1301,14 @@ public:
                 Unlock();
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
                 Lock();
-                for (int i=0; i<2; i++)
-                if (retval = EventCheck(i, true))
-                {
-                    Unlock();
-                    return retval;
-                }
+                if (retval = UpdateSize(true))
+                    return Combined_Return(retval, in_critical);
+                //for (int i=0; i<2; i++)
+                //if (retval = EventCheck(i, true))
+                //{
+                //    Unlock();
+                //    return retval;
+                //}
             }
 
             if (retval = array.EnsureSize(capacity_, true)) 
@@ -1324,15 +1416,27 @@ public:
     void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
     {
         Lock(in_critical);
-        if (CQ_DEBUG)
+        if (length == 0)
         {
-            sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
-                "output_count = %d", 
-                direction, offset, length,
-                input_count, output_count);
-            ShowDebugInfo_(mssg);
+            //if (CQ_DEBUG)
+            //{
+            //    sprintf(mssg,"Event %d,%d,%d starts -> skip, input_count = %d, "
+            //        "output_count = %d",
+            //        direction, offset, length,
+            //        input_count, output_count);
+            //    ShowDebugInfo_(mssg);
+            //}
+        } else {
+            if (CQ_DEBUG)
+            {
+                sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
+                    "output_count = %d", 
+                    direction, offset, length,
+                    input_count, output_count);
+                ShowDebugInfo_(mssg);
+            }
+            events[direction].push_back(CqEvent(offset, length));
         }
-        events[direction].push_back(CqEvent(offset, length));
         Unlock(in_critical);
     }
 
@@ -1348,6 +1452,21 @@ public:
         if (allocated != DEVICE) return retval;
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
+
+        if (length == 0)
+        {
+            if (CQ_DEBUG)
+            {
+                //Lock(in_critical);
+                //sprintf(mssg, "Event %d,%d,%d sets -> skip, input_count = %d,"
+                //    " output_count = %d", 
+                //    direction, offset, length,
+                //    input_count, output_count);
+                //ShowDebugInfo_(mssg);
+                //Unlock(in_critical);
+            }
+            return retval;
+        }
 
         if (offset + length > capacity)
         { // single chunk crossing the end, and in event
@@ -1442,7 +1561,7 @@ public:
                 ShowDebugInfo_(mssg);
             }
         //}
-        EventCheck(direction, true);
+        //EventCheck(direction, true);
         Unlock(in_critical);
         return retval;
     }
@@ -1458,6 +1577,21 @@ public:
 
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
+
+        if (length == 0)
+        {
+            //if (CQ_DEBUG)
+            //{
+            //    Lock(in_critical);
+            //    sprintf(mssg, "Event %d,%d,%d done -> skip. input_count = %d,"
+            //        " output_count = %d", 
+            //        direction, offset, length,
+            //        input_count, output_count);
+            //    ShowDebugInfo_(mssg);
+            //    Unlock(in_critical);
+            //}
+            return retval;
+        }
 
         if (offset + length > capacity)
         { // single chunk crossing the end, and in event
@@ -1522,6 +1656,10 @@ public:
                         ShowDebugInfo_(mssg);
                     }
                     (*it).status = CqEvent::Finished;
+                    if (allocated == DEVICE && (*it).event != NULL)
+                    {
+                        empty_gpu_events.push_back((*it).event);
+                    }
                     break;
                 }
             }
@@ -1544,22 +1682,26 @@ public:
         cudaError_t retval = cudaSuccess;
         Lock(in_critical);
 
-        if (events[direction].size() == 0)
+        int size = events[direction].size();
+        int e_size = empty_gpu_events.size();
+        int size_ = events[direction^1].size();
+        if (size == 0)
         {
             Unlock(in_critical);
             return retval;
         }
 
-        typename std::list<CqEvent>::iterator it;
-        //sprintf(mssg, "EventCheck direction = %d, size = %d",
-        //    direction, events[direction].size());
+        typename std::list<CqEvent>::iterator it = events[direction].begin();
+        //sprintf(mssg, "EventCheck direction = %d, size = %d, empty_size = %d",
+        //    direction, size, e_size);
         //ShowDebugInfo_(mssg);
         for (it  = events[direction].begin();
              it != events[direction].end(); it++)
         {
             if ((*it).status == CqEvent::Assigned)
             {
-                if ((*it).length == 0 && (*it).event == NULL)
+                if (((*it).length == 0 && (*it).event == NULL) || 
+                    (allocated != DEVICE))
                     retval = cudaSuccess;
                 else retval = cudaEventQuery((*it).event);
                 if (retval == cudaSuccess)
@@ -1574,7 +1716,8 @@ public:
                             input_count, output_count);
                         ShowDebugInfo_(mssg);
                     }
-                    empty_gpu_events.push_back((*it).event);
+                    if (allocated == DEVICE && (*it).event != NULL)
+                        empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {
                     if (CQ_DEBUG)
                         ShowDebugInfo_("Error");
@@ -1611,7 +1754,9 @@ public:
                         if (head_b >= capacity) head_b -= capacity;
                         event -> status = CqEvent::Cleared;
                         size_soli += event -> length;
-                        sprintf(mssg, "head_b -> %d, size_soli -> %d",
+                        sprintf(mssg, "Event %d,%d,%d cleared, "
+                            "head_b -> %d, size_soli -> %d",
+                            direction, event->offset, event->length,
                             head_b, size_soli);
                         ShowDebugInfo_(mssg);
                     } else {
@@ -1626,7 +1771,9 @@ public:
                         if (tail_b >= capacity) tail_b -= capacity;
                         event -> status = CqEvent::Cleared;
                         size_occu -= event -> length;
-                        sprintf(mssg, "tail_b -> %d, size_occu -> %d",
+                        sprintf(mssg, "Event %d,%d,%d cleared, "
+                            "tail_b -> %d, size_occu -> %d",
+                            direction, event->offset, event->length,
                             tail_b, size_occu);
                         ShowDebugInfo_(mssg);
                     } else {
