@@ -470,6 +470,7 @@ public:
             }
             input_count -= this->target_input_count[input_get_flip];
             this->target_input_count[input_get_flip] = MaxValue<int>();
+            input_iteration ++;
             //output_set_flip ^= 1;
             //input_get_flip ^= 1;
         } else if (input_count > this -> target_input_count[input_get_flip])
