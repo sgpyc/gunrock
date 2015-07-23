@@ -23,6 +23,7 @@
 #include <gunrock/util/error_utils.cuh>
 #include <gunrock/util/array_utils.cuh>
 #include <gunrock/util/test_utils.h>
+#include <gunrock/util/multithread_utils.cuh>
 
 namespace gunrock {
 namespace util {
@@ -72,7 +73,9 @@ public:
             return *this;
         }
     }; // end of CqEvent
-
+    long long    input_iteration;
+    long long    output_iteration;
+ 
 private:
     std::string  name;      // name of the queue
     int          gpu_idx ;  // gpu index
@@ -120,6 +123,8 @@ public:
         input_get_flip (0  ),
         output_set_flip(0  ),
         output_get_flip(0  ),
+        input_iteration(0  ),
+        output_iteration(0 ),
         //target_input_count(MaxValue<int>()),
         //target_output_pos(0),
         capacity  (0   ),
@@ -242,6 +247,8 @@ public:
         input_get_flip  = 0;
         output_set_flip = 0;
         output_get_flip = 0;
+        input_iteration = 0;
+        output_iteration = 0;
 
         if (temp_capacity != 0)
         {
@@ -448,7 +455,7 @@ public:
         {
             sprintf(mssg,"target_input_count[%d] -> %d",
                 input_set_flip, this -> target_input_count[input_set_flip]);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, input_iteration);
         }
         //input_set_flip ^= 1;
 
@@ -459,7 +466,7 @@ public:
             {
                 sprintf(mssg, "target_output_pos[%d] -> %d",
                     output_set_flip, target_output_pos[output_set_flip]);
-                ShowDebugInfo_(mssg);
+                ShowDebugInfo_(mssg, output_iteration);
             }
             input_count -= this->target_input_count[input_get_flip];
             this->target_input_count[input_get_flip] = MaxValue<int>();
@@ -471,7 +478,7 @@ public:
                 "input_count = %d, target_input_count[%d] = %d",
                 input_count, input_get_flip, 
                 this -> target_input_count[input_get_flip]);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, input_iteration);
             return GRError(cudaErrorNotReady,
                 "target set too late", __FILE__, __LINE__);
         }
@@ -509,6 +516,8 @@ public:
         input_get_flip = 0;
         output_set_flip = 0;
         output_get_flip = 0;
+        input_iteration = 0;
+        output_iteration = 0;
         events[0].clear();
         events[1].clear();
         reduce_show = true;
@@ -540,7 +549,8 @@ public:
         SizeT       start,
         SizeT       end,
         SizeT       dsize,
-        Value*      value = NULL)
+        Value*      value = NULL,
+        long long   iteration = -1)
     {
         if (!CQ_DEBUG) return;
         else {
@@ -553,17 +563,21 @@ public:
                 start, end, dsize, size_occu, size_soli,
                 head_a, head_b, tail_a, tail_b,
                 input_count, output_count);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, iteration);
         }
     }
 
     void ShowDebugInfo_(
-        const char* mssg)
+        const char* mssg,
+        long long iteration = -1)
     {
+        char str[526];
+        sprintf(str, "%s\t %s", name.c_str(), mssg);
         if (!CQ_DEBUG) return;
         else {
-            printf("%d\t \t \t %s\t %s\n", gpu_num, name.c_str(), mssg);
-            fflush(stdout);
+            //printf("%d\t \t \t %s\t %s\n", gpu_num, name.c_str(), mssg);
+            //fflush(stdout);
+            cpu_mt::PrintMessage(str, gpu_num, iteration);
         }
     }
 
@@ -580,13 +594,15 @@ public:
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
+        long long iteration = input_iteration;
         if (retval = AddSize(length, offsets, lengths)) return retval;
 
         for (int i=0; i<2; i++)
         {
             if (lengths[i] == 0) continue;
             if (CQ_DEBUG)
-                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], lengths[i]);
+                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], 
+                lengths[i], NULL, iteration);
             //if (lengths[i] != 0)
             //{
                 if (retval = this->array.Move_In(
@@ -636,6 +652,8 @@ public:
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
         //SizeT sum        = 0;
+        //long long iteration = input_iteration;
+
         if (retval = AddSize(length, offsets, lengths, false, true, set_gpu)) return retval;
         offset = offsets[0];
 
@@ -771,6 +789,7 @@ public:
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
         char  mssg[512];
+        long long iteration = output_iteration;
 
         //printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
         if (retval = ReduceSize(min_length, max_length, offsets, lengths, 
@@ -782,7 +801,7 @@ public:
         if (CQ_DEBUG)
         {
             sprintf(mssg, "Poped, length = %d, offset = %d", length, offset);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, iteration);
         }
 
         if (lengths[1] == 0)
@@ -848,6 +867,7 @@ public:
         bool   set_gpu = false)
     {
         cudaError_t retval = cudaSuccess;
+        long long iteration = input_iteration;
 
         // in critical sectioin
         while (wait_resize != 0)
@@ -930,6 +950,7 @@ public:
             if (head_a >= capacity) head_a -= capacity;
         }
         size_occu += length;
+        iteration = input_iteration;
         if (input_count == target_input_count[input_get_flip])
         {
             target_output_pos[output_set_flip] = head_a;
@@ -937,15 +958,17 @@ public:
                 "set target_output_pos[%d] -> %d",
                 input_get_flip, target_input_count[input_get_flip], 
                 output_set_flip, target_output_pos[output_set_flip]);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, iteration);
             input_count -= target_input_count[input_get_flip];
             target_input_count[input_get_flip] = MaxValue<int>();
+            input_iteration ++;
             //input_get_flip ^=1;
             //output_set_flip ^= 1;
         }
 
         if (CQ_DEBUG)
-            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
+            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length, 
+                NULL, iteration);
         return Combined_Return(retval, in_critical);
     }
 
@@ -957,12 +980,13 @@ public:
         bool   single_chunk = true)
     {
         cudaError_t retval = cudaSuccess;
+        long long iteration = input_iteration;
+        bool past_wait = false;
 
         // in critical sectioin
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         Lock(in_critical);
-        bool past_wait = false;
         while (!past_wait)
         {
             if (wait_resize == 0) {past_wait = true; break;}
@@ -1048,23 +1072,27 @@ public:
         }
         size_occu += length;
         size_soli -= length;
+        iteration = input_iteration;
         if (input_count == target_input_count[input_get_flip])
         {
             sprintf(mssg, "target_input_count[%d] = %d meet, "
                 "set target_output_pos[%d] -> %d",
                 input_get_flip, target_input_count[input_get_flip], 
                 output_set_flip, target_output_pos[output_set_flip]);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, input_iteration);
             target_output_pos[output_set_flip] = head_a;
             input_count -= target_input_count[input_get_flip];
+            input_iteration ++;
             //input_get_flip ^= 1;
             //output_set_flip ^= 1;
         }
 
         if (CQ_DEBUG)
         {
-            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length);
-            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
+            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length,
+                NULL, iteration);
+            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length,
+                NULL, iteration);
         }
         return Combined_Return(retval, in_critical);
     }
@@ -1084,6 +1112,8 @@ public:
         cudaError_t retval = cudaSuccess;
         SizeT length = 0;
         bool  on_target = false;
+        long long iteration = output_iteration;
+
         // in critial section
         while (wait_resize != 0)
             std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -1113,7 +1143,7 @@ public:
                 target_input_count[input_get_flip],*/ output_get_flip,
                 target_output_pos [output_get_flip], tail_a, length,
                 capacity);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, output_iteration);
         }
         //printf("size_soli = %d, size_occu = %d, input_count = %d, target_input = %d, min_length = %d, max_length = %d\n",
         //    size_soli, size_occu, input_count, target_input, min_length, max_length);
@@ -1170,10 +1200,11 @@ public:
                 target_input_count[input_get_flip], 
                 input_count, tail_a, length, capacity, output_get_flip,
                 target_output_pos[output_get_flip]);
-            ShowDebugInfo_(mssg);
+            ShowDebugInfo_(mssg, output_iteration);
         }
 
         output_count ++;
+        iteration = output_iteration;
         if (tail_a + length > capacity)
         { // splict
             offsets[0] = tail_a;
@@ -1213,7 +1244,8 @@ public:
                     "target_output_pos[%d] -> %d, output_count -> 0",
                     //input_get_flip, target_input_count[input_get_flip],
                     output_get_flip, target_output_pos[output_get_flip]);
-                ShowDebugInfo_(mssg);
+                output_iteration ++;
+                ShowDebugInfo_(mssg, output_iteration);
             }
             //input_get_flip ^= 1;
             //output_get_flip ^= 1;
@@ -1222,7 +1254,8 @@ public:
         }
 
         if (CQ_DEBUG)
-            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length);
+            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length, 
+            NULL, iteration);
         return Combined_Return(retval, in_critical);
     }
 

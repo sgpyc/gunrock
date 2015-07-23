@@ -332,6 +332,7 @@ void SimpleReferenceBfs(
 
     printf("CPU BFS finished in %lf msec. cpu_search_depth: %d\n",
            elapsed, search_depth);
+    fflush(stdout);
 }
 
 /**
@@ -450,7 +451,7 @@ void RunTests(Test_Parameter *parameter)
             reference_check_label,
             reference_check_preds,
             src);
-        printf("\n");
+        //printf("\n");
     }
 
     Stats     *stats       = new Stats("GPU BFS");

@@ -545,8 +545,8 @@ protected:
 
             for (int stream=0; stream < num_subq__streams + num_fullq_stream ; stream++)
             {
-                printf("gpu_num = %d, stream = %d, num_subq__streams = %d, num_fullq_stream = %d\n",
-                    gpu_num, stream, num_subq__streams, num_fullq_stream);fflush(stdout);
+                //printf("%d\t \t %d\t num_subq__streams = %d, num_fullq_stream = %d\n",
+                //    gpu_num, stream, num_subq__streams, num_fullq_stream);fflush(stdout);
                 EnactorStats *enactor_stats_ = (stream < num_subq__streams) ?
                     enactor_slice->subq__enactor_statses + stream :
                     enactor_slice->fullq_enactor_stats   + stream - num_subq__streams;

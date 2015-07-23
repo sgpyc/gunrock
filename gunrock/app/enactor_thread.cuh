@@ -982,8 +982,9 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         //s_queue -> ResetCounts();
         //s_queue -> ChangeInputCount(0 - s_target_count);
         //s_queue -> ResetOutputCount();
-        thread_slice -> ShowDebugInfo("Got job.");
-
+        
+        sprintf(cmssg, "Got job. length = %d", s_length);
+        thread_slice -> ShowDebugInfo(cmssg);
         if (num_streams >0 && enactor -> using_fullq)
         {
             iteration_loop = (IterationT*)enactor_slice -> fullq_iteration_loop;

@@ -512,7 +512,7 @@ public:
 
                     sprintf(mssg, "out_length[%d] = %d",
                         stream_num + start_peer, t_out_lengths[0][stream_num]);
-                    ShowDebugInfo(mssg, -1, stream_num);
+                    ShowDebugInfo(mssg, -1, stream_num + start_peer);
                     done_markers[stream_num] = 1; stream_counter ++;
                     m_handle = m_handles[0] + stream_num;
                     m_handle -> direction    = direction;
