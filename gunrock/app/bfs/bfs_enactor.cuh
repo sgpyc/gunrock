@@ -287,13 +287,13 @@ struct BFSIteration : public IterationBase <
         int           selector           = frontier_attribute->selector;
         long long     iteration          = enactor_stats -> iteration;
 
-        if (Enactor::DEBUG)
+        /*if (Enactor::DEBUG)
         {
             sprintf(this -> mssg, "queue_size = %d, request_length = %d",
                 frontier_queue -> keys[selector^1].GetSize(),
                 request_length);
-            this -> ShowDebugInfo(this -> mssg, stream_num, iteration);
-        }
+            this -> ShowDebugInfo(this -> mssg, iteration, stream_num);
+        }*/
 
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, 

@@ -605,8 +605,9 @@ struct EnactorSlice
                     Enactor::NUM_VERTEX_ASSOCIATES, Enactor::NUM_VALUE__ASSOCIATES,
                     temp_factor * target_capacity)) return retval;
                 if (retval = input_queues[i].Reset()) return retval;
-                input_queues[i].input_iteration = 1;
-                input_queues[i].output_iteration = 1;
+                input_queues[i].input_iteration = (i==0)?2:1;
+                input_queues[i].output_iteration = (i==0)?2:1;
+                input_queues[i].iteration_jump = 2;
                 input_queues[i].SetInputTarget(num_gpus - 1);
             }
         }

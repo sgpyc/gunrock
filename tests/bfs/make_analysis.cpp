@@ -181,29 +181,37 @@ void Length2Str(int ite, int gpu, int** counter, SizeT*** length, char str[])
     Length2Str(counter[ite][gpu], length[ite][gpu], str);
 }
 
+SizeT SumLength(int size, SizeT* lengths)
+{
+    SizeT sum = 0;
+    for (int i=0; i<size; i++)
+        sum += (lengths[i] < 0) ? 0 : lengths[i];
+    return sum;
+}
+
 int main(int argc, char* argv[])
 {
     SizeT ***input_in__length  = NULL;
     int   ** input_in__counter = NULL;
-    int   ***input_in__marker  = NULL;
+    //int   ***input_in__marker  = NULL;
     int   ** input_target      = NULL;
     SizeT ***input_out_length  = NULL;
     int   ** input_out_counter = NULL;
-    int   ***input_out_marker  = NULL;
+    //int   ***input_out_marker  = NULL;
     SizeT ***subq__in__length  = NULL;
     int   ** subq__in__counter = NULL;
-    int   ***subq__in__marker  = NULL;
+    //int   ***subq__in__marker  = NULL;
     int   ** subq__target      = NULL;
     SizeT ***subq__out_length  = NULL;
     int   ** subq__out_counter = NULL;
-    int   ***subq__out_marker  = NULL;
+    //int   ***subq__out_marker  = NULL;
     SizeT ***fullq_in__length  = NULL;
     int   ** fullq_in__counter = NULL;
-    int   ***fullq_in__marker  = NULL;
+    //int   ***fullq_in__marker  = NULL;
     int   ** fullq_target      = NULL;
     SizeT ***fullq_out_length  = NULL;
     int   ** fullq_out_counter = NULL;
-    int   ***fullq_out_marker  = NULL;
+    //int   ***fullq_out_marker  = NULL;
     SizeT ***outpu_out_length  = NULL;
 
     num_gpus = atoi(argv[1]);
@@ -315,64 +323,78 @@ int main(int argc, char* argv[])
                         <<input_target[i][gpu]<<", should be "
                         <<num_gpus -1<<endl;
 
+                if (subq__target[i][gpu] != -1 || input_out_counter[i][gpu] !=0)
                 if (subq__target[i][gpu] != input_out_counter[i][gpu] + 1)
                     cout<<i<<"\t"<<gpu<<" : Error, subq__target ("
                         <<subq__target[i][gpu]<<") != input_out_counter("
                         <<input_out_counter[i][gpu]<<") + 1"<<endl;
 
+                if (fullq_target[i][gpu] != -1 || subq__out_counter[i][gpu] !=0)
                 if (fullq_target[i][gpu] != subq__out_counter[i][gpu])
                     cout<<i<<"\t"<<gpu<<" : Error, fullq_target ("
                         <<fullq_target[i][gpu]<<") != subq__out_counter("
                         <<subq__out_counter[i][gpu]<<")"<<endl;
 
-                SizeT input_in__sum = 0;
+                SizeT input_in__sum = SumLength(input_in__counter[i][gpu],
+                    input_in__length[i][gpu]);
                 SizeT outpu_sum = 0;
-                if (i>0)
-                for (int j=0; j<input_in__counter[i][gpu]; j++)
-                    input_in__sum += input_in__length[i][gpu][j];
+                //if (i>0)
+                //for (int j=0; j<input_in__counter[i][gpu]; j++)
+                //    input_in__sum += input_in__length[i][gpu][j];
                 if (i>0)
                 for (int peer=0; peer<num_gpus; peer++)
                 {
                     if (gpu == peer) continue;
                     int gpu_ = (gpu < peer)? gpu+1 : gpu;
+                    if (outpu_out_length[i-1][peer][gpu_] > 0)
                     outpu_sum += outpu_out_length[i-1][peer][gpu_];
                 }
-                if (i!=0 && input_in__sum != outpu_sum)
+                if (i>0 && input_in__sum != outpu_sum)
                     cout<<i<<"\t"<<gpu<<" : Error, input_in__sum ("
                         <<input_in__sum<<") != outpu_sum ("
                         <<outpu_sum<<")"<<endl;
 
                 SizeT input_out_sum = 0;
-                if (i>0) input_out_sum += outpu_out_length[i-1][gpu][0];
-                for (int j=0; j<input_out_counter[i][gpu]; j++)
-                    input_out_sum += input_out_length[i][gpu][j];
-                SizeT subq__in__sum = 0;
-                for (int j=0 ;j<subq__in__counter[i][gpu]; j++)
-                    subq__in__sum += subq__in__length[i][gpu][j];
+                if (i>0 && outpu_out_length[i-1][gpu][0] >= 0) 
+                    input_out_sum = outpu_out_length[i-1][gpu][0];
+                input_out_sum += SumLength(input_out_counter[i][gpu],
+                    input_out_length[i][gpu]);
+                //for (int j=0; j<input_out_counter[i][gpu]; j++)
+                //    input_out_sum += input_out_length[i][gpu][j];
+                SizeT subq__in__sum = SumLength(subq__in__counter[i][gpu],
+                    subq__in__length[i][gpu]);
+                //for (int j=0 ;j<subq__in__counter[i][gpu]; j++)
+                //    subq__in__sum += subq__in__length[i][gpu][j];
                 if (i!= 0 && input_out_sum != subq__in__sum)
                     cout<<i<<"\t"<<gpu<<" : Error, subq__in__sum ("
                         <<subq__in__sum<<") != input_out_sum ("
                         <<input_out_sum<<")"<<endl;
 
-                SizeT subq__out_sum = 0;
-                for (int j=0; j<subq__out_counter[i][gpu]; j++)
-                    subq__out_sum += subq__out_length[i][gpu][j];
-                SizeT fullq_in__sum = 0;
-                for (int j=0; j<fullq_in__counter[i][gpu]; j++)
-                    fullq_in__sum += fullq_in__length[i][gpu][j];
+                SizeT subq__out_sum = SumLength(subq__out_counter[i][gpu],
+                    subq__out_length[i][gpu]);
+                //for (int j=0; j<subq__out_counter[i][gpu]; j++)
+                //    subq__out_sum += subq__out_length[i][gpu][j];
+                SizeT fullq_in__sum = SumLength(fullq_in__counter[i][gpu],
+                    fullq_in__length[i][gpu]);
+                //for (int j=0; j<fullq_in__counter[i][gpu]; j++)
+                //    fullq_in__sum += fullq_in__length[i][gpu][j];
                 if (subq__out_sum != fullq_in__sum)
                     cout<<i<<"\t"<<gpu<<" : Error, fullq_in__sum ("
                         <<fullq_in__sum<<") != subq__out_sum ("
                         <<subq__out_sum<<")"<<endl;
 
-                SizeT fullq_out_sum = 0;
-                for (int j=0; j<fullq_out_counter[i][gpu]; j++)
-                    fullq_out_sum += fullq_out_length[i][gpu][j];
-                SizeT outpu_length_sum = 0;
-                for (int j=0; j<num_gpus; j++)
-                    outpu_length_sum += outpu_out_length[i][gpu][j];
+                SizeT fullq_out_sum = SumLength(fullq_out_counter[i][gpu],
+                    fullq_out_length[i][gpu]);
+                //for (int j=0; j<fullq_out_counter[i][gpu]; j++)
+                //    fullq_out_sum += (fullq_out_length[i][gpu][j] < 0) ?
+                //        0 : fullq_out_length[i][gpu][j];
+                SizeT outpu_length_sum = SumLength(num_gpus,
+                    outpu_out_length[i][gpu]);
+                //for (int j=0; j<num_gpus; j++)
+                //    outpu_length_sum += outpu_out_length[i][gpu][j];
                 if (fullq_out_counter[i][gpu] == 0)
                     fullq_out_sum = fullq_in__sum;
+                
                 if (fullq_out_sum != outpu_length_sum)
                     cout<<i<<"\t"<<gpu<<" : Error, outpu_length_sum ("
                         <<outpu_length_sum<<") != fullq_out_sum ("

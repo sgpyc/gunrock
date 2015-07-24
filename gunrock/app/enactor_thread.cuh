@@ -509,7 +509,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     SizeT         *s_offsets          = enactor_slice -> subq__s_offsets + 0;
     bool          *core_dones         = enactor_slice -> subq__core_dones + 0;
     int            stream_num         = 0;
-    long long      iteration          = 0;
+    //long long      iteration          = 0;
     //long long      iteration_         = 0;
     std::string    mssg               = "";
     IterationT    *iteration_loops    = NULL;
@@ -553,7 +553,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
         }
 
         show_wait = true;
-        iteration  = thread_slice -> iteration;
+        //iteration  = thread_slice -> iteration;
         //iteration_ = iteration % 4;
         iteration_loops = (IterationT*)enactor_slice -> subq__iteration_loops;
         if (enactor -> num_gpus > 1 || enactor -> using_fullq)
@@ -658,8 +658,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     return;
                 }
 
-                stream_iterations[stream_num] = iteration;
-                enactor_stats -> iteration = iteration;
+                stream_iterations[stream_num] = thread_slice -> iteration;
+                enactor_stats -> iteration = thread_slice -> iteration;
                 //if (s_lengths[stream_num] < enactor_slice -> subq__min_length)
                 if (s_target_meet)
                 { // iteration change

@@ -75,6 +75,7 @@ public:
     }; // end of CqEvent
     long long    input_iteration;
     long long    output_iteration;
+    long long    iteration_jump;
  
 private:
     std::string  name;      // name of the queue
@@ -125,6 +126,7 @@ public:
         output_get_flip(0  ),
         input_iteration(0  ),
         output_iteration(0 ),
+        iteration_jump  (1 ),
         //target_input_count(MaxValue<int>()),
         //target_output_pos(0),
         capacity  (0   ),
@@ -470,7 +472,7 @@ public:
             }
             input_count -= this->target_input_count[input_get_flip];
             this->target_input_count[input_get_flip] = MaxValue<int>();
-            input_iteration ++;
+            input_iteration += iteration_jump;
             //output_set_flip ^= 1;
             //input_get_flip ^= 1;
         } else if (input_count > this -> target_input_count[input_get_flip])
@@ -962,7 +964,7 @@ public:
             ShowDebugInfo_(mssg, iteration);
             input_count -= target_input_count[input_get_flip];
             target_input_count[input_get_flip] = MaxValue<int>();
-            input_iteration ++;
+            input_iteration += iteration_jump;
             //input_get_flip ^=1;
             //output_set_flip ^= 1;
         }
@@ -1083,7 +1085,7 @@ public:
             ShowDebugInfo_(mssg, input_iteration);
             target_output_pos[output_set_flip] = head_a;
             input_count -= target_input_count[input_get_flip];
-            input_iteration ++;
+            input_iteration += iteration_jump;
             //input_get_flip ^= 1;
             //output_set_flip ^= 1;
         }
@@ -1127,13 +1129,23 @@ public:
         }
       
         length = size_soli < max_length ? size_soli : max_length;
+        SizeT t_o_pos = target_output_pos[output_get_flip];
         if //(input_count >= target_input_count[input_get_flip] && // target_output_pos set
-           (((target_output_pos[output_get_flip] >= tail_a &&     // normal situation
-              target_output_pos[output_get_flip] <= tail_a + length) || 
-             (target_output_pos[output_get_flip] <  tail_a &&     // warp around
-              target_output_pos[output_get_flip] <= tail_a + length - capacity)))
+           (((t_o_pos >= tail_a &&     // normal situation
+              t_o_pos <= tail_a + length) || 
+             (t_o_pos <  tail_a &&     // warp around
+              t_o_pos <= tail_a + length - capacity)))
         {
             on_target = true;
+            if (t_o_pos >= tail_a &&
+                t_o_pos <= tail_a + length)
+            {
+                length = t_o_pos - tail_a;
+            } else if (t_o_pos < tail_a &&
+                t_o_pos <= tail_a + length - capacity)
+            {
+                length = t_o_pos + capacity - tail_a;    
+            }
         }
 
         if (reduce_show || on_target)
@@ -1190,23 +1202,24 @@ public:
             return Combined_Return(retval, in_critical);
         }
 
+        output_count ++;
+        iteration = output_iteration; 
         //if (CQ_DEBUG && size_soli < min_length && allow_smaller && 
         //    target_input <= input_count)
         if (CQ_DEBUG && on_target)
         {
             sprintf(mssg, "On target: size_soli = %d, size_occu = %d,"
-                " target_input[%d] = %d, input_count = %d, tail_a = %d,"
+                " t_input[%d] = %d, i_count = %d, o_count = %d, tail_a = %d,"
                 " length = %d, capacity = %d, target_output_pos[%d] = %d",
                 size_soli, size_occu, input_get_flip, 
                 target_input_count[input_get_flip], 
-                input_count, tail_a, length, capacity, output_get_flip,
+                input_count, output_count,tail_a, length, 
+                capacity, output_get_flip,
                 target_output_pos[output_get_flip]);
             ShowDebugInfo_(mssg, output_iteration);
         }
 
-        output_count ++;
-        iteration = output_iteration;
-        if (tail_a + length > capacity)
+       if (tail_a + length > capacity)
         { // splict
             offsets[0] = tail_a;
             lengths[0] = capacity - tail_a;
@@ -1245,7 +1258,7 @@ public:
                     "target_output_pos[%d] -> %d, output_count -> 0",
                     //input_get_flip, target_input_count[input_get_flip],
                     output_get_flip, target_output_pos[output_get_flip]);
-                output_iteration ++;
+                output_iteration += iteration_jump;
                 ShowDebugInfo_(mssg, output_iteration);
             }
             //input_get_flip ^= 1;
@@ -1757,7 +1770,7 @@ public:
                         ShowDebugInfo_("Error");
                     Unlock(in_critical);
                     return retval;
-                }
+                } else retval = cudaSuccess;
             }
         }
         SizeCheck(direction, true);
