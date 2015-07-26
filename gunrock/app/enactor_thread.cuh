@@ -455,6 +455,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         
         grid_size = length/256+1;
         if (grid_size>512) grid_size=512;
+        iteration_loop -> gpu_num               = gpu_num;
+        iteration_loop -> stream_num            = stream_selector;
         iteration_loop -> num_vertex_associates = num_vertex_associates;
         iteration_loop -> num_value__associates = num_value__associates;
         iteration_loop -> grid_size             = grid_size;
@@ -462,6 +464,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         iteration_loop -> stream                = stream;
         iteration_loop -> num_elements          = length;
         iteration_loop -> data_slice            = data_slice;
+        iteration_loop -> h_e_handle            = e_handles -> GetPointer(util::HOST) + stream_selector;
         iteration_loop -> d_e_handle            = e_handles -> GetPointer(util::DEVICE) + stream_selector;
 
         if (thread_slice -> retval = iteration_loop -> Expand_Incoming())
@@ -767,8 +770,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         to_shows[stream_num])) return;
                     if (to_shows[stream_num] == false) 
                     {
-                        thread_slice -> ShowDebugInfo("Waiting subq...", 
-                            stream_num, stream_iterations[stream_num]);
+                        //thread_slice -> ShowDebugInfo("Waiting subq...", 
+                        //    stream_num, stream_iterations[stream_num]);
                         continue;
                     }
                     core_dones[stream_num] = true;

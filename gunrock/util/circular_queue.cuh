@@ -54,13 +54,15 @@ public:
         SizeT       offset;
         SizeT       length;
         cudaEvent_t event ;
+        bool        externel;
 
         CqEvent(
             SizeT offset_,
             SizeT length_) :
             status(New    ),
             offset(offset_),
-            length(length_)
+            length(length_),
+            externel(false)
         {
         }
 
@@ -70,6 +72,7 @@ public:
             offset = src.offset;
             length = src.length;
             event  = src.event ;
+            externel = src.externel;
             return *this;
         }
     }; // end of CqEvent
@@ -1299,6 +1302,8 @@ public:
                         return retval;
                     if (retval = SetDevice(gpu_idx)) return retval;
                 }
+                sprintf(mssg, "TempCapacity -> %d", temp_capacity);
+                ShowDebugInfo_(mssg);
                 if (retval = temp_array            .EnsureSize(
                     temp_capacity                        , false, 0, allocated))
                     return retval;
@@ -1493,7 +1498,9 @@ public:
         SizeT length, 
         cudaStream_t stream = 0, 
         bool in_critical = false,
-        bool set_gpu     = false)
+        bool set_gpu     = false,
+        cudaEvent_t* src_event = NULL,
+        cudaEvent_t* des_event = NULL)
     {
         cudaError_t retval = cudaSuccess;
         if (allocated != DEVICE) return retval;
@@ -1555,8 +1562,10 @@ public:
         //for (int i=0; i<2; i++)
         //{
             cudaEvent_t event = NULL;
-            //if (lengths[i] == 0 && i!=0) continue;
-            //if (lengths[i] != 0)
+            if (src_event == NULL)
+            {
+                //if (lengths[i] == 0 && i!=0) continue;
+                //if (lengths[i] != 0)
             //{
                 if (empty_gpu_events.empty())
                 {
@@ -1573,6 +1582,9 @@ public:
                     return retval;
                 }
             //}
+            } else {
+                event = src_event[0];
+            }
 
             typename std::list<CqEvent>::iterator it = events[direction].begin();
             for (it  = events[direction].begin(); 
@@ -1592,6 +1604,9 @@ public:
                     }
                     (*it).event = event;
                     (*it).status = CqEvent::Assigned;
+                    if (src_event != NULL) (*it).externel = true;
+                    else (*it).externel = false;
+                    if (des_event != NULL) des_event[0] = event;
                     break;
                 } //else {
                 //    sprintf(mssg, "EventSet looking for %d,%d,%d, having %d,%d,%d",
@@ -1703,7 +1718,8 @@ public:
                         ShowDebugInfo_(mssg);
                     }
                     (*it).status = CqEvent::Finished;
-                    if (allocated == DEVICE && (*it).event != NULL)
+                    if (allocated == DEVICE && (*it).event != NULL 
+                        && !(*it).externel)
                     {
                         empty_gpu_events.push_back((*it).event);
                     }
@@ -1763,7 +1779,8 @@ public:
                             input_count, output_count);
                         ShowDebugInfo_(mssg);
                     }
-                    if (allocated == DEVICE && (*it).event != NULL)
+                    if (allocated == DEVICE && (*it).event != NULL &&
+                        !(*it).externel)
                         empty_gpu_events.push_back((*it).event);
                 } else if (retval != cudaErrorNotReady) {
                     if (CQ_DEBUG)

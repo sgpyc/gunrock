@@ -40,6 +40,8 @@ namespace bfs {
         typename ExpandIncomingHandle>
     __global__ void Expand_Incoming_BFS (
         ExpandIncomingHandle* d_handle)
+        //int gpu_num,
+        //int thread_num)
     {
         __shared__ ExpandIncomingHandle s_handle;
         const SizeT STRIDE = gridDim.x * blockDim.x;
@@ -64,9 +66,14 @@ namespace bfs {
                if (atomicMin(s_handle.vertex_orgs[0]+key, label) <= label)
                {
                    s_handle.keys_out[x]=-1;
+                   //if (key < 10) printf("Expand %d, %d, %d: label[%d](%d) -> %d skip\n", 
+                   //     gpu_num, thread_num, s_handle.num_elements, key, 
+                   //     s_handle.vertex_orgs[0][key], label);
                    x+=STRIDE;
                    continue;
                }
+               //if (key < 10) printf("Expand %d, %d, %d: label[%d] -> %d\n", 
+               //     gpu_num, thread_num, s_handle.num_elements, key, label);
             }
             s_handle.keys_out[x]=key;
             if (s_handle.num_vertex_associates == 2) 
@@ -225,10 +232,16 @@ struct BFSIteration : public IterationBase <
         //bool over_sized = false;
         //Check_Size<Enactor::SIZE_CHECK, SizeT, VertexId>(
         //    "queue1", num_elements, keys_out, over_sized, -1, -1, -1);
+        //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("keys_in", this->h_e_handle -> keys_in,
+        //    10, this->gpu_num, 0, this->stream_num, this->stream);
+        //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("vals_in", this->h_e_handle -> vertex_ins[0],
+        //    10, this->gpu_num, 0, this->stream_num, this->stream);
+        printf("%d\t \t %d\t Expand_Incoming start, num_elements = %d\n", 
+            this->gpu_num, this->stream_num, this->num_elements);fflush(stdout);
         Expand_Incoming_BFS 
             <VertexId, SizeT, Value, ExpandIncomingHandle> 
             <<< this->grid_size  , this->block_size, 0, this->stream>>> 
-            (this-> d_e_handle);
+            (this-> d_e_handle);//, this->gpu_num, this->stream_num);
         return retval;
     }
 
@@ -287,13 +300,13 @@ struct BFSIteration : public IterationBase <
         int           selector           = frontier_attribute->selector;
         long long     iteration          = enactor_stats -> iteration;
 
-        /*if (Enactor::DEBUG)
+        if (Enactor::DEBUG)
         {
             sprintf(this -> mssg, "queue_size = %d, request_length = %d",
                 frontier_queue -> keys[selector^1].GetSize(),
                 request_length);
             this -> ShowDebugInfo(this -> mssg, iteration, stream_num);
-        }*/
+        }
 
         if (retval = Check_Size<true, SizeT, VertexId > (
             "queue3", request_length, 

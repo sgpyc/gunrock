@@ -106,6 +106,7 @@ public:
     VertexId         *d_keys_in;
     VertexId         *d_keys_out;
     ExpandIncomingHandle *d_e_handle;
+    ExpandIncomingHandle *h_e_handle;
 
     SizeT            *d_offsets;
     VertexId         *d_indices;
@@ -502,7 +503,7 @@ public:
                         retval = cudaEventQuery(events[stream_num]);
                         if (retval == cudaErrorNotReady)
                         {
-                            ShowDebugInfo("Stream not ready", -1, stream_num);
+                            //ShowDebugInfo("Stream not ready", -1, stream_num);
                             retval = cudaSuccess; continue;
                         }
                         if (retval != cudaSuccess) return retval;

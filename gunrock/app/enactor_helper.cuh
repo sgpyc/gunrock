@@ -181,7 +181,8 @@ cudaError_t PushNeibor(
     cudaError_t    retval                =   cudaSuccess;
     cudaStream_t   s_stream              =   request -> stream;
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
-
+    cudaEvent_t    event2;
+ 
     printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
         request -> gpu_num, iteration, request -> peer, length);
     fflush(stdout);
@@ -223,9 +224,9 @@ cudaError_t PushNeibor(
                 "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
         }
 
-        if (retval = s_queue->EventSet(0, s_offset, length, s_stream)) return retval;
+        if (retval = s_queue->EventSet(0, s_offset, length, s_stream, false, false, NULL, &event2)) return retval;
         if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
-        if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true)) return retval;
+        if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true, &event2, NULL)) return retval;
     } else {
         if (retval = s_queue->EventFinish(0, s_offset, length, s_stream)) return retval;
         if (retval = s_queue->EventFinish(1, s_offset, length, s_stream)) return retval;
