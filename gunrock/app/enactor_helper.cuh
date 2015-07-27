@@ -42,63 +42,84 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         return true;
     }   
 
-    for (int gpu=0; gpu < enactor->num_gpus; gpu++)
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
     {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu];
-        for (int stream=0; stream < enactor->num_subq__streams + enactor->num_fullq_stream ; stream++)
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
+        int occu_size = enactor_slice -> outpu_queue.GetOccuSize();
+        if (occu_size == 0) continue;
+        printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
+            gpu_num, occu_size);
+        fflush(stdout);
+        return false;
+    }
+
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num];
+        for (int stream_num = 0; stream_num < enactor->num_fullq_stream ; stream_num++)
         {
-            typename Enactor::FrontierA *frontier_attribute = (stream < enactor->num_subq__streams) ? 
-                enactor_slice->subq__frontier_attributes + stream :
-                enactor_slice->fullq_frontier_attribute  + stream - enactor->num_subq__streams;
-            if (frontier_attribute->queue_length != 0 ||
-                frontier_attribute->has_incoming)
+            typename Enactor::FrontierA *frontier_attribute
+                = enactor_slice -> fullq_frontier_attribute  + stream_num;
+            if (frontier_attribute -> queue_length != 0 ||
+                frontier_attribute -> has_incoming)
             {
-                printf("%d\t \t %d\t Not done, queue_length = %d\n",
-                    gpu, stream, frontier_attribute -> queue_length);   
+                printf("%d\t \t %d\t Not done, fullq_length = %d\n",
+                    gpu_num, stream_num, frontier_attribute -> queue_length);   
                 fflush(stdout);
                 return false;
             }
         }
+    }
 
-        int occu_size = 0;
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
+        int occu_size = enactor_slice -> fullq_queue.GetOccuSize();
+        if (occu_size == 0) continue;
+        printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
+            gpu_num, occu_size);
+        fflush(stdout);
+        return false;
+    }
+
+    for (int gpu_num=0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num];
+        for (int stream_num = 0; stream_num < enactor->num_subq__streams; stream_num++)
+        {
+            typename Enactor::FrontierA *frontier_attribute
+                = enactor_slice -> subq__frontier_attributes + stream_num;
+            if (frontier_attribute -> queue_length != 0 ||
+                frontier_attribute -> has_incoming)
+            {
+                printf("%d\t \t %d\t Not done, subq__length = %d\n",
+                    gpu_num, stream_num, frontier_attribute -> queue_length);
+                fflush(stdout);
+                return false;
+            }
+        }
+    }
+
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
+        int occu_size = enactor_slice -> subq__queue.GetOccuSize();
+        if (occu_size == 0) continue;
+        printf("%d\t \t \t Not done, subq__queue.occu_size = %d\n", 
+            gpu_num, occu_size);
+        fflush(stdout);
+        return false;
+    }
+
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
         for (int i=0; i<2; i++)
         {
-            occu_size = enactor_slice -> input_queues[i].GetOccuSize();
+            int occu_size = enactor_slice -> input_queues[i].GetOccuSize();
             if (occu_size == 0) continue;
-            //if (!enactor_slice -> input_queues[i].Empty())
-            //{
             printf("%d\t \t \t Not done, input_queues[%d].occu_size = %d\n", 
-                gpu, i, occu_size);
-            fflush(stdout);
-            return false;
-        }
-
-        occu_size = enactor_slice -> outpu_queue.GetOccuSize();
-        //if (!enactor_slice -> outpu_queue.Empty())
-        if (occu_size > 0)
-        {
-            printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
-                gpu, occu_size);
-            fflush(stdout);
-            return false;
-        }
-
-        occu_size = enactor_slice -> subq__queue.GetOccuSize();
-        //if (!enactor_slice -> subq__queue.Empty())
-        if (occu_size > 0)
-        {
-            printf("%d\t \t \t Not done, subq__queue.occu_size = %d\n", 
-                gpu, occu_size);
-            fflush(stdout);
-            return false;
-        }
-
-        occu_size = enactor_slice -> fullq_queue.GetOccuSize();
-        //if (!enactor_slice -> fullq_queue.Empty())
-        if (occu_size > 0)
-        {
-            printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
-                gpu, occu_size);
+                gpu_num, i, occu_size);
             fflush(stdout);
             return false;
         }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-OPTION[0]="--src=largestdegree --device=0,1,2,3 --partition_method=biasrandom --grid-size=768 --disable-size-check"
+OPTION[0]="--src=largestdegree --device=0,1,2,3,0,1,2,3 --traversal-mode=0 --v --partition_method=biasrandom --grid-size=768"
 #OPTION[0]="" #directed and do not mark-pred"
 OPTION[1]=${OPTION[0]}" --mark-pred" #directed and mark-pred"
 OPTION[2]=${OPTION[0]}" --undirected" #undirected and do not mark-pred"
@@ -35,7 +35,7 @@ do
 done
 
 #put OS and Device type here
-SUFFIX="ubuntu12.04.k40cx4_brp0.5_dsize3"
+SUFFIX="ubuntu12.04.k40cx8_brp0.5_cq"
 EXCUTION="./bin/test_bfs_7.0_x86_64"
 DATADIR="/data/gunrock_dataset/large"
 
@@ -91,9 +91,9 @@ NAME[41]="tweets"            && Q_SIZE_DIR[41]="5.00" && I_SIZE_DIR[41]="2.00" &
 NAME[42]="bitcoin"           && Q_SIZE_DIR[42]="5.00" && I_SIZE_DIR[42]="2.00" && Q_SIZE_UDIR[42]="10.0" && I_SIZE_UDIR[42]="2.00" 
 NAME[43]="caidaRouterLevel"  && Q_SIZE_DIR[43]="1.00" && I_SIZE_DIR[43]="0.30" && Q_SIZE_UDIR[43]="3.60" && I_SIZE_UDIR[43]="0.40" 
 
-for i in  24 25 28 41 42 #{0..43} 
+for i in  {0..43} 
 do
-    for j in 4 6 #0 1 2 3 4 6
+    for j in 2 #4 6 0 1 2 3 4 6
     do
         if [ "$j" -eq "0" ] || [ "$j" -eq "1" ] || [ "$j" -eq "4" ] || [ "$j" -eq "5" ]; then
             echo $EXCUTION market $DATADIR/${NAME[$i]}/${NAME[$i]}.mtx ${OPTION[$j]} --queue-sizing=${Q_SIZE_DIR[$i]} --in-sizing=${I_SIZE_DIR[$i]} "> eval/$SUFFIX/${NAME[$i]}.$SUFFIX${MARK[$j]}.txt"
