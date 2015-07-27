@@ -125,6 +125,17 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         }
     }
 
+    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
+        int occu_size = enactor_slice -> outpu_queue.GetOccuSize();
+        if (occu_size == 0) continue;
+        printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
+            gpu_num, occu_size);
+        fflush(stdout);
+        return false;
+    }
+
     printf("%d\t All_Done.\n", gpu_num); fflush(stdout);
     return true;
 } 
