@@ -382,7 +382,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         to_show = true;
         if (thread_slice -> status == ThreadSlice::Status::ToKill)
             continue;
-        if (tretval)
+        if (tretval != cudaErrorNotReady && tretval != cudaSuccess)
         {
             thread_slice -> retval = tretval;
             return;
@@ -397,7 +397,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             s_queue -> SetInputTarget(enactor -> num_gpus -1);
             if (enactor->using_subq)
             {
-                enactor_slice -> subq__queue.SetInputTarget(target_count);
+                if (thread_slice -> retval = 
+                    enactor_slice -> subq__queue.SetInputTarget(target_count))
+                    return;
                 //sprintf(mssg, "subq__target_count[%lld] -> %d",
                 //    iteration%2,
                 //    enactor_slice -> subq__target_count[iteration%2]);
@@ -405,7 +407,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 //enactor_slice -> subq__target_set  [iteration%2]
                 //    = true;
             } else {
-                enactor_slice -> fullq_queue.SetInputTarget(target_count);
+                if (thread_slice -> retval = 
+                    enactor_slice -> fullq_queue.SetInputTarget(target_count))
+                    return;
                 //sprintf(mssg, "fullq_target_count[%lld] -> %d",
                 //    iteration%2,
                 //    enactor_slice -> fullq_target_count[iteration%2]);
@@ -677,7 +681,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         //    = s_queue -> GetOutputCount();
                         //if (s_lengths[stream_num] == 0)
                         //    enactor_slice -> fullq_target_count[iteration%2] --;
-                        enactor_slice -> fullq_queue.SetInputTarget(target_count);
+                        if (thread_slice -> retval = 
+                            enactor_slice -> fullq_queue.SetInputTarget(target_count))
+                            return;
                         //sprintf(cmssg,"fullq_target[%lld] -> %d", iteration%2, 
                         //    enactor_slice -> fullq_target_count[iteration%2]);
                         //thread_slice -> ShowDebugInfo(cmssg, -1, iteration);
@@ -690,7 +696,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         //    = s_queue -> GetOutputCount();
                         //s_queue -> ResetOutputCount();
                         //s_queue -> ChangeInputCount(0 - enactor_slice -> subq__target_count[iteration%2]);
-                        enactor_slice -> subq__queue.SetInputTarget(target_count);
+                        if (thread_slice -> retval =
+                            enactor_slice -> subq__queue.SetInputTarget(target_count))
+                            return;
                         //sprintf(cmssg, "subq__target[%lld] -> %d", 
                         //    (iteration+1)%2,
                         //    enactor_slice -> subq__target_count[(iteration+1)%2]);
