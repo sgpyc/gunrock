@@ -189,13 +189,15 @@ public:
         long long iteration = -1,
         int       stream_num = -1)
     {
-        char str[527];
         if (!Enactor::DEBUG) return;
-        if (iteration < 0) iteration = this -> iteration;
-        if (stream_num < 0) stream_num = this -> stream_num;
-        strcpy(str, "IterationBase\t ");
-        strcpy(str + 15, mssg);
-        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
+        else {
+            char str[527];
+            if (iteration < 0) iteration = this -> iteration;
+            if (stream_num < 0) stream_num = this -> stream_num;
+            strcpy(str, "IterationBase\t ");
+            strcpy(str + 15, mssg);
+            util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
+        }
     }
 
     cudaError_t Init(

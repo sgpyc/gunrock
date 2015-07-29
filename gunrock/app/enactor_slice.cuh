@@ -205,10 +205,12 @@ struct EnactorSlice
         long long iteration = -1)
     {
         if (!Enactor::DEBUG) return;
-        char str[527];
-        strcpy(str, "EnactorSlice\t ");
-        strcpy(str + 14, message);
-        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
+        else {
+            char str[527];
+            strcpy(str, "EnactorSlice\t ");
+            strcpy(str + 14, message);
+            util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
+        }
     }
 
     cudaError_t Init(

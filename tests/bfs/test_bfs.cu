@@ -580,9 +580,9 @@ void RunTests_enable_idempotence(Test_Parameter *parameter)
 {
     if (parameter->enable_idempotence) 
     {    
-        //RunTests
-        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
-        //    true > (parameter);
+        RunTests
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS, 
+            true > (parameter);
     } else {
         RunTests
             <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, MARK_PREDECESSORS,
@@ -601,9 +601,9 @@ void RunTests_mark_predecessors(Test_Parameter *parameter)
 {
     if (parameter->mark_predecessors) 
     {
-        //RunTests_enable_idempotence
-        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
-        //    true > (parameter);
+        RunTests_enable_idempotence
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
+            true > (parameter);
     } else {
         RunTests_enable_idempotence
             <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, 
@@ -625,9 +625,9 @@ void RunTests_size_check(Test_Parameter *parameter)
             <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
             true > (parameter);
     } else { 
-        //RunTests_mark_predecessors
-        //    <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
-        //    false> (parameter);
+        RunTests_mark_predecessors
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, 
+            false> (parameter);
     }
 }
 
@@ -644,9 +644,9 @@ void RunTests_debug(Test_Parameter *parameter)
             <VertexId, SizeT, Value, INSTRUMENT, 
             true > (parameter);
     } else {
-        //RunTests_size_check
-        //    <VertexId, SizeT, Value, INSTRUMENT, 
-        //    false> (parameter);
+        RunTests_size_check
+            <VertexId, SizeT, Value, INSTRUMENT, 
+            false> (parameter);
     }
 }
 
@@ -658,9 +658,9 @@ void RunTests_instrumented(Test_Parameter *parameter)
 {
     if (parameter->instrumented) 
     {
-        //RunTests_debug
-        //    <VertexId, SizeT, Value,
-        //    true > (parameter);
+        RunTests_debug
+            <VertexId, SizeT, Value,
+            true > (parameter);
     } else {
         RunTests_debug
             <VertexId, SizeT, Value, 

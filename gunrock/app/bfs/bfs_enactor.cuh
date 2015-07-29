@@ -791,17 +791,17 @@ public:
 
         if (min_sm_version >= 300)
         {
-//            if (Problem::ENABLE_IDEMPOTENCE) {
-//                if (traversal_mode == 0)
-//                    return EnactBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
-//                else
-//                    return EnactBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
-//            } else {
+            if (Problem::ENABLE_IDEMPOTENCE) {
+                if (traversal_mode == 0)
+                    return EnactBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
+                else
+                    return EnactBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
+            } else {
                 if (traversal_mode == 0)
                     return EnactBFS<     LBAdvanceKernelPolicy     , FilterKernelPolicy>(src);
-//                else
-//                    return EnactBFS<ForwardAdvanceKernelPolicy     , FilterKernelPolicy>(src);
-//            }
+                else
+                    return EnactBFS<ForwardAdvanceKernelPolicy     , FilterKernelPolicy>(src);
+            }
         }
 
         //to reduce compile time, get rid of other architecture for now

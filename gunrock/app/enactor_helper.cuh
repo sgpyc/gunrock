@@ -24,12 +24,14 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
 {
     typedef typename ThreadSlice::Enactor Enactor;
-    //printf("All_Done begin. gpu_num = %d\n", gpu_num); fflush(stdout);
 
     EnactorSlice<Enactor> *enactor_slices 
         = (EnactorSlice<Enactor>*) enactor->enactor_slices;
     ThreadSlice *thread_slices = (ThreadSlice*) enactor->thread_slices;
-    
+    int occu_size = 0;
+ 
+    printf("\t \t \t Checking done.\n");fflush(stdout);
+ 
     for (int i=0; i<enactor->num_threads; i++)
     {
         cudaError_t retval = thread_slices[i].retval;
@@ -42,20 +44,52 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         return true;
     }   
 
+    for (int t=0; t<2; t++)
     for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
     {
         EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
-        int occu_size = enactor_slice -> outpu_queue.GetOccuSize();
-        if (occu_size == 0) continue;
-        printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
-            gpu_num, occu_size);
-        fflush(stdout);
-        return false;
-    }
+        for (int i=0; i<2; i++)
+        {
+            occu_size = enactor_slice -> input_queues[i].GetOccuSize();
+            if (occu_size == 0) continue;
+            printf("%d\t \t \t Not done, input_queues[%d].occu_size = %d\n", 
+                gpu_num, i, occu_size);
+            fflush(stdout);
+            return false;
+        }
 
-    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num];
+        for (int stream_num = 0; stream_num < enactor->num_subq__streams; stream_num++)
+        {
+             typename Enactor::FrontierA *frontier_attribute
+                = enactor_slice -> subq__frontier_attributes + stream_num;
+            if (frontier_attribute -> queue_length != 0 ||
+                frontier_attribute -> has_incoming)
+            {
+                printf("%d\t \t %d\t Not done, subq__length = %d\n",
+                    gpu_num, stream_num, frontier_attribute -> queue_length);
+                fflush(stdout);
+                return false;
+            }
+        }
+
+        occu_size = enactor_slice -> subq__queue.GetOccuSize();
+        if (occu_size != 0)
+        {
+            printf("%d\t \t \t Not done, subq__queue.occu_size = %d\n", 
+                gpu_num, occu_size);
+            fflush(stdout);
+            return false;
+        }
+
+        occu_size = enactor_slice -> fullq_queue.GetOccuSize();
+        if (occu_size != 0)
+        {
+            printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
+                gpu_num, occu_size);
+            fflush(stdout);
+            return false;
+        }
+ 
         for (int stream_num = 0; stream_num < enactor->num_fullq_stream ; stream_num++)
         {
             typename Enactor::FrontierA *frontier_attribute
@@ -69,71 +103,24 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
                 return false;
             }
         }
-    }
 
-    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
-        int occu_size = enactor_slice -> fullq_queue.GetOccuSize();
-        if (occu_size == 0) continue;
-        printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
-            gpu_num, occu_size);
-        fflush(stdout);
-        return false;
-    }
-
-    for (int gpu_num=0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num];
-        for (int stream_num = 0; stream_num < enactor->num_subq__streams; stream_num++)
+        occu_size = enactor_slice -> fullq_queue.GetOccuSize();
+        if (occu_size != 0)
         {
-            typename Enactor::FrontierA *frontier_attribute
-                = enactor_slice -> subq__frontier_attributes + stream_num;
-            if (frontier_attribute -> queue_length != 0 ||
-                frontier_attribute -> has_incoming)
-            {
-                printf("%d\t \t %d\t Not done, subq__length = %d\n",
-                    gpu_num, stream_num, frontier_attribute -> queue_length);
-                fflush(stdout);
-                return false;
-            }
-        }
-    }
-
-    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
-        int occu_size = enactor_slice -> subq__queue.GetOccuSize();
-        if (occu_size == 0) continue;
-        printf("%d\t \t \t Not done, subq__queue.occu_size = %d\n", 
-            gpu_num, occu_size);
-        fflush(stdout);
-        return false;
-    }
-
-    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
-        for (int i=0; i<2; i++)
-        {
-            int occu_size = enactor_slice -> input_queues[i].GetOccuSize();
-            if (occu_size == 0) continue;
-            printf("%d\t \t \t Not done, input_queues[%d].occu_size = %d\n", 
-                gpu_num, i, occu_size);
+            printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
+                gpu_num, occu_size);
             fflush(stdout);
             return false;
         }
-    }
 
-    for (int gpu_num = 0; gpu_num < enactor->num_gpus; gpu_num++)
-    {
-        EnactorSlice<Enactor> *enactor_slice = &enactor_slices[gpu_num]; 
-        int occu_size = enactor_slice -> outpu_queue.GetOccuSize();
-        if (occu_size == 0) continue;
-        printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
-            gpu_num, occu_size);
-        fflush(stdout);
-        return false;
+        occu_size = enactor_slice -> outpu_queue.GetOccuSize();
+        if (occu_size != 0)
+        {
+            printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
+                gpu_num, occu_size);
+            fflush(stdout);
+            return false;
+        }
     }
 
     printf("%d\t All_Done.\n", gpu_num); fflush(stdout);
@@ -215,12 +202,12 @@ cudaError_t PushNeibor(
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
     cudaEvent_t    event2;
  
-    printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
-        request -> gpu_num, iteration, request -> peer, length);
-    fflush(stdout);
-    printf("%d\t %lld\t %d\t PushNeibor\t From, length = %d\n",
-        request -> peer, iteration+1, request -> gpu_num, length);
-    fflush(stdout);
+    //printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
+    //    request -> gpu_num, iteration, request -> peer, length);
+    //fflush(stdout);
+    //printf("%d\t %lld\t %d\t PushNeibor\t From, length = %d\n",
+    //    request -> peer, iteration+1, request -> gpu_num, length);
+    //fflush(stdout);
 
     if (length > 0)
         if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),

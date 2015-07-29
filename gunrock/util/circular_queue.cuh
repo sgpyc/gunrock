@@ -360,7 +360,11 @@ public:
 
     SizeT GetOccuSize(bool in_critical = false)
     {
+        char mssg[128];
         UpdateSize(in_critical);
+        int size_occu = this -> size_occu;
+        sprintf(mssg, "GetOccuSize, size_occu = %d", size_occu);
+        ShowDebugInfo_(mssg);
         return size_occu;
     }
 
@@ -376,78 +380,6 @@ public:
     {
         return capacity;
     }
-
-    /*SizeT GetInputCount()
-    {
-        //printf("GetInputCount = %d\n", input_count);
-        //fflush(stdout);
-        EventCheck(0);
-        return input_count;
-    }
-
-    SizeT GetOutputCount()
-    {
-        //printf("GetOutputCount = %d\n", output_count);
-        //fflush(stdout);
-        return output_count;
-    }
-
-    cudaError_t ChangeInputCount(SizeT count, bool in_critical = false)
-    {
-        cudaError_t retval = cudaSuccess;
-        Lock(in_critical);
-        input_count += count;
-        if (CQ_DEBUG)
-        {
-            sprintf(mssg, "input_count -> %d", input_count);
-            ShowDebugInfo_(mssg);
-        }
-        return Combined_Return(retval, in_critical);
-    }
-
-    cudaError_t ChangeOutputCount(SizeT count, bool in_critical = false)
-    {
-        cudaError_t retval = cudaSuccess;
-        Lock(in_critical);
-        output_count += count;
-        if (CQ_DEBUG)
-        {
-            sprintf(mssg, "output_count -> %d", output_count);
-            ShowDebugInfo_(mssg);
-        }
-        return Combined_Return(retval, in_critical);
-    }
-
-    cudaError_t ResetInputCount(bool in_critical = false)
-    {
-        cudaError_t retval = cudaSuccess;
-        Lock(in_critical);
-        input_count = 0;
-        if (CQ_DEBUG)
-            ShowDebugInfo_("input_count -> 0");
-        return Combined_Return(retval, in_critical);
-    }
-
-    cudaError_t ResetOutputCount(bool in_critical = false)
-    {
-        cudaError_t retval = cudaSuccess;
-        Lock(in_critical);
-        output_count = 0;
-        if (CQ_DEBUG)
-            ShowDebugInfo_("output_count -> 0");
-        return Combined_Return(retval, in_critical);
-    }
-
-    cudaError_t ResetCounts(bool in_critical = false)
-    {
-        cudaError_t retval = cudaSuccess;
-        Lock(in_critical);
-        if (retval = ResetInputCount(true)) 
-            return Combined_Return(retval, in_critical);
-        if (retval = ResetOutputCount(true))
-            return Combined_Return(retval, in_critical);
-        return Combined_Return(retval, in_critical);
-    }*/ 
 
     cudaError_t SetInputTarget(
         int target_input_count,
@@ -1140,11 +1072,11 @@ public:
               t_o_pos <= tail_a + length - capacity)))
         {
             on_target = true;
-            if (t_o_pos >= tail_a &&
+            if (t_o_pos > tail_a &&
                 t_o_pos <= tail_a + length)
             {
                 length = t_o_pos - tail_a;
-            } else if (t_o_pos < tail_a &&
+            } else if (t_o_pos <= tail_a &&
                 t_o_pos <= tail_a + length - capacity)
             {
                 length = t_o_pos + capacity - tail_a;    
@@ -1344,7 +1276,8 @@ public:
             sprintf(mssg, "capacity -> %d", capacity_);
             ShowDebugInfo_(mssg);
         }
-
+        
+        capacity_ ++;
         if (capacity_ > capacity)
         {
             wait_resize = 1;

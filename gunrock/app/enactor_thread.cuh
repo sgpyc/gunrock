@@ -127,19 +127,21 @@ public:
         int stream_num = -1, 
         long long iteration = -1)
     {
-        char str[526];
         if (!Enactor::DEBUG) return;
-        switch (thread_type)
-        {
-        case Type::Input  : strcpy(str, "InputThread\t "); break;
-        case Type::Output : strcpy(str, "OutpuThread\t "); break;
-        case Type::SubQ   : strcpy(str, "SubQ_Thread\t "); break;
-        case Type::FullQ  : strcpy(str, "FullQThread\t "); break;
-        default           : strcpy(str, "UnknoThread\t "); break;
+        else {
+            char str[526];
+            switch (thread_type)
+            {
+            case Type::Input  : strcpy(str, "InputThread\t "); break;
+            case Type::Output : strcpy(str, "OutpuThread\t "); break;
+            case Type::SubQ   : strcpy(str, "SubQ_Thread\t "); break;
+            case Type::FullQ  : strcpy(str, "FullQThread\t "); break;
+            default           : strcpy(str, "UnknoThread\t "); break;
+            }
+            if (iteration == -1) iteration = this -> iteration;
+            strcpy(str + 13, message);
+            util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
         }
-        if (iteration == -1) iteration = this -> iteration;
-        strcpy(str + 13, message);
-        util::cpu_mt::PrintMessage(str, gpu_num, iteration, stream_num);
     }
 
     virtual ~ThreadSlice()
