@@ -603,6 +603,10 @@ public:
             for (SizeT j=0; j<num_value__associates; j++)
                 value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
         } else { // splict at the end
+            char mssg[256];
+            sprintf(mssg, "Push using temp_array, %d,%d + %d,%d -> %d",
+                offsets[0], lengths[0], offsets[1], lengths[1], length);
+            ShowDebugInfo_(mssg);
             if (retval = EnsureTempCapacity(length, length, length, set_gpu))
                 return retval;
             array = temp_array.GetPointer(allocated);
@@ -738,7 +742,8 @@ public:
         length = lengths[0] + lengths[1];
         if (CQ_DEBUG)
         {
-            sprintf(mssg, "Poped, length = %d, offset = %d", length, offset);
+            sprintf(mssg, "Poped, length = %d,%d, offset = %d", 
+                lengths[0], lengths[1], offset);
             ShowDebugInfo_(mssg, iteration);
         }
 
@@ -786,6 +791,10 @@ public:
             {
                 if (retval = SetDevice(org_gpu)) return retval;
             }
+            char mssg[256];
+            sprintf(mssg, "Pop using temp_array, %d,%d + %d,%d -> %d",
+                offsets[0], lengths[0], offsets[1], lengths[1], sum);
+            ShowDebugInfo_(mssg);
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
                 vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
@@ -1483,6 +1492,10 @@ public:
                     }
                     sum += lengths[i];
                 }
+                char mssg[256];
+                sprintf(mssg, "EventSet copying from temp, %d -> %d,%d + %d,%d",
+                    sum, offsets[0], lengths[0], offsets[1], lengths[1]);
+                ShowDebugInfo_(mssg);
             }
         } //else {
             offsets[0] = offset; offsets[1] = 0;
