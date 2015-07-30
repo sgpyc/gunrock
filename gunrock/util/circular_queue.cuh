@@ -1081,11 +1081,11 @@ public:
               t_o_pos <= tail_a + length - capacity)))
         {
             on_target = true;
-            if (t_o_pos > tail_a &&
+            if (t_o_pos >= tail_a &&
                 t_o_pos <= tail_a + length)
             {
                 length = t_o_pos - tail_a;
-            } else if (t_o_pos <= tail_a &&
+            } else if (t_o_pos < tail_a &&
                 t_o_pos <= tail_a + length - capacity)
             {
                 length = t_o_pos + capacity - tail_a;    
@@ -1304,6 +1304,7 @@ public:
                 //    return retval;
                 //}
             }
+            ShowDebugInfo_("EnsureCapacity events clear");
 
             if (retval = array.EnsureSize(capacity_, true)) 
                 return Combined_Return(retval, in_critical);
@@ -1503,6 +1504,7 @@ public:
         //}
 
         Lock(in_critical);
+        ShowDebugInfo_("EventSet lock obtained");
 
         int i=0;
         //for (int i=0; i<2; i++)
