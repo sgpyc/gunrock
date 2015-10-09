@@ -154,11 +154,17 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
         { // invalid key
             x+= STRIDE; continue;
         }
-        if ((x==0 && s_handle.markers[x] == 0)
-            || s_handle.markers[x] == s_handle.markers[x-1])
+        if (x==0)
+        {
+            if (s_handle.markers[x] == 0)
+            {
+                x+= STRIDE; continue;
+            }
+        } else if (s_handle.markers[x] == s_handle.markers[x-1])
         { // not marked for current GPU
             x+= STRIDE; continue;
         }
+
         host_gpu = s_handle.forward_partition[key];
         //printf("x = %d, key = %d, host_gpu = %d, target_gpu = %d\n",
         //    x, key, host_gpu, target_gpu);

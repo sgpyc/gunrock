@@ -734,9 +734,10 @@ struct ProblemBase
                 cpu_timer.Stop();
                 printf("partition end. (%f ms)\n", cpu_timer.ElapsedMillis());fflush(stdout);
                 
-                util::cpu_mt::PrintCPUArray<SizeT, int>("partition0", partition_tables[0], 10);
-                util::cpu_mt::PrintCPUArray<SizeT, VertexId>("convertion0", convertion_tables[0], 10);
-                /*graph->DisplayGraph("org_graph",graph->nodes);
+                //util::cpu_mt::PrintCPUArray<SizeT, int>("partition0", partition_tables[0], graph -> nodes > 10 ? 10 : graph -> nodes);
+                //util::cpu_mt::PrintCPUArray<SizeT, VertexId>("convertion0", convertion_tables[0], graph -> nodes > 10 ? 10 : graph -> nodes);
+
+                graph->DisplayGraph("org_graph", graph->nodes);
                 util::cpu_mt::PrintCPUArray<SizeT,int>("partition0",partition_tables[0],graph->nodes);
                 util::cpu_mt::PrintCPUArray<SizeT,VertexId>("convertion0",convertion_tables[0],graph->nodes);
                 //util::cpu_mt::PrintCPUArray<SizeT,Value>("edge_value",graph->edge_values,graph->edges);
@@ -749,7 +750,7 @@ struct ProblemBase
                     //util::cpu_mt::PrintCPUArray<SizeT,SizeT   >("backward_offsets"    , backward_offsets    [gpu], sub_graphs[gpu].nodes);
                     //util::cpu_mt::PrintCPUArray<SizeT,int     >("backward_partitions" , backward_partitions [gpu], backward_offsets[gpu][sub_graphs[gpu].nodes]);
                     //util::cpu_mt::PrintCPUArray<SizeT,VertexId>("backward_convertions", backward_convertions[gpu], backward_offsets[gpu][sub_graphs[gpu].nodes]);
-                }*/
+                }
                 //for (int gpu=0;gpu<num_gpus;gpu++)
                 //{
                 //    cross_counter[gpu][num_gpus]=0;

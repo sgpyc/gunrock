@@ -24,22 +24,28 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
 {
     typedef typename ThreadSlice::Enactor Enactor;
+    static int pre_gpu_num = -1;
+    static int pre_k = -1;
+    static int pre_i = -1;
+    static int pre_size = 0;
+    static int last_repeat = 0;
 
     EnactorSlice<Enactor> *enactor_slices 
         = (EnactorSlice<Enactor>*) enactor->enactor_slices;
     ThreadSlice *thread_slices = (ThreadSlice*) enactor->thread_slices;
     int occu_size = 0;
  
-    printf("\t \t \t Checking done.\n");fflush(stdout);
+    //printf("\t \t \t Checking done.\n");fflush(stdout);
  
     for (int i=0; i<enactor->num_threads; i++)
     {
         cudaError_t retval = thread_slices[i].retval;
         if (retval == cudaSuccess) continue;
-        printf("(CUDA error %d @ GPU %d, thread %d: %s\n",
+        printf("(CUDA error %d @ GPU %d, thread %d: %s\nlast_repeat = %d\n",
             retval, thread_slices[i].gpu_num, 
             thread_slices[i].thread_num,
-            cudaGetErrorString(retval)); 
+            cudaGetErrorString(retval),
+            last_repeat); 
         fflush(stdout);
         return true;
     }   
@@ -52,9 +58,19 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         {
             occu_size = enactor_slice -> input_queues[i].GetOccuSize();
             if (occu_size == 0) continue;
-            printf("%d\t \t \t Not done, input_queues[%d].occu_size = %d\n", 
-                gpu_num, i, occu_size);
-            fflush(stdout);
+            if (pre_gpu_num != gpu_num || pre_k !=1 
+                || pre_i != i || pre_size != occu_size)
+            {
+                printf("%d\t \t \t Not done, input_queues[%d].occu_size = %d, "
+                    "last_repeat = %d\n", 
+                    gpu_num, i, occu_size, last_repeat);
+                fflush(stdout);
+                pre_gpu_num = gpu_num;
+                pre_k = 1;
+                pre_i = i;
+                pre_size = occu_size;
+                last_repeat = 0;
+            } else last_repeat ++;
             return false;
         }
 
@@ -65,9 +81,21 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
             if (frontier_attribute -> queue_length != 0 ||
                 frontier_attribute -> has_incoming)
             {
-                printf("%d\t \t %d\t Not done, subq__length = %d\n",
-                    gpu_num, stream_num, frontier_attribute -> queue_length);
-                fflush(stdout);
+                if (pre_gpu_num != gpu_num || pre_k != 2
+                    || pre_i != stream_num 
+                    || pre_size != frontier_attribute -> queue_length)
+                {
+                    printf("%d\t \t %d\t Not done, subq__length = %d, "
+                        "last_repeat = %d\n",
+                        gpu_num, stream_num, frontier_attribute -> queue_length,
+                        last_repeat);
+                    fflush(stdout);
+                    pre_gpu_num = gpu_num;
+                    pre_k = 2;
+                    pre_i = stream_num;
+                    pre_size = frontier_attribute -> queue_length;
+                    last_repeat = 0;
+                } else last_repeat ++;
                 return false;
             }
         }
@@ -75,18 +103,34 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         occu_size = enactor_slice -> subq__queue.GetOccuSize();
         if (occu_size != 0)
         {
-            printf("%d\t \t \t Not done, subq__queue.occu_size = %d\n", 
-                gpu_num, occu_size);
-            fflush(stdout);
+            if (pre_gpu_num != gpu_num || pre_k != 3 || pre_size != occu_size)
+            {
+                printf("%d\t \t \t Not done, subq__queue.occu_size = %d, "
+                    "last_repeat = %d\n", 
+                    gpu_num, occu_size, last_repeat);
+                fflush(stdout);
+                pre_gpu_num = gpu_num;
+                pre_k = 3;
+                pre_size = occu_size;
+                last_repeat = 0;
+            } else last_repeat ++;
             return false;
         }
 
         occu_size = enactor_slice -> fullq_queue.GetOccuSize();
         if (occu_size != 0)
         {
-            printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
-                gpu_num, occu_size);
-            fflush(stdout);
+            if (pre_gpu_num != gpu_num || pre_k != 4 || pre_size != occu_size)
+            {
+                printf("%d\t \t \t Not done, fullq_queue.occu_size = %d, "
+                    "last_repeat = %d\n",
+                    gpu_num, occu_size, last_repeat);
+                fflush(stdout);
+                pre_gpu_num = gpu_num;
+                pre_k = 4;
+                pre_size = occu_size;
+                last_repeat = 0;
+            } else last_repeat ++;
             return false;
         }
  
@@ -97,9 +141,20 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
             if (frontier_attribute -> queue_length != 0 ||
                 frontier_attribute -> has_incoming)
             {
-                printf("%d\t \t %d\t Not done, fullq_length = %d\n",
-                    gpu_num, stream_num, frontier_attribute -> queue_length);   
-                fflush(stdout);
+                if (pre_gpu_num != gpu_num || pre_k != 5 || pre_i != stream_num
+                    || pre_size != frontier_attribute -> queue_length)
+                {
+                    printf("%d\t \t %d\t Not done, fullq_length = %d, "
+                        "last_repeat = %d\n",
+                        gpu_num, stream_num, frontier_attribute -> queue_length,
+                        last_repeat);   
+                    fflush(stdout);
+                    pre_gpu_num = gpu_num;
+                    pre_k = 5;
+                    pre_i = stream_num;
+                    pre_size = frontier_attribute -> queue_length;
+                    last_repeat = 0;
+                } else last_repeat ++;
                 return false;
             }
         }
@@ -107,23 +162,40 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
         occu_size = enactor_slice -> fullq_queue.GetOccuSize();
         if (occu_size != 0)
         {
-            printf("%d\t \t \t Not done, fullq_queue.occu_size = %d\n",
-                gpu_num, occu_size);
-            fflush(stdout);
+            if (pre_gpu_num != gpu_num || pre_k != 6 || pre_size != occu_size)
+            {
+                printf("%d\t \t \t Not done, fullq_queue.occu_size = %d, "
+                    "last_repeat = %d\n",
+                    gpu_num, occu_size, last_repeat);
+                fflush(stdout);
+                pre_gpu_num = gpu_num;
+                pre_k = 6;
+                pre_size = occu_size;
+                last_repeat = 0;
+            } else last_repeat ++;
             return false;
         }
 
         occu_size = enactor_slice -> outpu_queue.GetOccuSize();
         if (occu_size != 0)
         {
-            printf("%d\t \t \t Not done, outpu_queue.occu_size = %d\n", 
-                gpu_num, occu_size);
-            fflush(stdout);
+            if (pre_gpu_num != gpu_num || pre_k != 7 || pre_size != occu_size)
+            {
+                printf("%d\t \t \t Not done, outpu_queue.occu_size = %d, "
+                    "last_repeat = %d\n", 
+                    gpu_num, occu_size, last_repeat);
+                fflush(stdout);
+                pre_gpu_num = gpu_num;
+                pre_k = 7;
+                pre_size = occu_size;
+                last_repeat = 0;
+            } else last_repeat ++;
             return false;
         }
     }
 
-    printf("%d\t All_Done.\n", gpu_num); fflush(stdout);
+    printf("%d\t All_Done. last_repeat = %d\n", gpu_num, last_repeat); 
+    fflush(stdout);
     return true;
 } 
 
@@ -202,19 +274,19 @@ cudaError_t PushNeibor(
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
     cudaEvent_t    event2;
  
-    //printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
-    //    request -> gpu_num, iteration, request -> peer, length);
-    //fflush(stdout);
-    //printf("%d\t %lld\t %d\t PushNeibor\t From, length = %d\n",
-    //    request -> peer, iteration+1, request -> gpu_num, length);
-    //fflush(stdout);
+    printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
+        request -> gpu_num, iteration, request -> peer, length);
+    fflush(stdout);
+    printf("%d\t %lld\t %d\t PushNeibor\t From, length = %d\n",
+        request -> peer, iteration+1, request -> gpu_num, length);
+    fflush(stdout);
 
     if (length > 0)
         if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
             "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
 
-    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
-    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
+    util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
+    util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
 
     if (retval = t_queue->Push_Addr(length, t_vertices, t_offset, 
         num_vertex_associates, num_value__associates, 
@@ -243,13 +315,19 @@ cudaError_t PushNeibor(
                 "cudaMemcpyAsync value__associates failed", __FILE__, __LINE__)) return retval;
         }
 
-        if (retval = s_queue->EventSet(0, s_offset, length, s_stream, false, false, NULL, &event2)) return retval;
-        if (retval = s_queue->EventSet(1, s_offset, length, s_stream)) return retval;
-        if (retval = t_queue->EventSet(0, t_offset, length, t_stream, false, true, &event2, NULL)) return retval;
+        if (retval = s_queue->EventSet(util::CqEvent<SizeT>::Block, s_offset, length, s_stream, 
+            false, false, NULL, &event2)) return retval;
+        //if (retval = s_queue->EventSet(util::CqEvent<SizeT>::Out, s_offset, length, s_stream)) 
+        //    return retval;
+        if (retval = t_queue->EventSet(util::CqEvent<SizeT>::In , t_offset, length, t_stream,
+            false, true, &event2, NULL)) return retval;
     } else {
-        if (retval = s_queue->EventFinish(0, s_offset, length, s_stream)) return retval;
-        if (retval = s_queue->EventFinish(1, s_offset, length, s_stream)) return retval;
-        if (retval = t_queue->EventFinish(0, t_offset, length, t_stream)) return retval;
+        if (retval = s_queue->EventFinish(util::CqEvent<SizeT>::Block, s_offset, length, s_stream))
+            return retval;
+        //if (retval = s_queue->EventFinish(util::CqEvent<SizeT>::Out, s_offset, length, s_stream))
+        //    return retval;
+        if (retval = t_queue->EventFinish(util::CqEvent<SizeT>::In , t_offset, length, t_stream))
+            return retval;
     }
     return retval;
 }

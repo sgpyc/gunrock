@@ -54,10 +54,11 @@ cudaError_t ComputeOutputLength(
     // load edge-expand-partitioned kernel
     //util::DisplayDeviceResults(d_in_key_queue, frontier_attribute.queue_length);
     typedef typename Problem::SizeT         SizeT;
-    if (frontier_attribute->queue_length ==0 || 
-        !((KernelPolicy::ADVANCE_MODE == LB_BACKWARD) || (KernelPolicy::ADVANCE_MODE == LB))) 
+    if (frontier_attribute->queue_length ==0)/* || 
+        !((KernelPolicy::ADVANCE_MODE == LB_BACKWARD) || (KernelPolicy::ADVANCE_MODE == LB))) */
     {
-        printf("setting output_length to 0");
+        printf("setting output_length to 0\n");
+        fflush(stdout);
         util::MemsetKernel<SizeT><<<1,1,0,stream>>>(frontier_attribute->output_length.GetPointer(util::DEVICE),0,1);
         return cudaSuccess;
     }
@@ -65,7 +66,7 @@ cudaError_t ComputeOutputLength(
     SizeT num_block = (frontier_attribute->queue_length + KernelPolicy::LOAD_BALANCED::THREADS - 1)/KernelPolicy::LOAD_BALANCED::THREADS;
     if (KernelPolicy::ADVANCE_MODE == LB_BACKWARD)
     {
-        //printf("using LB_BACKWARD\n");fflush(stdout);
+        printf("using LB_BACKWARD\n");fflush(stdout);
         gunrock::oprtr::edge_map_partitioned_backward::GetEdgeCounts
             <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
             <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(
@@ -77,9 +78,10 @@ cudaError_t ComputeOutputLength(
                 max_in,
                 max_out,
                 ADVANCE_TYPE);
+
     } else if (KernelPolicy::ADVANCE_MODE == LB)
     {
-        //printf("using LB\n");fflush(stdout);
+        printf("using LB\n");fflush(stdout);
         gunrock::oprtr::edge_map_partitioned::GetEdgeCounts
             <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
             <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(
@@ -91,6 +93,41 @@ cudaError_t ComputeOutputLength(
                 max_in,
                 max_out,
                 ADVANCE_TYPE);
+
+    } else if (KernelPolicy::ADVANCE_MODE == TWC_FORWARD)
+    {
+        printf("using TWC_FORWARD\n");fflush(stdout);
+        gunrock::oprtr::edge_map_partitioned::GetEdgeCounts
+            <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
+            <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(
+                d_offsets,
+                d_indices,
+                d_in_key_queue,
+                partitioned_scanned_edges,
+                frontier_attribute->queue_length, // TODO: +1?
+                max_in,
+                max_out,
+                ADVANCE_TYPE);
+
+    } else if (KernelPolicy::ADVANCE_MODE == TWC_BACKWARD)
+    {
+        printf("using TWC_BACKWARD\n");fflush(stdout);
+        gunrock::oprtr::edge_map_partitioned_backward::GetEdgeCounts
+            <typename KernelPolicy::LOAD_BALANCED, Problem, Functor>
+            <<< num_block, KernelPolicy::LOAD_BALANCED::THREADS, 0, stream>>>(
+                d_offsets,
+                d_indices,
+                d_in_key_queue,
+                partitioned_scanned_edges,
+                frontier_attribute->queue_length, // TODO: +1?
+                max_in,
+                max_out,
+                ADVANCE_TYPE);
+       
+    } else {
+        printf("ComputeOutputLength does nothing\n");
+        fflush(stdout);
+        return cudaSuccess;
     }
     
     Scan<mgpu::MgpuScanTypeInc>(
@@ -186,6 +223,24 @@ template <typename KernelPolicy, typename ProblemData, typename Functor>
     {
         case TWC_FORWARD:
         {
+            printf("TWC_FORWARD advance, queue_reset = %s, queue_index = %d, "
+                "iteration = %lld, queue_length = %d, d_in_key = %p, "
+                "d_out_value = %p, d_out_key = %p, d_row_offsets = %p, "
+                "d_column_indices = %p, d_row_indices = %p, data_slice = %p, "
+                "work_progress = %p, max_in = %d, max_out = %d, "
+                "kernel_stats = %p, inverse_graph = %s, "
+                "d_value_to_reduce = %p, d_redue_frontier = %p\n",
+                frontier_attribute.queue_reset ? "true" : "false", 
+                frontier_attribute.queue_index, enactor_stats.iteration,
+                frontier_attribute.queue_length, d_in_key_queue,
+                d_out_value_queue, d_out_key_queue, d_row_offsets,
+                d_column_indices, d_row_indices, data_slice,
+                &work_progress, max_in, max_out,
+                &enactor_stats.advance_kernel_stats, 
+                inverse_graph ? "true" : "false",
+                d_value_to_reduce, d_reduce_frontier);
+            fflush(stdout);
+
             // Load Thread Warp CTA Forward Kernel
             gunrock::oprtr::edge_map_forward::Kernel
                 <typename KernelPolicy::THREAD_WARP_CTA_FORWARD, ProblemData, Functor>

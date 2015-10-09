@@ -303,9 +303,11 @@ struct LoadTile
         T *d_in,
         SizeT cta_offset)
     {
-        const size_t MASK = ((sizeof(T) * 8 * LOAD_VEC_SIZE) - 1);
+        //const size_t MASK = ((sizeof(T) * 8 * LOAD_VEC_SIZE) - 1);
+        const long long MASK = ((sizeof(T) * (long long) 8 * LOAD_VEC_SIZE) -1);
 
-        if ((CHECK_ALIGNMENT) && (LOAD_VEC_SIZE > 1) && (((size_t) d_in) & MASK)) {
+        //if ((CHECK_ALIGNMENT) && (LOAD_VEC_SIZE > 1) && (((size_t) d_in) & MASK)) {
+        if ((CHECK_ALIGNMENT) && (LOAD_VEC_SIZE > 1) && (((long long) d_in) & MASK)) {
 
             Iterate<0, 0>::template LoadValid<T, Transform>(
                 data, d_in + cta_offset);

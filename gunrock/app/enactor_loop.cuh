@@ -189,8 +189,8 @@ public:
         long long iteration = -1,
         int       stream_num = -1)
     {
-        if (!Enactor::DEBUG) return;
-        else {
+        /*if (!Enactor::DEBUG) return;
+        else*/ {
             char str[527];
             if (iteration < 0) iteration = this -> iteration;
             if (stream_num < 0) stream_num = this -> stream_num;
@@ -411,7 +411,7 @@ public:
         for (stream_num = 0; stream_num < num_streams; stream_num++)
         {
             if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
-                "keys_marker", num_elements, markers + stream_num, 
+                "keys_marker", num_elements+1, markers + stream_num, 
                 over_sized, gpu_num, iteration, stream_num)) return retval;
             if (over_sized) 
                 markerss[0][stream_num] = markers[stream_num].GetPointer(util::DEVICE);
@@ -548,7 +548,7 @@ public:
                         m_handle -> num_value__associates = 0;
                     } else { // peer GPU
                         t_queue = outpu_queue;
-                        if (retval = t_queue -> Push_Pop_Addr(
+                        if (retval = t_queue -> Block_Addr(
                             t_out_lengths[0][stream_num],
                             m_handle -> keys_out, t_offset,
                             num_vertex_associates, num_value__associates,
@@ -573,12 +573,12 @@ public:
                             streams[stream_num]>>> (
                             m_handles->GetPointer(util::DEVICE) + stream_num);
                         if (stream_num + start_peer == 0)
-                            if (retval = t_queue -> EventSet(0, t_offset,
-                                t_out_lengths[0][stream_num])) return retval;
+                            if (retval = t_queue -> EventSet(util::CqEvent<SizeT>::In,
+                                t_offset, t_out_lengths[0][stream_num])) return retval;
                     } else {
                         if (stream_num + start_peer == 0)
-                            if (retval = t_queue -> EventFinish(0, t_offset,
-                                t_out_lengths[0][stream_num])) return retval;
+                            if (retval = t_queue -> EventFinish(util::CqEvent<SizeT>::In,
+                                t_offset, t_out_lengths[0][stream_num])) return retval;
                     }
 
                     if (stream_num + start_peer != 0)
@@ -617,6 +617,7 @@ public:
                         rqueue_mutex -> lock();
                         request_queue -> push_front(push_request);
                         rqueue_mutex -> unlock();
+                        ShowDebugInfo("Make_Output requst pushed", -1, stream_num + start_peer);
                     }
                 } // end of for stream_num
             } // end of while stream_counter

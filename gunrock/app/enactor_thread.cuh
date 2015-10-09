@@ -127,8 +127,8 @@ public:
         int stream_num = -1, 
         long long iteration = -1)
     {
-        if (!Enactor::DEBUG) return;
-        else {
+        /*if (!Enactor::DEBUG) return;
+        else*/ {
             char str[526];
             switch (thread_type)
             {
@@ -241,7 +241,8 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
         if (thread_slice -> status == ThreadSlice::Status::Wait
             || request_queue->empty())
         {
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
+            //std::this_thread::sleep_for(std::chrono::microseconds(1));
+            std::this_thread::yield();
             continue;
         }
 
@@ -332,7 +333,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         if (thread_slice -> retval) return;
         if (thread_slice -> status == ThreadSlice::Status::Wait)
         {
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
+            //std::this_thread::sleep_for(std::chrono::microseconds(1));
+            std::this_thread::yield();
             continue;
         }
 
@@ -376,7 +378,8 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 if (to_show)
                     thread_slice -> ShowDebugInfo("Waiting...");
                 to_show = false;
-                std::this_thread::sleep_for(std::chrono::microseconds(1));
+                //std::this_thread::sleep_for(std::chrono::microseconds(1));
+                std::this_thread::yield();
             }
         }
         to_show = true;
@@ -428,7 +431,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             if (length == 0) 
             {
                 if (thread_slice -> retval = 
-                    s_queue -> EventFinish(1, s_offset, length))
+                    s_queue -> EventFinish(util::CqEvent<SizeT>::Out, s_offset, length))
                     return;
                 continue;
             }
@@ -437,6 +440,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
         if (thread_slice -> retval = t_queue->Push_Addr(
             length, e_handle -> keys_out, t_offset)) return;
 
+        e_handle -> num_nodes = data_slice[0] -> nodes;
         e_handle -> num_elements = length;
         e_handle -> num_vertex_associates = num_vertex_associates;
         e_handle -> num_value__associates = num_value__associates;
@@ -477,10 +481,10 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
             return;
 
         if (thread_slice -> retval = 
-            s_queue -> EventSet(1, s_offset, length, stream))
+            s_queue -> EventSet(util::CqEvent<SizeT>::Out, s_offset, length, stream))
             return;
         if (thread_slice -> retval = 
-            t_queue -> EventSet(0, t_offset, length, stream))
+            t_queue -> EventSet(util::CqEvent<SizeT>::In, t_offset, length, stream))
             return;
 
         stream_selector++;
@@ -557,7 +561,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 thread_slice -> ShowDebugInfo("Waiting...");
                 show_wait = false;
             }
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
+            //std::this_thread::sleep_for(std::chrono::microseconds(1));
+            std::this_thread::yield();
             continue;
         }
 
@@ -617,7 +622,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 iteration_loop -> work_progress = work_progress;
                 iteration_loop -> status       = IterationT::Status::Running;
             }
-            if (Enactor::DEBUG && to_shows[stream_num])
+            if (/*Enactor::DEBUG &&*/ to_shows[stream_num])
             {
                 mssg=" "; mssg[0]='0' + enactor_slice -> subq__wait_counter;
                 gunrock::app::ShowDebugInfo<Enactor>(
@@ -657,18 +662,19 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     &s_target_meet, &s_output_count);
                 if (tretval == cudaErrorNotReady) 
                 {
-                    std::this_thread::sleep_for(std::chrono::microseconds(1));
+                    //std::this_thread::sleep_for(std::chrono::microseconds(1));
                     to_shows[stream_num] = false;
                     continue;
                 }
                 if (tretval) 
                 {
                     thread_slice -> retval = tretval;
+                    thread_slice -> ShowDebugInfo("Comp returned", stream_num, stream_iterations[stream_num]);
                     return;
                 }
-
                 stream_iterations[stream_num] = thread_slice -> iteration;
                 enactor_stats -> iteration = thread_slice -> iteration;
+                thread_slice -> ShowDebugInfo("Comp 0", stream_num, stream_iterations[stream_num]);
                 //if (s_lengths[stream_num] < enactor_slice -> subq__min_length)
                 if (s_target_meet)
                 { // iteration change
@@ -712,12 +718,13 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     if (s_lengths[stream_num] == 0) 
                     {
                         if (thread_slice -> retval = 
-                            s_queue -> EventFinish(1, s_offsets[stream_num], 0))
+                            s_queue -> EventFinish(util::CqEvent<SizeT>::Out, s_offsets[stream_num], 0))
                             return;
                         frontier_attribute -> queue_length = 0;
                         continue;
                     }
                 }
+                thread_slice -> ShowDebugInfo("Comp 1", stream_num, stream_iterations[stream_num]);
 
                 frontier_attribute -> queue_length = s_lengths[stream_num];
                 iteration_loop -> num_elements = s_lengths[stream_num];
@@ -725,6 +732,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     iteration_loop -> Compute_OutputLength())
                     return;
 
+                thread_slice -> ShowDebugInfo("Comp 2", stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> output_length.Move(
                     util::DEVICE, util::HOST, 1, 0, stream);
                 if (Enactor::SIZE_CHECK)
@@ -735,6 +743,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 break;
 
             case 1: // SubQ Core
+                //thread_slice -> ShowDebugInfo("SubQ .", stream_num, stream_iterations[stream_num]);
                 if (Enactor::SIZE_CHECK)
                 {
                     if (thread_slice -> retval = Check_Record(
@@ -748,10 +757,12 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         iteration_loop -> Check_Queue_Size())
                         return;
                 }
+                thread_slice -> ShowDebugInfo("SubQ 0", stream_num, stream_iterations[stream_num]);
                 enactor_stats -> iteration = stream_iterations[stream_num];
                 if (thread_slice -> retval =
                     iteration_loop -> SubQueue_Core())
                     return;
+                thread_slice -> ShowDebugInfo("SubQ 1", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval =
                     work_progress->GetQueueLength(
@@ -759,10 +770,12 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         frontier_attribute -> queue_length,
                         false, stream, true))
                     return;
+                thread_slice -> ShowDebugInfo("SubQ 2", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval = 
-                    s_queue -> EventSet(1, s_offsets[stream_num],
+                    s_queue -> EventSet(util::CqEvent<SizeT>::Out, s_offsets[stream_num],
                     s_lengths[stream_num], stream)) return;
+                thread_slice -> ShowDebugInfo("SubQ 3", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval = 
                     Set_Record(enactor_slice, 2, stream_iterations[stream_num],
@@ -785,6 +798,9 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         continue;
                     }
                     core_dones[stream_num] = true;
+                    char mssg__[128];
+                    sprintf(mssg__, "SubQ done. Queue_Length = %d", frontier_attribute -> queue_length);
+                    thread_slice -> ShowDebugInfo(mssg__, stream_num, stream_iterations[stream_num]);
                     if (!Enactor::SIZE_CHECK)
                     {
                         if (thread_slice -> retval = Check_Size
@@ -826,11 +842,11 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         frontier -> values[selector].GetPointer(util::DEVICE),
                         frontier_attribute -> queue_length);
                     if (thread_slice -> retval = t_queue -> EventSet(
-                        0, t_offset, frontier_attribute -> queue_length,
+                        util::CqEvent<SizeT>::In, t_offset, frontier_attribute -> queue_length,
                         stream)) return;
                 } else {
                     if (thread_slice -> retval = t_queue -> EventFinish(
-                        0, t_offset, frontier_attribute -> queue_length)) 
+                        util::CqEvent<SizeT>::In, t_offset, frontier_attribute -> queue_length)) 
                         return;
                 }
                 sprintf(cmssg, "pushed to fullq, length = %d", 
@@ -939,7 +955,8 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                 thread_slice -> ShowDebugInfo("Waiting...");
                 show_wait = false;
             }
-            std::this_thread::sleep_for(std::chrono::microseconds(1));
+            //std::this_thread::sleep_for(std::chrono::microseconds(1));
+            std::this_thread::yield();
             continue;
         }
         show_wait = true;
@@ -960,7 +977,8 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                 thread_slice -> ShowDebugInfo("Waiting...");
             to_show = false;
             if (tretval == cudaErrorNotReady)
-                std::this_thread::sleep_for(std::chrono::microseconds(1));
+                //std::this_thread::sleep_for(std::chrono::microseconds(1));
+                std::this_thread::yield();
         }
         if (tretval) 
         {
@@ -1098,7 +1116,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                     iteration_loop -> FullQueue_Core())
                     return;
                 if (thread_slice -> retval = 
-                    s_queue -> EventSet(0, s_length, s_offset, stream))
+                    s_queue -> EventSet(util::CqEvent<SizeT>::In, s_length, s_offset, stream))
                     return;
                 if (thread_slice -> retval =
                     work_progress -> GetQueueLength(
@@ -1214,7 +1232,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             if (!iteration_loop -> has_fullq)
             {
                 if (thread_slice -> retval = s_queue -> 
-                    EventSet(1, s_offset, s_length, stream))
+                    EventSet(util::CqEvent<SizeT>::Out, s_offset, s_length, stream))
                     return;
             }
         } else { // push back to input queue

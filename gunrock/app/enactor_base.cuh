@@ -329,6 +329,7 @@ struct ExpandIncomingHandle
     static const int NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
     static const int NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
 
+    SizeT     num_nodes;
     SizeT     num_elements;
     int       num_vertex_associates;
     int       num_value__associates;

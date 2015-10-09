@@ -975,7 +975,8 @@ namespace edge_map_forward {
                     KernelPolicy::LOG_LOAD_VEC_SIZE,
                     KernelPolicy::THREADS,
                     ProblemData::QUEUE_READ_MODIFIER,
-                    false>::LoadValid(
+                    //false>::LoadValid(
+                    true>::LoadValid(
                             tile.vertex_id,
                             d_in,
                             cta_offset,

@@ -30,6 +30,67 @@ namespace util {
 
 #define CQ_DEBUG true
 
+static const char* const event_strs[] = {"In", "Out", "Block", "All", "None"};
+
+template <typename SizeT>
+class CqEvent{
+public:
+    enum Status {
+        New,
+        Init,
+        Assigned,
+        Running,
+        Finished,
+        Cleared
+    };
+
+    enum Type {
+        In    = 0,
+        Out   = 1,
+        Block = 2,
+        All   = 3,
+        None  = 4
+    };
+
+    Status      status;
+    SizeT       offset;
+    SizeT       length;
+    Type        type;
+    cudaEvent_t event ;
+    bool        externel;
+    bool        use_temp;
+
+    CqEvent(
+        Type  type_,
+        SizeT offset_,
+        SizeT length_) :
+        status(New    ),
+        offset(offset_),
+        length(length_),
+        externel(false),
+        use_temp(false),
+        type    (type_)
+    {
+    }
+
+    CqEvent& operator=(const CqEvent& src)
+    {
+        status = src.status;
+        offset = src.offset;
+        length = src.length;
+        event  = src.event ;
+        type   = src.type  ;
+        externel = src.externel;
+        use_temp = src.use_temp;
+        return *this;
+    }
+
+    static const char* Type2Str(Type type)
+    {
+        return event_strs[type];
+    }
+}; // end of CqEvent
+
 template <
     typename VertexId,
     typename SizeT,
@@ -37,49 +98,9 @@ template <
     bool AUTO_RESIZE = true>
 struct CircularQueue
 {
-public:
+    typedef CqEvent<SizeT> Event;
+    typedef typename CqEvent<SizeT>::Type EventType;
 
-    class CqEvent{
-    public:
-        enum Status {
-            New,
-            Init,
-            Assigned,
-            Running,
-            Finished,
-            Cleared
-        };
-
-        Status      status;
-        SizeT       offset;
-        SizeT       length;
-        cudaEvent_t event ;
-        bool        externel;
-
-        CqEvent(
-            SizeT offset_,
-            SizeT length_) :
-            status(New    ),
-            offset(offset_),
-            length(length_),
-            externel(false)
-        {
-        }
-
-        CqEvent& operator=(const CqEvent& src)
-        {
-            status = src.status;
-            offset = src.offset;
-            length = src.length;
-            event  = src.event ;
-            externel = src.externel;
-            return *this;
-        }
-    }; // end of CqEvent
-    long long    input_iteration;
-    long long    output_iteration;
-    long long    iteration_jump;
- 
 private:
     std::string  name;      // name of the queue
     int          gpu_idx ;  // gpu index
@@ -102,21 +123,26 @@ private:
     SizeT        num_vertex_associates;
     SizeT        num_value__associates;
     SizeT        head_a, head_b, tail_a, tail_b; // head and tail offsets
-    std::list<CqEvent > events[2]; // 0 for in events, 1 for out events
+    std::list<Event> events; // In, Out and Block event list
     std::list<cudaEvent_t> empty_gpu_events;
     cudaEvent_t *gpu_events;
     SizeT        num_events;
     std::mutex   queue_mutex;
     int          wait_resize;
+    int          wait_temp  ;
     //SizeT        temp_capacity;
     Array1D<SizeT, VertexId> temp_array;
     Array1D<SizeT, VertexId> temp_vertex_associates;
     Array1D<SizeT, Value   > temp_value__associates;
-    char         mssg[512];
+    //char         mssg[512];
     int          lock_counter;
     bool         reduce_show;
 
 public:
+    long long    input_iteration;
+    long long    output_iteration;
+    long long    iteration_jump;
+ 
     CircularQueue() :
         name      (""  ),
         gpu_idx   (0   ),
@@ -147,6 +173,7 @@ public:
         gpu_events(NULL),
         num_events(0   ),
         wait_resize(0  ),
+        wait_temp  (0  ),
         lock_counter(0 ),
         //temp_capacity(0)
         reduce_show(true)
@@ -170,8 +197,9 @@ public:
         lock_counter ++;
         if (lock_counter != 1)
         {
-            sprintf(mssg, "Error @ Lock: lock_counter = %d", lock_counter);
-            ShowDebugInfo_(mssg);
+            char mssg[128];
+            sprintf(mssg, "Error: lock_counter = %d", lock_counter);
+            ShowDebugInfo_(__func__, mssg);
         //} else {
         //    ShowDebugInfo_("Locked");
         }
@@ -183,8 +211,9 @@ public:
         lock_counter --;
         if (lock_counter != 0)
         {
-            sprintf(mssg, "Error @ Unlock: lock_counter = %d", lock_counter);
-            ShowDebugInfo_(mssg);
+            char mssg[128];
+            sprintf(mssg, "Error: lock_counter = %d", lock_counter);
+            ShowDebugInfo_(__func__, mssg);
         //} else {
         //    ShowDebugInfo_("Unlocking");
         }
@@ -242,7 +271,7 @@ public:
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
         size_occu = 0; size_soli = 0;
-        wait_resize = 0;
+        wait_resize = 0; wait_temp    = 0;
         input_count = 0; output_count = 0;
         target_input_count[0] = MaxValue<int>();
         target_input_count[1] = MaxValue<int>();
@@ -257,10 +286,14 @@ public:
 
         if (temp_capacity != 0)
         {
-            if (retval = temp_array.Allocate(temp_capacity, target)) return retval;
-            if (retval = temp_vertex_associates.Allocate(temp_capacity * num_vertex_associates, target))
+            if (retval = temp_array            .Allocate(
+                temp_capacity, target)) 
                 return retval;
-            if (retval = temp_value__associates.Allocate(temp_capacity * num_value__associates, target))
+            if (retval = temp_vertex_associates.Allocate(
+                temp_capacity * num_vertex_associates, target))
+                return retval;
+            if (retval = temp_value__associates.Allocate(
+                temp_capacity * num_value__associates, target))
                 return retval;
             //this->temp_capacity = temp_capacity;
         }
@@ -275,7 +308,8 @@ public:
                 this -> num_events = num_events;
                 for (SizeT i=0; i<num_events; i++)
                 {
-                    if (retval = GRError(cudaEventCreateWithFlags(gpu_events + i, cudaEventDisableTiming), 
+                    if (retval = GRError(cudaEventCreateWithFlags(
+                        gpu_events + i, cudaEventDisableTiming), 
                         "cudaEventCreateWithFlags failed", __FILE__, __LINE__)) 
                         return retval;
                     empty_gpu_events.push_back(gpu_events[i]);
@@ -283,8 +317,9 @@ public:
             }
         }
 
-        events[0].clear();
-        events[1].clear();
+        events.clear();
+        //events[0].clear();
+        //events[1].clear();
 
         return retval;
     }
@@ -302,8 +337,9 @@ public:
             delete[] gpu_events; gpu_events = NULL;
             empty_gpu_events.clear();
         }
-        events[0].clear();
-        events[1].clear();
+        events.clear();
+        //events[0].clear();
+        //events[1].clear();
 
         if (vertex_associates != NULL)
         {
@@ -334,9 +370,11 @@ public:
         if (size_soli != size_occu)
         {
             Lock(in_critical);
-            if (retval = EventCheck(0, true)) 
-                return Combined_Return(retval, in_critical);
-            if (retval = EventCheck(1, true))
+            //if (retval = EventCheck(0, true)) 
+            //    return Combined_Return(retval, in_critical);
+            //if (retval = EventCheck(1, true))
+            //    return Combined_Return(retval, in_critical);
+            if (retval = EventCheck(EventType::All, true))
                 return Combined_Return(retval, in_critical);
             return Combined_Return(retval, in_critical);
         }
@@ -360,11 +398,11 @@ public:
 
     SizeT GetOccuSize(bool in_critical = false)
     {
-        char mssg[128];
+        //char mssg[128];
         UpdateSize(in_critical);
         int size_occu = this -> size_occu;
-        sprintf(mssg, "GetOccuSize, size_occu = %d", size_occu);
-        ShowDebugInfo_(mssg);
+        //sprintf(mssg, "GetOccuSize, size_occu = %d", size_occu);
+        //ShowDebugInfo_(mssg);
         return size_occu;
     }
 
@@ -390,9 +428,10 @@ public:
         this -> target_input_count[input_set_flip] = target_input_count;
         if (CQ_DEBUG)
         {
+            char mssg[128];
             sprintf(mssg,"target_input_count[%d] -> %d",
                 input_set_flip, this -> target_input_count[input_set_flip]);
-            ShowDebugInfo_(mssg, input_iteration);
+            ShowDebugInfo_(__func__, mssg, input_iteration);
         }
         //input_set_flip ^= 1;
 
@@ -401,9 +440,10 @@ public:
             target_output_pos[output_set_flip] = head_a;
             if (CQ_DEBUG)
             {
+                char mssg[128];
                 sprintf(mssg, "target_output_pos[%d] -> %d",
                     output_set_flip, target_output_pos[output_set_flip]);
-                ShowDebugInfo_(mssg, output_iteration);
+                ShowDebugInfo_(__func__, mssg, output_iteration);
             }
             input_count -= this->target_input_count[input_get_flip];
             this->target_input_count[input_get_flip] = MaxValue<int>();
@@ -412,11 +452,15 @@ public:
             //input_get_flip ^= 1;
         } else if (input_count > this -> target_input_count[input_get_flip])
         {
-            sprintf(mssg, "Error: target set too late,"
-                "input_count = %d, target_input_count[%d] = %d",
-                input_count, input_get_flip, 
-                this -> target_input_count[input_get_flip]);
-            ShowDebugInfo_(mssg, input_iteration);
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "Error: target set too late,"
+                    "input_count = %d, target_input_count[%d] = %d",
+                    input_count, input_get_flip, 
+                    this -> target_input_count[input_get_flip]);
+                ShowDebugInfo_(__func__, mssg, input_iteration);
+            }
             return GRError(cudaErrorNotReady,
                 "target set too late", __FILE__, __LINE__);
         }
@@ -431,8 +475,7 @@ public:
         Lock(in_critical);
         output_count = this->output_count;
         this->output_count = 0;
-        if (CQ_DEBUG)
-            ShowDebugInfo_("output_count -> 0");
+        ShowDebugInfo_(__func__, "output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -444,7 +487,7 @@ public:
         head_a    = 0; head_b = 0;
         tail_a    = 0; tail_b = 0;
         size_occu = 0; size_soli = 0;
-        wait_resize = 0;
+        wait_resize = 0; wait_temp = 0;
         input_count = 0; output_count = 0;
         target_input_count[0] = MaxValue<int>();
         target_input_count[1] = MaxValue<int>();
@@ -456,16 +499,16 @@ public:
         output_get_flip = 0;
         input_iteration = 0;
         output_iteration = 0;
-        events[0].clear();
-        events[1].clear();
+        events.clear();
+        //events[0].clear();
+        //events[1].clear();
         reduce_show = true;
         
         while (!empty_gpu_events.empty())
             empty_gpu_events.pop_front();
         for (int i=0; i<num_events; i++)
             empty_gpu_events.push_back(gpu_events[i]);
-        if (CQ_DEBUG)
-            ShowDebugInfo_("input_count -> 0, output_count -> 0");
+        ShowDebugInfo_(__func__, "input_count -> 0, output_count -> 0");
         return Combined_Return(retval, in_critical);
     }
 
@@ -482,8 +525,9 @@ public:
     }
 
     void ShowDebugInfo(
-        std::string function_name,
-        int         direction,
+        const char* function_name,
+        const char* mssg_,
+        EventType   type,
         SizeT       start,
         SizeT       end,
         SizeT       dsize,
@@ -493,26 +537,32 @@ public:
         if (!CQ_DEBUG) return;
         else {
             char mssg[512];
-            sprintf(mssg, "%s %s\t %d ~ %d, "
-                "dsize = %d, size_o = %d, size_s = %d,"
+            sprintf(mssg, "%d ~ %d, %s. size_o = %d, size_s = %d,"
                 "head_a = %d, head_b = %d, tail_a = %d, tail_b = %d, "
                 "i_count = %d, o_count = %d",
-                function_name.c_str(), direction == 0? "->" : "<-",
-                start, end, dsize, size_occu, size_soli,
+                start, end, mssg_, size_occu, size_soli,
                 head_a, head_b, tail_a, tail_b,
                 input_count, output_count);
-            ShowDebugInfo_(mssg, iteration);
+            ShowDebugInfo_(function_name, mssg, iteration, type, start, dsize);
         }
     }
 
     void ShowDebugInfo_(
+        const char* function_name,
         const char* mssg,
-        long long iteration = -1)
+        long long iteration = -1,
+        EventType type = EventType::None,
+        SizeT offset = 0,
+        SizeT length = 0)
     {
-        char str[526];
-        sprintf(str, "%s\t %s", name.c_str(), mssg);
         if (!CQ_DEBUG) return;
         else {
+            char str[600];
+            if (type == EventType::None)
+                sprintf(str, "%s\t %s\t \t %s", name.c_str(), function_name, mssg);
+            else sprintf(str, "%s\t %s\t %s,%lld,%lld\t %s",
+                name.c_str(), function_name, Event::Type2Str(type),
+                (long long)offset, (long long)length, mssg);
             //printf("%d\t \t \t %s\t %s\n", gpu_num, name.c_str(), mssg);
             //fflush(stdout);
             cpu_mt::PrintMessage(str, gpu_num, iteration);
@@ -538,9 +588,8 @@ public:
         for (int i=0; i<2; i++)
         {
             if (lengths[i] == 0) continue;
-            if (CQ_DEBUG)
-                ShowDebugInfo("Push", 0, offsets[i], offsets[i] + lengths[i], 
-                lengths[i], NULL, iteration);
+            ShowDebugInfo(__func__, "", EventType::In, offsets[i], 
+                offsets[i] + lengths[i], lengths[i], NULL, iteration);
             //if (lengths[i] != 0)
             //{
                 if (retval = this->array.Move_In(
@@ -569,9 +618,9 @@ public:
             //    EventSet(0, offsets[i], lengths[i], stream);
             sum += lengths[i];
         }
-        if (allocated == HOST) EventFinish(0, offsets[0], length);
+        if (allocated == HOST) EventFinish(EventType::In, offsets[0], length);
         else if (allocated == DEVICE)
-            EventSet(0, offsets[0], length, stream);
+            EventSet(EventType::In, offsets[0], length, stream);
          
         return retval;
     }
@@ -592,33 +641,41 @@ public:
         //SizeT sum        = 0;
         //long long iteration = input_iteration;
 
-        if (retval = AddSize(length, offsets, lengths, false, true, set_gpu)) return retval;
+        if (retval = AddSize(length, offsets, lengths, false, true, set_gpu)) 
+            return retval;
         offset = offsets[0];
 
         if (lengths[1] == 0)
         { // single chunk
             array = this->array.GetPointer(allocated) + offsets[0];
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = this->vertex_associates[j].GetPointer(allocated) + offsets[0];
+                vertex_associates[j] = this->vertex_associates[j]
+                    .GetPointer(allocated) + offsets[0];
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
+                value__associates[j] = this->value__associates[j]
+                    .GetPointer(allocated) + offsets[0];
         } else { // splict at the end
-            char mssg[256];
-            sprintf(mssg, "Push using temp_array, %d,%d + %d,%d -> %d",
-                offsets[0], lengths[0], offsets[1], lengths[1], length);
-            ShowDebugInfo_(mssg);
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "Using temp_array, %d,%d + %d,%d -> %d",
+                    offsets[0], lengths[0], offsets[1], lengths[1], length);
+                ShowDebugInfo_(__func__, mssg, -1, EventType::In, offsets[0], length);
+            }
             if (retval = EnsureTempCapacity(length, length, length, set_gpu))
                 return retval;
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
+                vertex_associates[j] = temp_vertex_associates
+                    .GetPointer(allocated) + j*length;
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = temp_value__associates.GetPointer(allocated) + j*length;
+                value__associates[j] = temp_value__associates
+                    .GetPointer(allocated) + j*length;
         }
         return retval;
     }
  
-    cudaError_t Push_Pop_Addr(
+    cudaError_t Block_Addr(
         SizeT         length, 
         VertexId    *&array, 
         SizeT        &offset,
@@ -632,7 +689,7 @@ public:
         SizeT offsets[2] = {0,0};
         SizeT lengths[2] = {0,0};
         //SizeT sum        = 0;
-        if (retval = AddReduceSize(
+        if (retval = BlockSize(
             length, offsets, lengths, set_gpu)) return retval;
         offset = offsets[0];
 
@@ -640,17 +697,29 @@ public:
         { // single chunk
             array = this->array.GetPointer(allocated) + offsets[0];
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = this->vertex_associates[j].GetPointer(allocated) + offsets[0];
+                vertex_associates[j] = this->vertex_associates[j]
+                    .GetPointer(allocated) + offsets[0];
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = this->value__associates[j].GetPointer(allocated) + offsets[0];
+                value__associates[j] = this->value__associates[j]
+                    .GetPointer(allocated) + offsets[0];
         } else { // splict at the end
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "Using temp_array, %d,%d + %d,%d = %d",
+                    offsets[0], lengths[0], offsets[1], lengths[1], length);
+                ShowDebugInfo_(__func__, mssg, -1, EventType::Block, offsets[0], length);
+            }
+           
             if (retval = EnsureTempCapacity(length, length, length, set_gpu))
                 return retval;
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
+                vertex_associates[j] = temp_vertex_associates
+                    .GetPointer(allocated) + j*length;
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = temp_value__associates.GetPointer(allocated) + j*length;
+                value__associates[j] = temp_value__associates
+                    .GetPointer(allocated) + j*length;
         }
         return retval;
     }
@@ -676,8 +745,8 @@ public:
         for (int i=0; i<2; i++)
         {
             if (lengths[i] == 0) continue;
-            if (CQ_DEBUG)
-                ShowDebugInfo("Pop", 1, offsets[i], offsets[i] + lengths[i], lengths[i]);
+            ShowDebugInfo("Pop", "", EventType::Out, 
+                offsets[i], offsets[i] + lengths[i], lengths[i]);
             if (retval = this->array.Move_Out(
                 allocated, allocated, array, 
                 lengths[i], sum, offsets[i], stream)) 
@@ -702,9 +771,9 @@ public:
             sum += lengths[i];
         }
         length = sum;
-        if (allocated == HOST) EventFinish(1, offsets[0], length);
+        if (allocated == HOST) EventFinish(EventType::Out, offsets[0], length);
         else if (allocated == DEVICE)
-            EventSet(1, offsets[0], length, stream);
+            EventSet(EventType::Out, offsets[0], length, stream);
 
         return retval; 
     }
@@ -730,7 +799,7 @@ public:
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
         SizeT sum        = 0;
-        char  mssg[512];
+        //char  mssg[512];
         long long iteration = output_iteration;
 
         //printf("To Pop, min_length = %d, max_length = %d\n", min_length, max_length);fflush(stdout);
@@ -742,18 +811,21 @@ public:
         length = lengths[0] + lengths[1];
         if (CQ_DEBUG)
         {
-            sprintf(mssg, "Poped, length = %d,%d, offset = %d", 
+            char mssg[128];
+            sprintf(mssg, "Length = %d,%d, offset = %d", 
                 lengths[0], lengths[1], offset);
-            ShowDebugInfo_(mssg, iteration);
+            ShowDebugInfo_(__func__, mssg, iteration, EventType::Out, offset, length);
         }
 
         if (lengths[1] == 0)
         { // single chunk
             array = this->array.GetPointer(allocated) + offset;
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = this->vertex_associates[j].GetPointer(allocated) + offset;
+                vertex_associates[j] = this->vertex_associates[j]
+                    .GetPointer(allocated) + offset;
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = this->value__associates[j].GetPointer(allocated) + offset; 
+                value__associates[j] = this->value__associates[j]
+                    .GetPointer(allocated) + offset; 
         } else {
             int org_gpu = 0;
             if (set_gpu && allocated == DEVICE)
@@ -791,15 +863,20 @@ public:
             {
                 if (retval = SetDevice(org_gpu)) return retval;
             }
-            char mssg[256];
-            sprintf(mssg, "Pop using temp_array, %d,%d + %d,%d -> %d",
-                offsets[0], lengths[0], offsets[1], lengths[1], sum);
-            ShowDebugInfo_(mssg);
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "Using temp_array, %d,%d + %d,%d -> %d",
+                    offsets[0], lengths[0], offsets[1], lengths[1], sum);
+                ShowDebugInfo_(__func__, mssg, -1, EventType::Out, offsets[0], sum);
+            }
             array = temp_array.GetPointer(allocated);
             for (SizeT j=0; j<num_vertex_associates; j++)
-                vertex_associates[j] = temp_vertex_associates.GetPointer(allocated) + j*length;
+                vertex_associates[j] = temp_vertex_associates
+                    .GetPointer(allocated) + j*length;
             for (SizeT j=0; j<num_value__associates; j++)
-                value__associates[j] = temp_value__associates.GetPointer(allocated) + j*length;
+                value__associates[j] = temp_value__associates
+                    .GetPointer(allocated) + j*length;
            
         }
         return retval; 
@@ -818,7 +895,8 @@ public:
 
         // in critical sectioin
         while (wait_resize != 0)
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
+            //std::this_thread::sleep_for(std::chrono::microseconds(10));
+            std::this_thread::yield();
         Lock(in_critical);
         bool past_wait = false;
         while (!past_wait)
@@ -826,14 +904,15 @@ public:
             if (wait_resize == 0) {past_wait = true; break;}
             else {
                 Unlock();
-                std::this_thread::sleep_for(std::chrono::microseconds(10));
+                //std::this_thread::sleep_for(std::chrono::microseconds(10));
+                std::this_thread::yield();
                 Lock();
             }
         }
        
         if (allocated == DEVICE)
         {
-            if (retval = EventCheck(1, true)) 
+            if (retval = EventCheck(EventType::Out, true)) 
                 return Combined_Return(retval, in_critical);
         }
          
@@ -865,7 +944,8 @@ public:
                             }
                         }
                         if (!got_space) {
-                            std::this_thread::sleep_for(std::chrono::microseconds(10));
+                            //std::this_thread::sleep_for(std::chrono::microseconds(10));
+                            std::this_thread::yield();
                         }
                     }
                 }
@@ -875,22 +955,35 @@ public:
         input_count ++;
         if (head_a + length > capacity)
         { // splict
+            while (wait_temp != 0)
+            {
+                Unlock();
+                std::this_thread::yield();
+                Lock();
+            }
+            wait_temp = 1;
             offsets[0] = head_a;
             lengths[0] = capacity - head_a;
             offsets[1] = 0;
             lengths[1] = length - lengths[0];
+            if (CQ_DEBUG)
+                ShowDebugInfo_(__func__, "Temp occu", -1,
+                    EventType::In, offsets[0], length);
             if (single_chunk)
             { // only single event
-                EventStart(0, offsets[0], length    , true);
+                //EventStart(0, offsets[0], length    , true);
+                EventStart(EventType::In, offsets[0], length, true);
             } else { // two events
-                EventStart(0, offsets[0], lengths[0], true);
-                EventStart(0, offsets[1], lengths[1], true);
+                //EventStart(0, offsets[0], lengths[0], true);
+                //EventStart(0, offsets[1], lengths[1], true);
+                EventStart(EventType::In, offsets[0], lengths[0], true);
+                EventStart(EventType::In, offsets[1], lengths[1], true);
             }
             head_a     = lengths[1];
         } else { // no splict
             offsets[0] = head_a;
             lengths[0] = length;
-            EventStart(0, offsets[0], lengths[0], true);
+            EventStart(EventType::In, offsets[0], lengths[0], true);
             offsets[1] = 0;
             lengths[1] = 0;
             head_a += length;
@@ -901,11 +994,16 @@ public:
         if (input_count == target_input_count[input_get_flip])
         {
             target_output_pos[output_set_flip] = head_a;
-            sprintf(mssg, "target_input_count[%d] = %d meet, "
-                "set target_output_pos[%d] -> %d",
-                input_get_flip, target_input_count[input_get_flip], 
-                output_set_flip, target_output_pos[output_set_flip]);
-            ShowDebugInfo_(mssg, iteration);
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "target_input_count[%d] = %d meet, "
+                    "set target_output_pos[%d] -> %d",
+                    input_get_flip, target_input_count[input_get_flip], 
+                    output_set_flip, target_output_pos[output_set_flip]);
+                ShowDebugInfo_(__func__, mssg, iteration, EventType::In,
+                    offsets[0], length);
+            }
             input_count -= target_input_count[input_get_flip];
             target_input_count[input_get_flip] = MaxValue<int>();
             input_iteration += iteration_jump;
@@ -914,12 +1012,12 @@ public:
         }
 
         if (CQ_DEBUG)
-            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length, 
-                NULL, iteration);
+            ShowDebugInfo(__func__, "Done", EventType::In, 
+                offsets[0], head_a, length, NULL, iteration);
         return Combined_Return(retval, in_critical);
     }
 
-    cudaError_t AddReduceSize(
+    cudaError_t BlockSize(
         SizeT  length, 
         SizeT *offsets, 
         SizeT *lengths, 
@@ -932,14 +1030,16 @@ public:
 
         // in critical sectioin
         while (wait_resize != 0)
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
+            //std::this_thread::sleep_for(std::chrono::microseconds(10));
+            std::this_thread::yield();
         Lock(in_critical);
         while (!past_wait)
         {
             if (wait_resize == 0) {past_wait = true; break;}
             else {
                 Unlock();
-                std::this_thread::sleep_for(std::chrono::microseconds(10));
+                std::this_thread::yield();
+                //std::this_thread::sleep_for(std::chrono::microseconds(10));
                 Lock();
             }
         }
@@ -978,7 +1078,8 @@ public:
                             }
                         }
                         if (!got_space) {
-                            std::this_thread::sleep_for(std::chrono::microseconds(10));
+                            std::this_thread::yield();
+                            //std::this_thread::sleep_for(std::chrono::microseconds(10));
                         }
                     }
                 }
@@ -989,27 +1090,41 @@ public:
         output_count ++;
         if (head_a + length > capacity)
         { // splict
+            while (wait_temp != 0)
+            {
+                Unlock();
+                std::this_thread::yield();
+                Lock();
+            }
+            wait_temp = 1;
             offsets[0] = head_a;
             lengths[0] = capacity - head_a;
             offsets[1] = 0;
             lengths[1] = length - lengths[0];
+            if (CQ_DEBUG)
+                ShowDebugInfo_(__func__, "Temp occu", -1, 
+                    EventType::Block, offsets[0], length);
             if (single_chunk)
             { // only single event
-                EventStart(0, offsets[0], length    , true);
-                EventStart(1, offsets[0], length    , true);
+                //EventStart(0, offsets[0], length    , true);
+                //EventStart(1, offsets[0], length    , true);
+                EventStart(EventType::Block, offsets[0], length, true);
             } else { // two events
-                EventStart(0, offsets[0], lengths[0], true);
-                EventStart(1, offsets[0], lengths[0], true);
-                EventStart(0, offsets[1], lengths[1], true);
-                EventStart(1, offsets[1], lengths[1], true);
+                //EventStart(0, offsets[0], lengths[0], true);
+                //EventStart(1, offsets[0], lengths[0], true);
+                //EventStart(0, offsets[1], lengths[1], true);
+                //EventStart(1, offsets[1], lengths[1], true);
+                EventStart(EventType::Block, offsets[0], lengths[0], true);
+                EventStart(EventType::Block, offsets[1], lengths[1], true);
             }
             head_a     = lengths[1];
             tail_a     = lengths[1];
         } else { // no splict
             offsets[0] = head_a;
             lengths[0] = length;
-            EventStart(0, offsets[0], lengths[0], true);
-            EventStart(1, offsets[0], lengths[0], true);
+            //EventStart(0, offsets[0], lengths[0], true);
+            //EventStart(1, offsets[0], lengths[0], true);
+            EventStart(EventType::Block, offsets[0], lengths[0], true);
             offsets[1] = 0;
             lengths[1] = 0;
             head_a += length;
@@ -1022,11 +1137,16 @@ public:
         iteration = input_iteration;
         if (input_count == target_input_count[input_get_flip])
         {
-            sprintf(mssg, "target_input_count[%d] = %d meet, "
-                "set target_output_pos[%d] -> %d",
-                input_get_flip, target_input_count[input_get_flip], 
-                output_set_flip, target_output_pos[output_set_flip]);
-            ShowDebugInfo_(mssg, input_iteration);
+            if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "target_input_count[%d] = %d meet, "
+                    "set target_output_pos[%d] -> %d",
+                    input_get_flip, target_input_count[input_get_flip], 
+                    output_set_flip, target_output_pos[output_set_flip]);
+                ShowDebugInfo_(__func__, mssg, input_iteration, 
+                    EventType::Block, offsets[0], length);
+            }
             target_output_pos[output_set_flip] = head_a;
             input_count -= target_input_count[input_get_flip];
             input_iteration += iteration_jump;
@@ -1036,10 +1156,12 @@ public:
 
         if (CQ_DEBUG)
         {
-            ShowDebugInfo("AddSize", 0, offsets[0], head_a, length,
-                NULL, iteration);
-            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length,
-                NULL, iteration);
+            //ShowDebugInfo("AddSize", 0, offsets[0], head_a, length,
+            //    NULL, iteration);
+            //ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length,
+            //    NULL, iteration);
+            ShowDebugInfo(__func__, "Done", EventType::Block, 
+                offsets[0], head_a, length, NULL, iteration);
         }
         return Combined_Return(retval, in_critical);
     }
@@ -1062,13 +1184,16 @@ public:
         long long iteration = output_iteration;
 
         // in critial section
-        while (wait_resize != 0)
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        if (wait_resize != 0)
+            return cudaErrorNotReady;
+
+        //while (wait_resize != 0)
+        //    std::this_thread::sleep_for(std::chrono::microseconds(10));
         Lock(in_critical);
 
         if (allocated == DEVICE)
         {
-            if (retval = EventCheck(0, true))
+            if (retval = EventCheck(EventType::In, true))
                 return Combined_Return(retval, in_critical);
         }
       
@@ -1092,15 +1217,17 @@ public:
             }
         }
 
-        if (reduce_show || on_target)
+        if ((reduce_show || on_target) && CQ_DEBUG)
         {
+            char mssg[256];
             sprintf(mssg, //"input_count = %d, target_input_count[%d] = %d, "
-                "target_output_pos[%d] = %d, tail_a = %d, length = %d, "
-                "capacity = %d", /*input_count, input_get_flip,
-                target_input_count[input_get_flip],*/ output_get_flip,
-                target_output_pos [output_get_flip], tail_a, length,
+                "target_output_pos[%d] = %d, capacity = %d", 
+                /*input_count, input_get_flip,
+                target_input_count[input_get_flip],*/ 
+                output_get_flip, target_output_pos [output_get_flip],
                 capacity);
-            ShowDebugInfo_(mssg, output_iteration);
+            ShowDebugInfo_(__func__, mssg, output_iteration,
+                EventType::Out, tail_a, length);
         }
         //printf("size_soli = %d, size_occu = %d, input_count = %d, target_input = %d, min_length = %d, max_length = %d\n",
         //    size_soli, size_occu, input_count, target_input, min_length, max_length);
@@ -1152,6 +1279,7 @@ public:
         //    target_input <= input_count)
         if (CQ_DEBUG && on_target)
         {
+            char mssg[512];
             sprintf(mssg, "On target: size_soli = %d, size_occu = %d,"
                 " t_input[%d] = %d, i_count = %d, o_count = %d, tail_a = %d,"
                 " length = %d, capacity = %d, target_output_pos[%d] = %d",
@@ -1160,27 +1288,41 @@ public:
                 input_count, output_count,tail_a, length, 
                 capacity, output_get_flip,
                 target_output_pos[output_get_flip]);
-            ShowDebugInfo_(mssg, output_iteration);
+            ShowDebugInfo_(__func__, mssg, output_iteration,
+                EventType::Out, tail_a, length);
         }
 
-       if (tail_a + length > capacity)
+        if (tail_a + length > capacity)
         { // splict
+            while (wait_temp != 0)
+            {
+                Unlock();
+                std::this_thread::yield();
+                Lock();
+            }
+            wait_temp = 1;
             offsets[0] = tail_a;
             lengths[0] = capacity - tail_a;
             offsets[1] = 0;
             lengths[1] = length - lengths[0];
+            if (CQ_DEBUG)
+                ShowDebugInfo_(__func__, "Temp occu", -1, 
+                    EventType::Out, offsets[0], length);
             if (single_chunk)
             { // single event
-                EventStart(1, offsets[0], length    , true);
+                //EventStart(1, offsets[0], length    , true);
+                EventStart(EventType::Out, offsets[0], length    , true);
             } else { // two events
-                EventStart(1, offsets[0], lengths[0], true);
-                EventStart(1, offsets[1], lengths[1], true);
+                //EventStart(1, offsets[0], lengths[0], true);
+                //EventStart(1, offsets[1], lengths[1], true);
+                EventStart(EventType::Out, offsets[0], lengths[0], true);
+                EventStart(EventType::Out, offsets[1], lengths[1], true);
             }
             tail_a     = lengths[1];
         } else {
             offsets[0] = tail_a;
             lengths[0] = length;
-            EventStart(1, offsets[0], lengths[0], true);
+            EventStart(EventType::Out, offsets[0], lengths[0], true);
             offsets[1] = 0;
             lengths[1] = 0;
             tail_a += length;
@@ -1198,12 +1340,14 @@ public:
             output_count = 0;
             if (CQ_DEBUG)
             {
+                char mssg[128];
                 sprintf(mssg, //"target_input_count[%d] -> %d, "
                     "target_output_pos[%d] -> %d, output_count -> 0",
                     //input_get_flip, target_input_count[input_get_flip],
                     output_get_flip, target_output_pos[output_get_flip]);
                 output_iteration += iteration_jump;
-                ShowDebugInfo_(mssg, output_iteration);
+                ShowDebugInfo_(__func__, mssg, output_iteration, 
+                    EventType::Out, offsets[0], length);
             }
             //input_get_flip ^= 1;
             //output_get_flip ^= 1;
@@ -1211,9 +1355,8 @@ public:
             if (target_meet != NULL) target_meet[0] = false;
         }
 
-        if (CQ_DEBUG)
-            ShowDebugInfo("RedSize", 1, offsets[0], tail_a, length, 
-            NULL, iteration);
+        ShowDebugInfo(__func__, "Done", EventType::Out, offsets[0], 
+                tail_a, length, NULL, iteration);
         return Combined_Return(retval, in_critical);
     }
 
@@ -1243,8 +1386,13 @@ public:
                         return retval;
                     if (retval = SetDevice(gpu_idx)) return retval;
                 }
-                sprintf(mssg, "TempCapacity -> %d", temp_capacity);
-                ShowDebugInfo_(mssg);
+                if (CQ_DEBUG)
+                {
+                    char mssg[128];
+                    sprintf(mssg, "TempCapacity -> %d, allocated = %d", 
+                        temp_capacity, allocated);
+                    ShowDebugInfo_(__func__, mssg);
+                }
                 if (retval = temp_array            .EnsureSize(
                     temp_capacity                        , false, 0, allocated))
                     return retval;
@@ -1280,21 +1428,26 @@ public:
         }
 
         Lock(in_critical);
+        //ShowDebugInfo_("EnsureCapacity locked");
         if (CQ_DEBUG)
         {
-            sprintf(mssg, "capacity -> %d", capacity_);
-            ShowDebugInfo_(mssg);
+            char mssg[128];
+            sprintf(mssg, "Capacity (%d) -> %d", capacity, capacity_);
+            ShowDebugInfo_(__func__, mssg);
         }
         
         capacity_ ++;
         if (capacity_ > capacity)
         {
             wait_resize = 1;
-            while ((!events[0].empty()) || (!events[1].empty()))
+            while (!events.empty())//((!events[0].empty()) || (!events[1].empty()))
             {
+                //ShowDebugInfo_("EnsureCapacity unlocking");
                 Unlock();
-                std::this_thread::sleep_for(std::chrono::microseconds(10));
+                //std::this_thread::sleep_for(std::chrono::microseconds(1000));
+                std::this_thread::yield();
                 Lock();
+                //ShowDebugInfo_("EnsureCapacity locked");
                 if (retval = UpdateSize(true))
                     return Combined_Return(retval, in_critical);
                 //for (int i=0; i<2; i++)
@@ -1304,18 +1457,19 @@ public:
                 //    return retval;
                 //}
             }
-            ShowDebugInfo_("EnsureCapacity events clear");
+            if (CQ_DEBUG)
+                ShowDebugInfo_(__func__, "Events clear");
 
-            if (retval = array.EnsureSize(capacity_, true)) 
+            if (retval = array.EnsureSize(capacity_, true, 0, allocated)) 
                 return Combined_Return(retval, in_critical);
             for (SizeT i=0; i<num_vertex_associates; i++)
             {
-                if (retval = vertex_associates[i].EnsureSize(capacity_, true))
+                if (retval = vertex_associates[i].EnsureSize(capacity_, true, 0, allocated))
                     return Combined_Return(retval, in_critical);
             }
             for (SizeT i=0; i<num_value__associates; i++)
             {
-                if (retval = value__associates[i].EnsureSize(capacity_, true))
+                if (retval = value__associates[i].EnsureSize(capacity_, true, 0, allocated))
                     return Combined_Return(retval, in_critical);
             }
 
@@ -1330,7 +1484,8 @@ public:
                     if (retval = temp_array.EnsureSize(lengths[1], false, 0, allocated))
                         return Combined_Return(retval, in_critical);
                     if (num_value__associates != 0)
-                    if (retval = temp_value__associates.EnsureSize(lengths[1], false, 0, allocated))
+                    if (retval = temp_value__associates.
+                        EnsureSize(lengths[1], false, 0, allocated))
                         return Combined_Return(retval, in_critical);
 
                     if (retval = array.Move_Out(allocated, allocated,
@@ -1346,7 +1501,8 @@ public:
                     for (SizeT i=0; i<num_vertex_associates; i++)
                     {
                         if (retval = vertex_associates[i].Move_Out(allocated, allocated,
-                            vertex_associates[i].GetPointer(allocated), lengths[0], 0, capacity))
+                            vertex_associates[i].GetPointer(allocated), 
+                            lengths[0], 0, capacity))
                             return Combined_Return(retval, in_critical);
                         if (retval = vertex_associates[i].Move_Out(allocated, allocated,
                             temp_array .GetPointer(allocated), lengths[1], lengths[0], 0))
@@ -1358,13 +1514,16 @@ public:
                     for (SizeT i=0; i<num_value__associates; i++)
                     {
                         if (retval = value__associates[i].Move_Out(allocated, allocated,
-                            value__associates[i].GetPointer(allocated), lengths[0], 0, capacity))
+                            value__associates[i].GetPointer(allocated), 
+                            lengths[0], 0, capacity))
                             return Combined_Return(retval, in_critical);
                         if (retval = value__associates[i].Move_Out(allocated, allocated,
-                            temp_value__associates.GetPointer(allocated), lengths[1], lengths[0], 0))
+                            temp_value__associates.GetPointer(allocated), 
+                            lengths[1], lengths[0], 0))
                             return Combined_Return(retval, in_critical);
                         if (retval = value__associates[i].Move_In (allocated, allocated,
-                            temp_value__associates.GetPointer(allocated), lengths[1], 0, 0))
+                            temp_value__associates.GetPointer(allocated), 
+                            lengths[1], 0, 0))
                             return Combined_Return(retval, in_critical);
                     }
                    
@@ -1390,12 +1549,13 @@ public:
             capacity = capacity_;
             head_a = (tail_a + size_occu) % capacity;
             head_b = head_a;
-            temp_array.Release();
+            //temp_array.Release();
             if (CQ_DEBUG)
             {
-                sprintf(mssg, "EnsureCapacity: capacity -> %d, head_a -> %d",
+                char mssg[128];
+                sprintf(mssg, "Capacity -> %d, head_a -> %d",
                     capacity, head_a);
-                ShowDebugInfo_(mssg);
+                ShowDebugInfo_(__func__, mssg);
             }
             wait_resize = 0;
         }
@@ -1408,7 +1568,11 @@ public:
         return retval;
     }
 
-    void EventStart( int direction, SizeT offset, SizeT length, bool in_critical = false)
+    void EventStart(
+        EventType type, 
+        SizeT offset, 
+        SizeT length, 
+        bool in_critical = false)
     {
         Lock(in_critical);
         if (length == 0)
@@ -1424,19 +1588,20 @@ public:
         } else {
             if (CQ_DEBUG)
             {
-                sprintf(mssg, "Event %d,%d,%d starts, input_count = %d, "
+                char mssg[128];
+                sprintf(mssg, "Starts, input_count = %d, "
                     "output_count = %d", 
-                    direction, offset, length,
                     input_count, output_count);
-                ShowDebugInfo_(mssg);
+                ShowDebugInfo_(__func__, mssg, -1, type, offset, length);
             }
-            events[direction].push_back(CqEvent(offset, length));
+            //events[direction].push_back(CqEvent(offset, length));
+            events.push_back(Event(type, offset, length));
         }
         Unlock(in_critical);
     }
 
     cudaError_t EventSet(
-        int   direction, 
+        EventType  type, 
         SizeT offset, 
         SizeT length, 
         cudaStream_t stream = 0, 
@@ -1449,6 +1614,8 @@ public:
         if (allocated != DEVICE) return retval;
         SizeT offsets[2] = {0, 0};
         SizeT lengths[2] = {0, 0};
+        int org_gpu;
+        
 
         if (length == 0)
         {
@@ -1465,13 +1632,22 @@ public:
             return retval;
         }
 
+        if (set_gpu && allocated == DEVICE)
+        { // set to the correct device
+            if (retval = GRError(cudaGetDevice(&org_gpu),
+                "cudaGetDevice failed", __FILE__, __LINE__))
+                return retval;
+            if (retval = SetDevice(gpu_idx)) return retval;
+        }
+
         if (offset + length > capacity)
         { // single chunk crossing the end, and in event
             SizeT sum        = 0;
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = capacity - offset; lengths[1] = length - lengths[0];
 
-            if (direction == 0)
+            //if (direction == 0)
+            if (type == EventType::In)
             {
                 for (int i=0; i<2; i++)
                 {
@@ -1493,18 +1669,24 @@ public:
                     }
                     sum += lengths[i];
                 }
-                char mssg[256];
-                sprintf(mssg, "EventSet copying from temp, %d -> %d,%d + %d,%d",
-                    sum, offsets[0], lengths[0], offsets[1], lengths[1]);
-                ShowDebugInfo_(mssg);
+                if (CQ_DEBUG)
+                {
+                    char mssg[256];
+                    sprintf(mssg, "Copy from temp, %d -> %d,%d + %d,%d",
+                        sum, offsets[0], lengths[0], offsets[1], lengths[1]);
+                    ShowDebugInfo_(__func__, mssg, -1, type, offset, length);
+                }
             }
         } //else {
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = length; lengths[1] = 0;
         //}
 
+        if (CQ_DEBUG)
+            ShowDebugInfo_(__func__, "Locking", -1, type, offset, length);
         Lock(in_critical);
-        ShowDebugInfo_("EventSet lock obtained");
+        if (CQ_DEBUG)
+            ShowDebugInfo_(__func__, "Locked", -1, type, offset, length);
 
         int i=0;
         //for (int i=0; i<2; i++)
@@ -1534,27 +1716,33 @@ public:
                 event = src_event[0];
             }
 
-            typename std::list<CqEvent>::iterator it = events[direction].begin();
-            for (it  = events[direction].begin(); 
-                 it != events[direction].end(); it ++)
+            typename std::list<Event>::iterator it = events.begin();
+            //for (it  = events[direction].begin(); 
+            //     it != events[direction].end(); it ++)
+            for (it = events.begin(); it != events.end(); it++)
             {
-                if ((offsets[i] == (*it).offset) && 
+                if ((type       == (*it).type  ) &&
+                    (offsets[i] == (*it).offset) && 
                     (lengths[i] == (*it).length))// &&
                     //((*it).status == CqEvent::New)) // matched event
                 {
                     if (CQ_DEBUG)
                     {
-                        sprintf(mssg, "Event %d,%d,%d sets, input_count = %d,"
+                        char mssg[128];
+                        sprintf(mssg, "Set, input_count = %d,"
                             " output_count = %d", 
-                            direction, offsets[i], lengths[i],
                             input_count, output_count);
-                        ShowDebugInfo_(mssg);
+                        ShowDebugInfo_(__func__, mssg, -1,
+                            type, offsets[i], lengths[i]);
                     }
                     (*it).event = event;
-                    (*it).status = CqEvent::Assigned;
+                    (*it).status = Event::Assigned;
                     if (src_event != NULL) (*it).externel = true;
                     else (*it).externel = false;
                     if (des_event != NULL) des_event[0] = event;
+                    if (offset+length > capacity)
+                        (*it).use_temp = true;
+                    else (*it).use_temp = false;
                     break;
                 } //else {
                 //    sprintf(mssg, "EventSet looking for %d,%d,%d, having %d,%d,%d",
@@ -1564,20 +1752,29 @@ public:
                 //}
             }
 
-            if (it == events[direction].end())
+            //if (it == events[direction].end())
+            if (it == events.end())
             {
-                sprintf(mssg, "EventSet %d,%d,%d can not be found", 
-                    direction, offsets[i], lengths[i]);
-                ShowDebugInfo_(mssg);
+                if (CQ_DEBUG)
+                    ShowDebugInfo_(__func__, "Error: Can not be found", -1,
+                        type, offsets[i], lengths[i]);
             }
         //}
         //EventCheck(direction, true);
+        if (CQ_DEBUG)
+            ShowDebugInfo_(__func__, "Unlocking", -1, type, offset, length);
         Unlock(in_critical);
+        if (allocated == DEVICE && set_gpu)
+        {
+            if (retval = SetDevice(org_gpu))
+                return retval;
+        }
         return retval;
     }
 
     cudaError_t EventFinish(
-        int   direction, 
+        //int   direction, 
+        EventType type,
         SizeT offset, 
         SizeT length, 
         bool  in_critical = false,
@@ -1609,7 +1806,7 @@ public:
             offsets[0] = offset; offsets[1] = 0;
             lengths[0] = capacity - offset; lengths[1] = length - lengths[0];
 
-            if (direction == 0)
+            if (type == EventType::In)
             {
                 for (int i=0; i<2; i++)
                 {
@@ -1646,26 +1843,30 @@ public:
         int i=0;
         //for (int i=0; i<2; i++)
         //{
-            typename std::list<CqEvent>::iterator it = events[direction].begin();
-            for (it  = events[direction].begin(); 
-                 it != events[direction].end(); it ++)
+            //typename std::list<CqEvent>::iterator it = events[direction].begin();
+            typename std::list<Event>::iterator it = events.begin();
+            //for (it  = events[direction].begin(); 
+            //     it != events[direction].end(); it ++)
+            for (it = events.begin(); it != events.end(); it++)
             {
-                if ((offsets[i] == (*it).offset) && 
+                if ((type       == (*it).type  ) &&
+                    (offsets[i] == (*it).offset) && 
                     (lengths[i] == (*it).length) &&
-                    ((*it).status != CqEvent::Finished))
+                    ((*it).status != Event::Finished))
                     //(((*it).status == CqEvent::Assigned) || 
                     // ((*it).status == CqEvent::New))) // matched event
                 {
                     //if (direction == 0) input_count ++;
                     if (CQ_DEBUG)
                     {
-                        sprintf(mssg, "Event %d,%d,%d done. input_count = %d,"
+                        char mssg[128];
+                        sprintf(mssg, "Done. input_count = %d,"
                             " output_count = %d", 
-                            direction, offset, length,
                             input_count, output_count);
-                        ShowDebugInfo_(mssg);
+                        ShowDebugInfo_(__func__, mssg, -1, 
+                            type, offsets[i], lengths[i]);
                     }
-                    (*it).status = CqEvent::Finished;
+                    (*it).status = Event::Finished;
                     if (allocated == DEVICE && (*it).event != NULL 
                         && !(*it).externel)
                     {
@@ -1674,42 +1875,47 @@ public:
                     break;
                 }
             }
-            if (CQ_DEBUG && it == events[direction].end())
+            if (CQ_DEBUG && it == events.end())
             {
-                sprintf(mssg, "EventFinish %d,%d,%d can not be found", 
-                    direction, offset, length);
-                ShowDebugInfo_(mssg);
+                ShowDebugInfo_(__func__, "Error: Can not be found", 
+                    -1, type, offsets[i], lengths[i]);
             }
         //}
-        SizeCheck(direction, true);
+        SizeCheck(type, true);
         if (CQ_DEBUG)
-            ShowDebugInfo("EventF", direction, offset, -1, length);
+        {
+            ShowDebugInfo(__func__, "Done", type, offset, -1, length);
+        }
         Unlock(in_critical);
         return retval;
     }
 
-    cudaError_t EventCheck(int direction, bool in_critical = false)
+    cudaError_t EventCheck(EventType type, bool in_critical = false)
     {
         cudaError_t retval = cudaSuccess;
         Lock(in_critical);
 
-        int size = events[direction].size();
+        //int size = events[direction].size();
+        int size = events.size();
         int e_size = empty_gpu_events.size();
-        int size_ = events[direction^1].size();
+        //int size_ = events[direction^1].size();
         if (size == 0)
         {
             Unlock(in_critical);
             return retval;
         }
 
-        typename std::list<CqEvent>::iterator it = events[direction].begin();
+        //typename std::list<CqEvent>::iterator it = events[direction].begin();
+        typename std::list<Event>::iterator it = events.begin();
         //sprintf(mssg, "EventCheck direction = %d, size = %d, empty_size = %d",
         //    direction, size, e_size);
         //ShowDebugInfo_(mssg);
-        for (it  = events[direction].begin();
-             it != events[direction].end(); it++)
+        //for (it  = events[direction].begin();
+        //     it != events[direction].end(); it++)
+        for (it = events.begin(); it != events.end(); it++)
         {
-            if ((*it).status == CqEvent::Assigned)
+            if ((*it).status == Event::Assigned &&
+                (type == EventType::All || type == (*it).type))
             {
                 if (((*it).length == 0 && (*it).event == NULL) || 
                     (allocated != DEVICE))
@@ -1717,89 +1923,123 @@ public:
                 else retval = cudaEventQuery((*it).event);
                 if (retval == cudaSuccess)
                 {
-                    (*it).status = CqEvent::Finished;
+                    (*it).status = Event::Finished;
                     //if (direction == 0) input_count ++;
                     if (CQ_DEBUG)
                     {
-                        sprintf(mssg, "Event %d,%d,%d finishes, "
+                        char mssg[256];
+                        sprintf(mssg, "Finish: "
                             "input_count = %d, output_count = %d", 
-                            direction, (*it).offset, (*it).length, 
                             input_count, output_count);
-                        ShowDebugInfo_(mssg);
+                        ShowDebugInfo_(__func__, mssg, -1, 
+                            (*it).type, (*it).offset, (*it).length);
                     }
                     if (allocated == DEVICE && (*it).event != NULL &&
                         !(*it).externel)
                         empty_gpu_events.push_back((*it).event);
+                    if ((*it).use_temp)// && type == EventType::Out)
+                    {
+                        ShowDebugInfo_(__func__, "Temp un-occu", -1,
+                            (*it).type, (*it).offset, (*it).length);
+                        wait_temp = 0;
+                    }
                 } else if (retval != cudaErrorNotReady) {
                     if (CQ_DEBUG)
-                        ShowDebugInfo_("Error");
+                        ShowDebugInfo_(__func__, "Error", -1,
+                            (*it).type, (*it).offset, (*it).length);
                     Unlock(in_critical);
                     return retval;
                 } else retval = cudaSuccess;
             }
         }
-        SizeCheck(direction, true);
+        SizeCheck(type, true);
         //ShowDebugInfo("EventC", direction, -1, -1, -1);
         Unlock(in_critical);
         return retval; 
     }
 
-    void SizeCheck(int direction, bool in_critical = false)
+    void SizeCheck(EventType type, bool in_critical = false)
     {
         Lock(in_critical);
         //ShowDebugInfo_("SizeCheck begin.");
         //typename std::list<CqEvent>::iterator it = events[direction].begin();
-        CqEvent *event = NULL;
+        typename std::list<Event>::iterator it = events.begin();
+        //CqEvent *event = NULL;
 
-        while (!events[direction].empty())
+        //while (!events[direction].empty())
+        while (it != events.end())
         {
-            event = &(events[direction].front());
+            //event = &(events[direction].front());
             //it = events[direction].begin();
             //printf("Event %d, %d, %d, status = %d\n", direction, (*it).offset, (*it).length, (*it).status);fflush(stdout);
-            if (event -> status == CqEvent::Finished) // finished event
+            //if (event -> status == CqEvent::Finished) // finished event
+            if ((*it).status == Event::Finished &&
+                ((type == EventType::All) || (type == (*it).type)))
             {
-                if (direction == 0)
+                bool to_remove = false;
+                if ((*it).type == EventType::In)
                 { // in event
-                    if (event -> offset == head_b)
+                    if ((*it).offset == head_b)
                     {
-                        head_b += event -> length;
+                        head_b += (*it).length;
                         if (head_b >= capacity) head_b -= capacity;
-                        event -> status = CqEvent::Cleared;
-                        size_soli += event -> length;
-                        sprintf(mssg, "Event %d,%d,%d cleared, "
-                            "head_b -> %d, size_soli -> %d",
-                            direction, event->offset, event->length,
-                            head_b, size_soli);
-                        ShowDebugInfo_(mssg);
+                        (*it).status = Event::Cleared;
+                        size_soli += (*it).length;
+                        to_remove = true;
                     } else {
                         //sprintf(mssg, "offset = %d, head_b = %d",
                         //    event -> offset, head_b);
                         //ShowDebugInfo_(mssg);
                     } 
-                } else { // out event
-                    if (event -> offset == tail_b)
+                } else if ((*it).type == EventType::Out)
+                { // out event
+                    if ((*it).offset == tail_b)
                     {
-                        tail_b += event -> length;
+                        tail_b += (*it).length;
                         if (tail_b >= capacity) tail_b -= capacity;
-                        event -> status = CqEvent::Cleared;
-                        size_occu -= event -> length;
-                        sprintf(mssg, "Event %d,%d,%d cleared, "
-                            "tail_b -> %d, size_occu -> %d",
-                            direction, event->offset, event->length,
-                            tail_b, size_occu);
-                        ShowDebugInfo_(mssg);
+                        (*it).status = Event::Cleared;
+                        size_occu -= (*it).length;
+                        to_remove = true;
                     } else {
                         //sprintf(mssg, "offset = %d, tail_b = %d", 
                         //    event -> offset, tail_b);
                         //ShowDebugInfo_(mssg);
                     }
+                } else if ((*it).type == EventType::Block)
+                { // block event
+                    if ((*it).offset == head_b)
+                    {
+                        head_b += (*it).length;
+                        if (head_b >= capacity) head_b -= capacity;
+                        tail_b += (*it).length;
+                        if (tail_b >= capacity) tail_b -= capacity;
+                        (*it).status = Event::Cleared;
+                        size_occu -= (*it).length;
+                        to_remove = true;
+                    } else {
+                    }
                 }
-                events[direction].pop_front();
+                
+                if (to_remove)
+                {
+                    if (CQ_DEBUG)
+                    {
+                        char mssg[256];
+                        sprintf(mssg, "Cleared, head_b -> %d, tail_b -> %d, "
+                            "size_occu -> %d, size_soli -> %d",
+                            head_b, tail_b, size_occu, size_soli);
+                        ShowDebugInfo_(__func__, mssg, -1,
+                            (*it).type, (*it).offset, (*it).length);
+                    }
+                    //events[direction].pop_front();
+                    it = events.erase(it);
+                } else it++;
             } else {
                 //sprintf(mssg, "event %d,%d,%d not finished",
                 //    direction, event -> offset, event -> length);
                 //ShowDebugInfo_(mssg);
-                break;
+                //break;
+                it++;
             }
         }
 

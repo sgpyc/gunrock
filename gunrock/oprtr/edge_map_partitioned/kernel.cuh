@@ -188,8 +188,8 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
         }
 
         // add a zero length neighbor list to the end (this for getting both exclusive and inclusive scan in one array)
-        SizeT ncount = GetNeighborListLength(d_row_offsets, d_column_indices, v_id, max_vertex, max_edge, ADVANCE_TYPE);
-        SizeT num_edges = (my_id == num_elements) ? 0 : ncount;
+        SizeT num_edges = GetNeighborListLength(d_row_offsets, d_column_indices, v_id, max_vertex, max_edge, ADVANCE_TYPE);
+        //SizeT num_edges = (my_id == num_elements) ? 0 : ncount;
         d_scanned_edges[my_id] = num_edges;
         //printf("my_id %d assign %d\t", my_id, num_edges);
     }

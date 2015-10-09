@@ -161,9 +161,15 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
 
         int my_id = bid*blockDim.x + tid;
 
-        if (my_id >= num_elements || my_id >= max_edge)
+        if (my_id >= num_elements) // || my_id >= max_edge)
             return;
         VertexId v_id = d_queue[my_id];
+        if (v_id < 0 || v_id > max_vertex)
+        {
+            d_scanned_edges[my_id] = 0;
+            return ;
+        }
+
         SizeT num_edges = GetNeighborListLength(d_row_offsets, d_column_indices, v_id, max_vertex, max_edge, ADVANCE_TYPE);
         d_scanned_edges[my_id] = num_edges;
     }
