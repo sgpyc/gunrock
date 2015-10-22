@@ -61,8 +61,11 @@ struct BFSFunctor
                 new_weight = label + 1;
             }
             else new_weight = s_id +1;
-            bool result = new_weight < atomicMin(problem->labels + d_id, new_weight);
-            //if (result) printf("labels[%d] -> %d\n", d_id, new_weight);
+            Value old_weight = atomicMin(problem->labels + d_id, new_weight);
+            bool result = new_weight < old_weight;
+            if (result && TO_TRACK && to_track(problem -> gpu_idx, d_id)) 
+                printf("%d\t %s: labels[%d] (%d) -> %d = labels[%d] + 1\n", 
+                    problem -> gpu_idx, __func__, d_id, old_weight, new_weight, s_id);
             return result;
         }
     }
@@ -103,6 +106,11 @@ struct BFSFunctor
      */
     static __device__ __forceinline__ bool CondFilter(VertexId node, DataSlice *problem, Value v = 0, SizeT nid=0)
     {
+        if (node != -1)
+        {
+            if (TO_TRACK && to_track(problem -> gpu_idx, node))
+                printf("%d\t %s: [%d] past\n", problem -> gpu_idx, __func__, node);
+        }
         return node != -1;
     }
 

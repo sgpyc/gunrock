@@ -70,6 +70,7 @@ template <typename VertexId, typename SizeT, typename MakeOutHandle>
 __global__ void Assign_Marker(
     const typename MakeOutHandle::Direction direction,
     const SizeT            num_elements,
+    const int              gpu_num,
     const int              num_peers,
     const int              start_peer,
     const VertexId* const  keys_in,
@@ -101,7 +102,9 @@ __global__ void Assign_Marker(
             if (gpu >=0 && gpu < num_peers)
             {
                 s_marker[gpu][x] = 1;
-                //printf("forward: markers[%d][%d] -> 1\n", gpu, x);
+                if (to_track(gpu_num, key))
+                    printf("%d\t %s\t forward: [%d] markers[%d][%d] -> 1\n", 
+                        gpu_num, __func__, key, gpu, x);
             }
         }
 
@@ -112,8 +115,10 @@ __global__ void Assign_Marker(
                 gpu = backward_partition[i] - start_peer;
                 if (gpu>=0 && gpu < num_peers)
                 {
-                    //printf("backward: markers[%d][%d] -> 1\n", gpu, x);
                     s_marker[gpu][x] = 1;
+                    if (to_track(gpu_num, key))
+                        printf("%d\t %s\t backward: [%d] markers[%d][%d] -> 1\n", 
+                            gpu_num, __func__, key, gpu, x);
                 }
             }
         }
@@ -170,7 +175,8 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
         //    x, key, host_gpu, target_gpu);
         if (host_gpu != 0 || target_gpu == 0) 
         { // remote vertex or local vertex to local GPU => forward
-            start_offset = key; end_offset = key+1;
+            start_offset = key; 
+            end_offset   = key+1;
             t_partition  = s_handle.forward_partition;
             t_convertion = s_handle.forward_convertion;
             //printf("forward, x = %d, key = %d, host_gpu = %d, target_gpu = %d, start_offset = %d, end_offset = %d\n", x, key, host_gpu, target_gpu, start_offset, end_offset);
@@ -188,27 +194,110 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
             if (host_gpu == 0 && target_gpu == 0)
             {
                 s_handle.keys_out[pos] = key;
+                if (to_track(s_handle.gpu_num, key))
+                    printf("%d\t %s\t [%d] %d\n",
+                        s_handle.gpu_num, __func__, key, pos);
             } else {
                 s_handle.keys_out[pos] = t_convertion[j];
                 for (int i=0; i<s_handle.num_vertex_associates; i++)
                     s_handle.vertex_outs[i][pos] = s_handle.vertex_orgs[i][key];
                 for (int i=0; i<s_handle.num_value__associates; i++)
                     s_handle.value__outs[i][pos] = s_handle.value__orgs[i][key];
-                //printf("label_out[%d] -> %d\n", pos, s_handle.vertex_orgs[0][key]);
+                if (to_track(s_handle.gpu_num, key))
+                    printf("%d\t %s\t [%d] -> [%d] %d,%d\n", 
+                        s_handle.gpu_num, __func__, key, s_handle.keys_out[pos],
+                        pos, s_handle.vertex_outs[0][pos]);
             }
         }
         x += STRIDE;
     }
 }
 
-template <typename VertexId, typename SizeT>
+/*template <typename VertexId, typename SizeT>
 __global__ void Mark_Queue (
     const SizeT     num_elements,
     const VertexId* keys,
           unsigned int* marker)
 {
-    VertexId x = ((blockIdx.y*gridDim.x+blockIdx.x)*blockDim.y+threadIdx.y)*blockDim.x+threadIdx.x;
-    if (x< num_elements) marker[keys[x]]=1;
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    while (x < num_elements) 
+    {
+        marker[keys[x]]=1;
+        x += STRIDE;
+    }
+}*/
+
+template <typename VertexId, typename SizeT, typename Value>
+__global__ void Check_Queue(
+    const SizeT     num_elements,
+    const int       gpu_num,
+    const SizeT     num_nodes,
+    const long long iteration,
+    const VertexId* keys,
+    const Value*    labels)
+{
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    while (x < num_elements)
+    {
+        VertexId key = keys[x];
+        if (key >= num_nodes || keys < 0)
+            printf("%d\t %lld\t %s: x, key = %d, %d\n", gpu_num, iteration, __func__, x, key);
+        else {
+            Value label = labels[key];
+            if ((label != iteration+1 && label != iteration)
+              || label < 0)
+            {
+                printf("%d\t %lld\t %s: x, key, label = %d, %d, %d\n",
+                    gpu_num, iteration, __func__, x, key, label);
+            }
+        }
+        x += STRIDE;
+    }
+}
+
+template <typename VertexId, typename SizeT, typename Value>
+__global__ void Check_Range(
+    const SizeT num_elements,
+    const int   gpu_num,
+    const long long iteration,
+    const Value lower_limit,
+    const Value upper_limit,
+    const Value* values)
+{
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    while (x < num_elements)
+    {
+        Value value = values[x];
+        if (value > upper_limit || value < lower_limit)
+        {
+            printf("%d\t %lld\t %s: x = %d, %d not in (%d, %d)\n",
+                gpu_num, iteration, __func__, x, value, lower_limit, upper_limit);
+        }
+        x += STRIDE;
+    }
+}
+
+template <typename VertexId, typename SizeT>
+__global__ void Check_Exist(
+    const SizeT num_elements,
+    const int   gpu_num,
+    const int   check_num,
+    const long long iteration,
+    const VertexId* keys)
+{
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    while (x < num_elements)
+    {
+        VertexId key = keys[x];
+        if (to_track(gpu_num, key))
+            printf("%d\t %lld\t %s: [%d] presents at %d\n",
+                gpu_num, iteration, __func__, key, check_num);
+        x += STRIDE;
+    }
 }
 
 } // namespace app

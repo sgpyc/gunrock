@@ -37,6 +37,29 @@
 namespace gunrock {
 namespace app {
 
+#define TO_TRACK true
+
+template <typename VertexId>
+static __device__ __host__ __inline__ bool to_track(int gpu_num, VertexId node)
+{
+    const int num_to_track = 57;
+    const VertexId node_to_track[] = 
+        { 402209, 175916, 175503, 175476,    320,     317,   9020,   9016,   9017,   9018,    9019,   9021,   9022,   9023,  88258, 1680769,  88257,1680768,1680772,
+          201711,  87595,  88128,  88121,    160,     157,   4505,   4511,   4512,   4513,    4514,   4515,   4516,   4517,  44299,  840883,  43958, 839885, 839887,
+         3225510,3221220,3225509,2481991,2551445, 2429884,2551447,2436298,2436299,2436300, 2436301,2436302,2436303,2436304,3003056, 4116077,2870666,4114701,4114702};
+    const int gpu_to_track[] =
+        {-1,-1,-1,-1,-1, -1,-1,-1,-1,-1, -1,-1,-1,-1,-1, -1,-1,-1,-1,
+          1, 0, 1, 1, 0,  0, 0, 1, 1, 1,  1, 1, 1, 1, 1,  1, 0, 0, 0,
+          0, 1, 0, 0, 1,  1, 1, 0, 0, 0,  0, 0, 0, 0, 0,  0, 1, 1, 1};
+        
+    #pragma unroll
+    for (int i=0; i<num_to_track; i++)
+        if (gpu_num == gpu_to_track[i] &&
+            node == node_to_track[i]) 
+        return true;
+    return false;
+}
+
 /**
  * @brief Enumeration of global frontier queue configurations
  */
@@ -737,7 +760,7 @@ struct ProblemBase
                 //util::cpu_mt::PrintCPUArray<SizeT, int>("partition0", partition_tables[0], graph -> nodes > 10 ? 10 : graph -> nodes);
                 //util::cpu_mt::PrintCPUArray<SizeT, VertexId>("convertion0", convertion_tables[0], graph -> nodes > 10 ? 10 : graph -> nodes);
 
-                graph->DisplayGraph("org_graph", graph->nodes);
+                /*graph->DisplayGraph("org_graph", graph->nodes);
                 util::cpu_mt::PrintCPUArray<SizeT,int>("partition0",partition_tables[0],graph->nodes);
                 util::cpu_mt::PrintCPUArray<SizeT,VertexId>("convertion0",convertion_tables[0],graph->nodes);
                 //util::cpu_mt::PrintCPUArray<SizeT,Value>("edge_value",graph->edge_values,graph->edges);
@@ -750,7 +773,7 @@ struct ProblemBase
                     //util::cpu_mt::PrintCPUArray<SizeT,SizeT   >("backward_offsets"    , backward_offsets    [gpu], sub_graphs[gpu].nodes);
                     //util::cpu_mt::PrintCPUArray<SizeT,int     >("backward_partitions" , backward_partitions [gpu], backward_offsets[gpu][sub_graphs[gpu].nodes]);
                     //util::cpu_mt::PrintCPUArray<SizeT,VertexId>("backward_convertions", backward_convertions[gpu], backward_offsets[gpu][sub_graphs[gpu].nodes]);
-                }
+                }*/
                 //for (int gpu=0;gpu<num_gpus;gpu++)
                 //{
                 //    cross_counter[gpu][num_gpus]=0;
@@ -769,6 +792,52 @@ struct ProblemBase
                 if (retval) break;
             } else {
                 sub_graphs=graph;
+            }
+
+            if (TO_TRACK)
+            {
+                for (VertexId v=0; v < graph->nodes; v++)
+                if (to_track(-1, v))
+                {
+                    printf("Vertex %d: ", v);
+                    if (num_gpus > 1)
+                    {
+                        int gpu = 0;
+                        VertexId v_ = 0;
+                        //for (gpu=0; gpu<num_gpus; gpu++)
+                        //    for (v_=0; v_ < sub_graphs[gpu].nodes; v_++)
+                        //        if (original_vertexes[gpu][v_] == v)
+                        //            printf("(%d, %d), ", gpu, v_);
+                        gpu = partition_tables[0][v];
+                        v_ = convertion_tables[0][v];
+                        printf("\n (%d, %d) -> {%d :", gpu, v_, 
+                            sub_graphs[gpu].row_offsets[v_+1] - sub_graphs[gpu].row_offsets[v_]);
+                        for (VertexId j = sub_graphs[gpu].row_offsets[v_];
+                            j < sub_graphs[gpu].row_offsets[v_+1]; j++)
+                            printf(" %d,", sub_graphs[gpu].column_indices[j]);
+                        printf("}\n");
+
+                        for (gpu = 0; gpu<num_gpus; gpu++)
+                        for (v_=0; v_ < sub_graphs[gpu].nodes; v_++)
+                        if (original_vertexes[gpu][v_] == v)
+                        {
+                            printf("{");
+                            for (VertexId u=0; u < sub_graphs[gpu].nodes; u++)
+                            for (VertexId j=sub_graphs[gpu].row_offsets[u];
+                                j<sub_graphs[gpu].row_offsets[u+1]; j++)
+                            if (sub_graphs[gpu].column_indices[j] == v_)
+                            {
+                                printf(" %d(%d),", u, original_vertexes[gpu][u]);
+                            }
+                            printf("} -> (%d, %d)\n", gpu, v_);
+                        }
+                    } else {
+                        printf(" -> {%d :", graph->row_offsets[v+1] - graph->row_offsets[v]);
+                        for (VertexId j = graph->row_offsets[v]; j< graph->row_offsets[v+1]; j++)
+                            printf(" %d,", graph -> column_indices[j]);
+                        printf("}\n");
+                    }
+                }
             }
 
             for (int gpu=0;gpu<num_gpus;gpu++)

@@ -1209,7 +1209,9 @@ public:
             if (t_o_pos >= tail_a &&
                 t_o_pos <= tail_a + length)
             {
-                length = t_o_pos - tail_a;
+                if (length == capacity)
+                    length = t_o_pos + capacity - tail_a;
+                else length = t_o_pos - tail_a;
             } else if (t_o_pos < tail_a &&
                 t_o_pos <= tail_a + length - capacity)
             {
@@ -1474,7 +1476,8 @@ public:
             }
 
             if (tail_a + size_occu > capacity)
-            {
+            {            
+
                 if (tail_a + size_occu > capacity_)
                 { // Content cross original and new end point
                     SizeT lengths[2] = {0, 0};
@@ -1543,6 +1546,21 @@ public:
                             value__associates[i].GetPointer(allocated), head_a, 0, capacity))
                             return Combined_Return(retval, in_critical);
                     }
+                }
+
+                SizeT t_o_pos = target_output_pos[output_get_flip];
+                if   (t_o_pos <= tail_a &&     // warp around
+                      t_o_pos <= tail_a + size_occu - capacity)
+                {
+                    t_o_pos = (capacity + t_o_pos) % capacity_;
+                    if (CQ_DEBUG)
+                    {
+                        char mssg[128];
+                        sprintf(mssg, "target_output_pos[%d] (%d) -> %d",
+                            output_get_flip, target_output_pos[output_get_flip], t_o_pos);
+                        ShowDebugInfo_(__func__, mssg);
+                    }
+                    target_output_pos[output_get_flip] = t_o_pos;
                 }
             }
 
@@ -1649,6 +1667,14 @@ public:
             //if (direction == 0)
             if (type == EventType::In)
             {
+                if (length > 0 && src_event != NULL)
+                {
+                    if (retval = GRError(cudaStreamWaitEvent(stream, src_event[0], 0),
+                        "cudaStreamWaitEvent failed", __FILE__, __LINE__))
+                        return retval;
+                    src_event = NULL;
+                }
+
                 for (int i=0; i<2; i++)
                 {
                     if (lengths[i] == 0) continue;

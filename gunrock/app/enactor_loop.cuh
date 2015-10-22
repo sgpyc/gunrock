@@ -421,7 +421,16 @@ public:
        
         if (retval = util::GRError(cudaStreamWaitEvent(
             streams[0], wait_event, 0), 
-            "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval; 
+            "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
+
+        Check_Queue<VertexId, SizeT, Value>
+            <<<grid_size, block_size, 0,  streams[0]>>>(
+            num_elements,
+            gpu_num,
+            graph_slice -> nodes,
+            iteration,
+            d_keys_in,
+            data_slice -> labels.GetPointer(util::DEVICE)); 
         
         start_peer = 0;
         while (start_peer < num_gpus)
@@ -442,6 +451,7 @@ public:
                 streams[0]>>> (
                 direction,
                 num_elements,
+                gpu_num,
                 target_num_streams,
                 start_peer,
                 d_keys_in,
@@ -520,6 +530,7 @@ public:
                     m_handle = m_handles[0] + stream_num;
                     m_handle -> direction    = direction;
                     m_handle -> num_elements = num_elements;
+                    m_handle -> gpu_num      = gpu_num;
                     m_handle -> target_gpu   = stream_num + start_peer;
                     m_handle -> keys_in      = d_keys_in;
                     m_handle -> markers      = markerss[0][stream_num];
@@ -595,6 +606,15 @@ public:
                                 cudaEventRecord(push_request -> event,
                                 streams[stream_num]), "cudaEventRecord failed", 
                                 __FILE__, __LINE__)) return retval;
+                        Check_Range<VertexId, SizeT, Value>
+                            <<<grid_size, block_size, 0, streams[stream_num]>>>
+                            (t_out_lengths[0][stream_num],
+                            gpu_num,
+                            iteration,
+                            (Value)(iteration > 1 ? iteration-1 : 0),
+                            (Value)iteration + 1,
+                            m_handle -> vertex_outs[0]);
+
                         //push_request -> event = event;
                         push_request -> iteration = iteration;
                         push_request -> peer = stream_num + start_peer;

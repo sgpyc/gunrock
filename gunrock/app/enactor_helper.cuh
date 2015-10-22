@@ -285,8 +285,8 @@ cudaError_t PushNeibor(
         if (retval = util::GRError(cudaStreamWaitEvent(s_stream, event, 0),
             "cudaStreamWaitEvent failed", __FILE__, __LINE__)) return retval;
 
-    util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
-    util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
+    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing keys", s_vertices, length, request->gpu_num, iteration, request -> peer, s_stream);
+    //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("pushing labels", s_vertex_associates[0], length, request->gpu_num, iteration, request -> peer, s_stream);
 
     if (retval = t_queue->Push_Addr(length, t_vertices, t_offset, 
         num_vertex_associates, num_value__associates, 

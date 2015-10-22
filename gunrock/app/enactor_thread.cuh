@@ -442,6 +442,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
 
         e_handle -> num_nodes = data_slice[0] -> nodes;
         e_handle -> num_elements = length;
+        e_handle -> gpu_num   = gpu_num;
         e_handle -> num_vertex_associates = num_vertex_associates;
         e_handle -> num_value__associates = num_value__associates;
         for (int i=0; i<num_vertex_associates; i++)
@@ -674,7 +675,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 }
                 stream_iterations[stream_num] = thread_slice -> iteration;
                 enactor_stats -> iteration = thread_slice -> iteration;
-                thread_slice -> ShowDebugInfo("Comp 0", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("Comp 0", stream_num, stream_iterations[stream_num]);
                 //if (s_lengths[stream_num] < enactor_slice -> subq__min_length)
                 if (s_target_meet)
                 { // iteration change
@@ -724,7 +725,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         continue;
                     }
                 }
-                thread_slice -> ShowDebugInfo("Comp 1", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("Comp 1", stream_num, stream_iterations[stream_num]);
 
                 frontier_attribute -> queue_length = s_lengths[stream_num];
                 iteration_loop -> num_elements = s_lengths[stream_num];
@@ -732,7 +733,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     iteration_loop -> Compute_OutputLength())
                     return;
 
-                thread_slice -> ShowDebugInfo("Comp 2", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("Comp 2", stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> output_length.Move(
                     util::DEVICE, util::HOST, 1, 0, stream);
                 if (Enactor::SIZE_CHECK)
@@ -757,12 +758,12 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         iteration_loop -> Check_Queue_Size())
                         return;
                 }
-                thread_slice -> ShowDebugInfo("SubQ 0", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("SubQ 0", stream_num, stream_iterations[stream_num]);
                 enactor_stats -> iteration = stream_iterations[stream_num];
                 if (thread_slice -> retval =
                     iteration_loop -> SubQueue_Core())
                     return;
-                thread_slice -> ShowDebugInfo("SubQ 1", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("SubQ 1", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval =
                     work_progress->GetQueueLength(
@@ -770,12 +771,13 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         frontier_attribute -> queue_length,
                         false, stream, true))
                     return;
-                thread_slice -> ShowDebugInfo("SubQ 2", stream_num, stream_iterations[stream_num]);
+
+                //thread_slice -> ShowDebugInfo("SubQ 2", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval = 
                     s_queue -> EventSet(util::CqEvent<SizeT>::Out, s_offsets[stream_num],
                     s_lengths[stream_num], stream)) return;
-                thread_slice -> ShowDebugInfo("SubQ 3", stream_num, stream_iterations[stream_num]);
+                //thread_slice -> ShowDebugInfo("SubQ 3", stream_num, stream_iterations[stream_num]);
 
                 if (thread_slice -> retval = 
                     Set_Record(enactor_slice, 2, stream_iterations[stream_num],
@@ -832,6 +834,11 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
                 if (frontier_attribute -> queue_length != 0)
                 {
+                    Check_Exist<<<256, 256, 0, stream>>>(
+                        frontier_attribute -> queue_length,
+                        gpu_num, 0, stream_iterations[stream_num],
+                        frontier -> keys[selector].GetPointer(util::DEVICE));
+                        
                     util::MemsetCopyVectorKernel<<<256, 256, 0, stream>>>(
                         vertex_array,
                         frontier -> keys[selector].GetPointer(util::DEVICE),
@@ -1222,6 +1229,10 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             //    cudaStreamSynchronize(stream),
             //    "cudaStream Synchronize failed", __FILE__, __LINE__))
             //    return;
+
+            Check_Exist<<<256, 256, 0, stream>>>(
+                iteration_loop -> num_elements, gpu_num, 1, iteration,
+                iteration_loop -> d_keys_in);
 
             if (thread_slice -> retval = util::GRError(cudaEventRecord(
                 iteration_loop -> wait_event, stream),

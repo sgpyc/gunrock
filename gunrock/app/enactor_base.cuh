@@ -301,6 +301,7 @@ struct MakeOutHandle
     int        num_vertex_associates;
     int        num_value__associates;
     int        target_gpu;
+    int        gpu_num;
     VertexId  *keys_in;
     VertexId  *keys_out;
     SizeT     *markers;
@@ -329,6 +330,7 @@ struct ExpandIncomingHandle
     static const int NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
     static const int NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
 
+    int       gpu_num;
     SizeT     num_nodes;
     SizeT     num_elements;
     int       num_vertex_associates;
@@ -593,7 +595,7 @@ protected:
         num_threads = thread_counter;
 
         for (int thread_num = 0; thread_num < num_threads; thread_num++)
-        if (thread_slices[thread_num].status != ThreadSlice::Status::Wait)
+        while (thread_slices[thread_num].status != ThreadSlice::Status::Wait)
         {
             std::this_thread::sleep_for(std::chrono::microseconds(1));
         }

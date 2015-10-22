@@ -63,25 +63,29 @@ namespace bfs {
 
             if (key < 0 || key >= s_handle.num_nodes || label < 0)
             {
-                //printf("x, key, label = %d, %d, %d\t", x, key, label);
+                printf("%d\t %s: x, key, label = %d, %d, %d\n", 
+                    s_handle.gpu_num, __func__, x, key, label);
                 s_handle.keys_out[x] = -1;
                 x += STRIDE;
                 continue;
             }
-            else if (atomicCAS(s_handle.vertex_orgs[0] + key, -1, label)!= -1)
+            
+            Value old_label = s_handle.vertex_orgs[0][key];
+            if (atomicCAS(s_handle.vertex_orgs[0] + key, -1, label)!= -1)
             {
-               if (atomicMin(s_handle.vertex_orgs[0] + key, label) <= label)
-               {
-                   s_handle.keys_out[x]=-1;
-                   //if (key < 10) printf("Expand %d, %d, %d: label[%d](%d) -> %d skip\n", 
-                   //     gpu_num, thread_num, s_handle.num_elements, key, 
-                   //     s_handle.vertex_orgs[0][key], label);
-                   x+=STRIDE;
-                   continue;
-               }
-               //if (key < 10) printf("Expand %d, %d, %d: label[%d] -> %d\n", 
-               //     gpu_num, thread_num, s_handle.num_elements, key, label);
+                if (atomicMin(s_handle.vertex_orgs[0] + key, label) <= label)
+                {
+                    s_handle.keys_out[x]=-1;
+                    x+=STRIDE;
+                    continue;
+                }
             }
+            if (TO_TRACK && to_track(s_handle.gpu_num, key))
+            {
+                printf("%d\t %s: label[%d] (%d) -> (%d)\n", 
+                    s_handle.gpu_num, __func__, key, old_label, label);
+            }
+
             s_handle.keys_out[x]=key;
             if (s_handle.num_vertex_associates == 2) 
                 s_handle.vertex_orgs[1][key]=s_handle.vertex_ins[1][x];
@@ -193,7 +197,7 @@ struct BFSIteration : public IterationBase <
             work_progress  ->template GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
         
-        if ( enactor_stats -> iteration == 267)
+        /*if ( enactor_stats -> iteration == 267)
         {
             work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
             if (retval = cudaStreamSynchronize(stream)) return retval;
@@ -204,7 +208,7 @@ struct BFSIteration : public IterationBase <
                 frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), 
                 frontier_attribute->queue_length, this->gpu_num, 
                 enactor_stats -> iteration, this-> stream_num, stream);
-        }
+        }*/
         //return retval;
  
         // Filter
@@ -231,7 +235,7 @@ struct BFSIteration : public IterationBase <
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        if ( enactor_stats -> iteration == 267)
+        /*if ( enactor_stats -> iteration == 267)
         {
             work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
             if (retval = cudaStreamSynchronize(stream)) return retval;
@@ -242,7 +246,7 @@ struct BFSIteration : public IterationBase <
                 frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), 
                 frontier_attribute -> queue_length, this->gpu_num, 
                 enactor_stats -> iteration, this-> stream_num, stream);
-        }
+        }*/
         return retval;
     }
 

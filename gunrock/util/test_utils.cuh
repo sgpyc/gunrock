@@ -341,6 +341,7 @@ template <typename T, typename SizeT>
 int CompareResults(T* computed, T* reference, SizeT len, bool verbose = true)
 {
     int flag = 0;
+    T s_diff = -1, s_pos = 0;
     for (SizeT i = 0; i < len; i++)
     {
         if (computed[i] != reference[i] && flag == 0)
@@ -370,9 +371,20 @@ int CompareResults(T* computed, T* reference, SizeT len, bool verbose = true)
             flag += 1;
             //return flag;
         }
+        if (computed[i] != reference[i] && (reference[i] < s_diff || s_diff == -1))
+        {
+            s_diff = reference[i];
+            s_pos = i;
+        }
         if (computed[i] != reference[i] && flag > 0) flag+=1;
     }
     printf("\n");
+    if (verbose && flag != 0)
+    {
+        printf("Smallest difference: pos = %lld, reference = %lld, result = %lld\n",
+            (long long)s_pos, (long long)s_diff, (long long)computed[s_pos]);
+    }
+
     if (flag == 0)
     {
         printf("CORRECT");

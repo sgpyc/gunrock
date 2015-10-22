@@ -502,9 +502,16 @@ void RunTests(Test_Parameter *parameter)
                     printf("%d errors occurred.\n", error_num);
             }
         }
+
+        for (VertexId v=0; v<graph->nodes; v++)
+        if (gunrock::app::to_track(-1, v) && reference_check_label[v] != h_labels[v])
+        {
+            printf("Vertex %d, reference = %d, result = %d\n",
+                v, reference_check_label[v], h_labels[v]);
+        }
     }
 
-    printf("\nFirst 40 labels of the GPU result."); 
+    //printf("\nFirst 40 labels of the GPU result."); 
     // Display Solution
     DisplaySolution<VertexId, SizeT, MARK_PREDECESSORS, ENABLE_IDEMPOTENCE>
         (h_labels, h_preds, graph->nodes);
@@ -602,16 +609,16 @@ template <
     bool        SIZE_CHECK>
 void RunTests_mark_predecessors(Test_Parameter *parameter)
 {
-//    if (parameter->mark_predecessors) 
-//    {
-//        RunTests_enable_idempotence
-//            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
-//            true > (parameter);
-//    } else {
+    if (parameter->mark_predecessors) 
+    {
+        RunTests_enable_idempotence
+            <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK,
+            true > (parameter);
+    } else {
         RunTests_enable_idempotence
             <VertexId, SizeT, Value, INSTRUMENT, DEBUG, SIZE_CHECK, 
             false> (parameter);
-//    }
+    }
 }
 
 template <
