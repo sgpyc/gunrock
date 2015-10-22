@@ -371,7 +371,12 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                                 if (ADVANCE_TYPE == gunrock::oprtr::advance::V2V) {
                                     util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                             u,
-                                            d_out + out_index); 
+                                            d_out + out_index);
+                                    if (app::to_track(problem -> gpu_idx, u))
+                                    {
+                                        printf("%d\t %s\t storing [%d] into %p + %d\n",
+                                            problem -> gpu_idx, __func__, u, d_out, out_index);
+                                    } 
                                 } else if (ADVANCE_TYPE == gunrock::oprtr::advance::V2E
                                          ||ADVANCE_TYPE == gunrock::oprtr::advance::E2E) {
                                     util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
@@ -653,12 +658,23 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                         if (ADVANCE_TYPE == gunrock::oprtr::advance::V2V) {
                             util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                     u,
-                                    d_out + offset+i); 
+                                    d_out + offset+i);
+                            if (app::to_track(problem -> gpu_idx, u))
+                            {
+                                printf("%d\t %s\t storing [%d] -> %p + %d\n",
+                                    problem->gpu_idx, __func__, u, d_out, offset + i);
+                            } 
                         } else if (ADVANCE_TYPE == gunrock::oprtr::advance::V2E
                                  ||ADVANCE_TYPE == gunrock::oprtr::advance::E2E) {
                             util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                     (VertexId)lookup,
                                     d_out + offset+i);
+                            if (app::to_track(problem -> gpu_idx, u))
+                            {
+                                printf("%d\t %s\t storing [%d] -> %p + %d for [%d]\n",
+                                    problem->gpu_idx, __func__, lookup, 
+                                    d_out, offset + i, u);
+                            } 
                         }
                     }
                     if (d_value_to_reduce != NULL) {

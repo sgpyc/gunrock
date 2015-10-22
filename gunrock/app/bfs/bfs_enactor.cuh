@@ -210,6 +210,13 @@ struct BFSIteration : public IterationBase <
                 enactor_stats -> iteration, this-> stream_num, stream);
         }*/
         //return retval;
+
+        Check_Exist_<<<enactor_stats -> filter_grid_size,
+            FilterKernelPolicy::THREADS, 0, stream>>>(
+            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                frontier_attribute->queue_index),
+            this->gpu_num, 3, enactor_stats -> iteration,
+            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
  
         // Filter
         //this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
@@ -234,6 +241,14 @@ struct BFSIteration : public IterationBase <
         //this-> ShowDebugInfo("Filter end", enactor_stats->iteration);
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
+
+        Check_Exist_<<<enactor_stats -> filter_grid_size,
+            FilterKernelPolicy::THREADS, 0, stream>>>(
+            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                frontier_attribute->queue_index),
+            this->gpu_num, 4, enactor_stats -> iteration,
+            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+ 
 
         /*if ( enactor_stats -> iteration == 267)
         {

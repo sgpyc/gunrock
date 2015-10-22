@@ -300,6 +300,26 @@ __global__ void Check_Exist(
     }
 }
 
+template <typename VertexId, typename SizeT>
+__global__ void Check_Exist_(
+    const SizeT *num_elements,
+    const int   gpu_num,
+    const int   check_num,
+    const long long iteration,
+    const VertexId* keys)
+{
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    while (x < num_elements[0])
+    {
+        VertexId key = keys[x];
+        if (to_track(gpu_num, key))
+            printf("%d\t %lld\t %s: [%d] presents at %d\n",
+                gpu_num, iteration, __func__, key, check_num);
+        x += STRIDE;
+    }
+}
+
 } // namespace app
 } // namespace gunrock
 

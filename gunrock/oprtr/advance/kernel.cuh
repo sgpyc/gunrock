@@ -223,15 +223,16 @@ template <typename KernelPolicy, typename ProblemData, typename Functor>
     {
         case TWC_FORWARD:
         {
-            printf("TWC_FORWARD advance, queue_reset = %s, queue_index = %d, "
-                "iteration = %lld, queue_length = %d, d_in_key = %p, "
+            printf("%d\t %lld\t TWC_FORWARD advance, queue_reset = %s, queue_index = %d, "
+                "queue_length = %d, d_in_key = %p, "
                 "d_out_value = %p, d_out_key = %p, d_row_offsets = %p, "
                 "d_column_indices = %p, d_row_indices = %p, data_slice = %p, "
                 "work_progress = %p, max_in = %d, max_out = %d, "
                 "kernel_stats = %p, inverse_graph = %s, "
                 "d_value_to_reduce = %p, d_redue_frontier = %p\n",
+                enactor_stats.gpu_num, enactor_stats.iteration,
                 frontier_attribute.queue_reset ? "true" : "false", 
-                frontier_attribute.queue_index, enactor_stats.iteration,
+                frontier_attribute.queue_index,
                 frontier_attribute.queue_length, d_in_key_queue,
                 d_out_value_queue, d_out_key_queue, d_row_offsets,
                 d_column_indices, d_row_indices, data_slice,

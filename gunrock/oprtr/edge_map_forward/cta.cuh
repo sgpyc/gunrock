@@ -318,7 +318,13 @@ namespace edge_map_forward {
                                                     if (cta->advance_type == gunrock::oprtr::advance::V2V) {
                                                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                                             neighbor_id,
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank); 
+                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        if (app::to_track(cta->problem->gpu_idx, neighbor_id))
+                                                        {
+                                                            printf("%d\t %s\t storing [%d] -> %p + %d\n",
+                                                                cta->problem->gpu_idx, __func__, neighbor_id,
+                                                                cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        } 
                                                     } else if (cta->advance_type == gunrock::oprtr::advance::V2E
                                                             ||cta->advance_type == gunrock::oprtr::advance::E2E) {
                                                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
@@ -419,7 +425,13 @@ namespace edge_map_forward {
                                                     if (cta->advance_type == gunrock::oprtr::advance::V2V) {
                                                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                                                 neighbor_id,
-                                                                cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank); 
+                                                                cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        if (app::to_track(cta->problem->gpu_idx, neighbor_id))
+                                                        {
+                                                            printf("%d\t %s\t storing [%d] -> %p + %d\n",
+                                                                cta->problem->gpu_idx, __func__, neighbor_id,
+                                                                cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        } 
                                                     } else if (cta->advance_type == gunrock::oprtr::advance::V2E
                                                              ||cta->advance_type == gunrock::oprtr::advance::E2E) {
                                                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
@@ -650,6 +662,12 @@ namespace edge_map_forward {
                                                     util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                                             neighbor_id,
                                                             cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    if (app::to_track(cta->problem->gpu_idx, neighbor_id))
+                                                    {
+                                                        printf("%d\t %s\t storing [%d] -> %p + %d\n",
+                                                            cta->problem->gpu_idx, __func__, neighbor_id, 
+                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    }
                                                 }
 
                                                 coop_offset += GR_WARP_THREADS(KernelPolicy::CUDA_ARCH);
@@ -746,6 +764,12 @@ namespace edge_map_forward {
                                                     util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
                                                             neighbor_id,
                                                             cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    if (app::to_track(cta->problem->gpu_idx, neighbor_id))
+                                                    {
+                                                        printf("%d\t %s\t storing [%d] -> %p + %d\n",
+                                                            cta->problem->gpu_idx, __func__, neighbor_id, 
+                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    }
                                                 }
                                             }
                                         }

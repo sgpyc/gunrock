@@ -44,6 +44,7 @@ namespace app {
  */
 struct EnactorStats
 {
+    int                              gpu_num             ;
     long long                        iteration           ;
     unsigned long long               total_lifetimes     ;
     unsigned long long               total_runtimes      ;
@@ -57,6 +58,7 @@ struct EnactorStats
     clock_t                          start_time          ;
 
     EnactorStats() :
+        gpu_num          (0),
         iteration        (0),
         total_lifetimes  (0),
         total_runtimes   (0),
@@ -558,6 +560,7 @@ protected:
                     MaxGridSize(gpu_num, filter_occupancy , max_grid_size),
                     node_lock_size))
                     return retval;
+                enactor_stats_ -> gpu_num = gpu_num;
             }
 
             typename ThreadSlice::Type thread_type = ThreadSlice::Type::Input;
