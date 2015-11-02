@@ -320,6 +320,17 @@ __global__ void Check_Exist_(
     }
 }
 
+template <typename Type>
+__global__ void Check_Value(
+    const Type *value,
+    const int   gpu_num,
+    const int   check_num,
+    const long long iteration)
+{
+    printf("%d\t %lld\t %s: %d at %d\n",
+        gpu_num, iteration, __func__, value[0], check_num);
+}
+
 } // namespace app
 } // namespace gunrock
 

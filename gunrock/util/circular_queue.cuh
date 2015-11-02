@@ -113,6 +113,7 @@ private:
     int          output_get_flip;
     int          target_input_count[2];
     SizeT        target_output_pos [2]; 
+    SizeT        iteration_length  [2];
     SizeT        capacity;  // capacity of the queue
     SizeT        size_occu; // occuplied size
     SizeT        size_soli; // size of the fixed part
@@ -139,8 +140,8 @@ private:
     bool         reduce_show;
 
 public:
-    long long    input_iteration;
-    long long    output_iteration;
+    long long    input_iteration, input_iteration_base;
+    long long    output_iteration, output_iteration_base;
     long long    iteration_jump;
  
     CircularQueue() :
@@ -154,7 +155,9 @@ public:
         output_set_flip(0  ),
         output_get_flip(0  ),
         input_iteration(0  ),
+        input_iteration_base(0),
         output_iteration(0 ),
+        output_iteration_base(0),
         iteration_jump  (1 ),
         //target_input_count(MaxValue<int>()),
         //target_output_pos(0),
@@ -183,6 +186,8 @@ public:
         target_input_count[1] = MaxValue<int>();
         target_output_pos [0] = MaxValue<SizeT>();
         target_output_pos [1] = MaxValue<SizeT>();
+        iteration_length  [0] = 0;
+        iteration_length  [1] = 0;
     }
 
     ~CircularQueue()
@@ -277,12 +282,16 @@ public:
         target_input_count[1] = MaxValue<int>();
         target_output_pos [0] = MaxValue<SizeT>();
         target_output_pos [1] = MaxValue<SizeT>();
+        iteration_length  [0] = 0;
+        iteration_length  [1] = 0;
         input_set_flip  = 0;
         input_get_flip  = 0;
         output_set_flip = 0;
         output_get_flip = 0;
         input_iteration = 0;
+        input_iteration_base = 0;
         output_iteration = 0;
+        output_iteration_base = 0;
 
         if (temp_capacity != 0)
         {
@@ -419,6 +428,11 @@ public:
         return capacity;
     }
 
+    SizeT GetTempCapacity()
+    {
+        return temp_array.GetSize();
+    }
+
     cudaError_t SetInputTarget(
         int target_input_count,
         bool in_critical = false)
@@ -448,6 +462,8 @@ public:
             input_count -= this->target_input_count[input_get_flip];
             this->target_input_count[input_get_flip] = MaxValue<int>();
             input_iteration += iteration_jump;
+            input_iteration_base += 1;
+            iteration_length [input_iteration_base%2] = 0;
             //output_set_flip ^= 1;
             //input_get_flip ^= 1;
         } else if (input_count > this -> target_input_count[input_get_flip])
@@ -493,12 +509,16 @@ public:
         target_input_count[1] = MaxValue<int>();
         target_output_pos[0] = MaxValue<SizeT>();
         target_output_pos[1] = MaxValue<SizeT>();
+        iteration_length [0] = 0;
+        iteration_length [1] = 0;
         input_set_flip = 0;
         input_get_flip = 0;
         output_set_flip = 0;
         output_get_flip = 0;
         input_iteration = 0;
+        input_iteration_base = 0;
         output_iteration = 0;
+        output_iteration_base = 0;
         events.clear();
         //events[0].clear();
         //events[1].clear();
@@ -991,6 +1011,7 @@ public:
         }
         size_occu += length;
         iteration = input_iteration;
+        iteration_length [input_iteration_base%2] += length;
         if (input_count == target_input_count[input_get_flip])
         {
             target_output_pos[output_set_flip] = head_a;
@@ -1007,6 +1028,8 @@ public:
             input_count -= target_input_count[input_get_flip];
             target_input_count[input_get_flip] = MaxValue<int>();
             input_iteration += iteration_jump;
+            input_iteration_base += 1;
+            iteration_length [input_iteration_base%2] = 0;
             //input_get_flip ^=1;
             //output_set_flip ^= 1;
         }
@@ -1150,6 +1173,7 @@ public:
             target_output_pos[output_set_flip] = head_a;
             input_count -= target_input_count[input_get_flip];
             input_iteration += iteration_jump;
+            input_iteration_base += 1;
             //input_get_flip ^= 1;
             //output_set_flip ^= 1;
         }
@@ -1205,7 +1229,16 @@ public:
              (t_o_pos <  tail_a &&     // warp around
               t_o_pos <= tail_a + length - capacity)))
         {
-            on_target = true;
+            /*if (CQ_DEBUG)
+            {
+                char mssg[256];
+                sprintf(mssg, "Testing target, target_output_pos = %d, "
+                    "iteration_length[%lld] = %d",
+                    t_o_pos, output_iteration_base%2,
+                    iteration_length[output_iteration_base%2]);
+                ShowDebugInfo_(__func__, mssg, output_iteration,
+                    EventType::Out, tail_a, length);
+            }*/
             if (t_o_pos >= tail_a &&
                 t_o_pos <= tail_a + length)
             {
@@ -1217,17 +1250,22 @@ public:
             {
                 length = t_o_pos + capacity - tail_a;    
             }
+            if (length == 0 && t_o_pos == tail_a 
+                && iteration_length[output_iteration_base%2] != 0)
+            { // special case, queue is occu-full, but input not finished yet
+                on_target = false;
+            } else on_target = true;
         }
 
         if ((reduce_show || on_target) && CQ_DEBUG)
         {
             char mssg[256];
             sprintf(mssg, //"input_count = %d, target_input_count[%d] = %d, "
-                "target_output_pos[%d] = %d, capacity = %d", 
+                "target_output_pos[%d] = %d, capacity = %d, iteration_length[%lld] = %d", 
                 /*input_count, input_get_flip,
                 target_input_count[input_get_flip],*/ 
                 output_get_flip, target_output_pos [output_get_flip],
-                capacity);
+                capacity, output_iteration_base%2, iteration_length[output_iteration_base%2]);
             ShowDebugInfo_(__func__, mssg, output_iteration,
                 EventType::Out, tail_a, length);
         }
@@ -1331,6 +1369,7 @@ public:
             if (tail_a == capacity) tail_a = 0;
         }
         size_soli -= length;
+        iteration_length [output_iteration_base%2] -= length;
 
         if (on_target)
         {
@@ -1348,6 +1387,7 @@ public:
                     //input_get_flip, target_input_count[input_get_flip],
                     output_get_flip, target_output_pos[output_get_flip]);
                 output_iteration += iteration_jump;
+                output_iteration_base += 1;
                 ShowDebugInfo_(__func__, mssg, output_iteration, 
                     EventType::Out, offsets[0], length);
             }
@@ -1561,6 +1601,12 @@ public:
                         ShowDebugInfo_(__func__, mssg);
                     }
                     target_output_pos[output_get_flip] = t_o_pos;
+                } else if (CQ_DEBUG)
+                {
+                    char mssg[128];
+                    sprintf(mssg, "target_output_pos[%d] (%d)",
+                        output_get_flip, target_output_pos[output_get_flip]);
+                    ShowDebugInfo_(__func__, mssg);
                 }
             }
 

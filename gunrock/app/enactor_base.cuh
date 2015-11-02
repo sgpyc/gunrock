@@ -366,7 +366,7 @@ public:
     typedef EnactorStats EnactorStats;
     static const bool DEBUG      = _DEBUG;
     static const bool SIZE_CHECK = _SIZE_CHECK;
-    static const int  NUM_STAGES = 3;
+    static const int  NUM_STAGES = 4;
     static const SizeT NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
     static const SizeT NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
 

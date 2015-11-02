@@ -316,13 +316,21 @@ namespace edge_map_forward {
                                                 Functor::ApplyEdge(pred_id, neighbor_id, cta->problem, coop_offset+threadIdx.x, edge_id);
                                                 if (cta->d_out != NULL) {
                                                     if (cta->advance_type == gunrock::oprtr::advance::V2V) {
-                                                        util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                            neighbor_id,
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                        //    neighbor_id,
+                                                        //    cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                            + coop_rank, -2, neighbor_id);
+                                                        if (old_value != -2)// && old_value != neighbor_id)
+                                                        {
+                                                            printf("%d\t \t storing0 [%d] -> %p + %d failed, old_value = [%d]\n",
+                                                                cta->problem -> gpu_idx, neighbor_id, cta->d_out, 
+                                                                cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                        }
                                                         if (app::to_track(cta->problem->gpu_idx, neighbor_id))
                                                         {
-                                                            printf("%d\t %s\t storing [%d] -> %p + %d\n",
-                                                                cta->problem->gpu_idx, __func__, neighbor_id,
+                                                            printf("%d\t \t storing0 [%d] -> %p + %d\n",
+                                                                cta->problem->gpu_idx, neighbor_id,
                                                                 cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
                                                         } 
                                                     } else if (cta->advance_type == gunrock::oprtr::advance::V2E
@@ -353,9 +361,17 @@ namespace edge_map_forward {
                                             }
                                             else {
                                                 if (cta->d_out != NULL) {
-                                                    util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                        -1,
-                                                        cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                    //    -1,
+                                                    //    cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                        + coop_rank, -2, -1);
+                                                    if (old_value != -2)
+                                                    {
+                                                        printf("%d\t \t storing0 [-1] -> %p + %d failed, old_value = [%d]\n",
+                                                            cta->problem -> gpu_idx, neighbor_id, cta->d_out,
+                                                            cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                    }
                                                 }
                                                 if (cta->d_value_to_reduce != NULL) {
                                                     switch (cta->r_op) {
@@ -423,13 +439,21 @@ namespace edge_map_forward {
                                                 Functor::ApplyEdge(pred_id, neighbor_id, cta->problem, coop_offset+threadIdx.x, edge_id);
                                                 if (cta->d_out != NULL) {
                                                     if (cta->advance_type == gunrock::oprtr::advance::V2V) {
-                                                        util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                                neighbor_id,
-                                                                cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                        //        neighbor_id,
+                                                        //        cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                            + coop_rank, -2, neighbor_id);
+                                                        if (old_value != -2)// && old_value != neighbor_id)
+                                                        {
+                                                            printf("%d\t \t storing1 [%d] -> %p + %d failed, old_value = [%d]\n",
+                                                                cta->problem -> gpu_idx, neighbor_id, cta->d_out, 
+                                                                cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                        }
                                                         if (app::to_track(cta->problem->gpu_idx, neighbor_id))
                                                         {
-                                                            printf("%d\t %s\t storing [%d] -> %p + %d\n",
-                                                                cta->problem->gpu_idx, __func__, neighbor_id,
+                                                            printf("%d\t \t storing1 [%d] -> %p + %d\n",
+                                                                cta->problem->gpu_idx, neighbor_id,
                                                                 cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
                                                         } 
                                                     } else if (cta->advance_type == gunrock::oprtr::advance::V2E
@@ -460,9 +484,17 @@ namespace edge_map_forward {
                                             }
                                             else {
                                                 if (cta->d_out != NULL) {
-                                                    util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                        -1,
-                                                        cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                    //    -1,
+                                                    //    cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                        + coop_rank, -2, -1);
+                                                    if (old_value != -2)
+                                                    {
+                                                        printf("%d\t \t storing1 [-1] -> %p + %d failed, old_value = [%d]\n",
+                                                            cta->problem -> gpu_idx, cta->d_out,
+                                                            cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                    }
                                                 }
                                                 if (cta->d_value_to_reduce != NULL) {
                                                     switch (cta->r_op) {
@@ -659,14 +691,22 @@ namespace edge_map_forward {
 
                                                 // Scatter neighbor
                                                 if (cta->d_out != NULL) {
-                                                    util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                            neighbor_id,
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                    //        neighbor_id,
+                                                    //        cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                            + coop_rank, -2, neighbor_id);
+                                                    if (old_value != -2)// && old_value != neighbor_id)
+                                                    {
+                                                        printf("%d\t \t storing2 [%d] -> %p + %d failed, old_value = [%d]\n",
+                                                            cta->problem -> gpu_idx, neighbor_id, cta->d_out, 
+                                                            cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                    }
                                                     if (app::to_track(cta->problem->gpu_idx, neighbor_id))
                                                     {
-                                                        printf("%d\t %s\t storing [%d] -> %p + %d\n",
-                                                            cta->problem->gpu_idx, __func__, neighbor_id, 
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        printf("%d\t \t storing2 [%d] -> %p + %d\n",
+                                                            cta->problem->gpu_idx, neighbor_id, 
+                                                            cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
                                                     }
                                                 }
 
@@ -761,14 +801,22 @@ namespace edge_map_forward {
 
                                                 // Scatter neighbor
                                                 if (cta->d_out != NULL) {
-                                                    util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                                            neighbor_id,
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                                                    //        neighbor_id,
+                                                    //        cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                    Value old_value = atomicCAS(cta->d_out + cta->smem_storage.state.coarse_enqueue_offset 
+                                                            + coop_rank, -2, neighbor_id);
+                                                    if (old_value != -2)// && old_value != neighbor_id)
+                                                    {
+                                                        printf("%d\t \t storing3 [%d] -> %p + %d failed, old_value = [%d]\n",
+                                                            cta->problem -> gpu_idx, neighbor_id, cta->d_out, 
+                                                            cta->smem_storage.state.coarse_enqueue_offset + coop_rank, old_value);
+                                                    }
                                                     if (app::to_track(cta->problem->gpu_idx, neighbor_id))
                                                     {
-                                                        printf("%d\t %s\t storing [%d] -> %p + %d\n",
-                                                            cta->problem->gpu_idx, __func__, neighbor_id, 
-                                                            cta->d_out + cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
+                                                        printf("%d\t \t storing3 [%d] -> %p + %d\n",
+                                                            cta->problem->gpu_idx, neighbor_id, 
+                                                            cta->d_out, cta->smem_storage.state.coarse_enqueue_offset + coop_rank);
                                                     }
                                                 }
                                             }
@@ -1168,9 +1216,24 @@ namespace edge_map_forward {
                         }
                         // Scatter into out_queue
                         if (d_out != NULL) {
-                            util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                    neighbor_id,
-                                    d_out + smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset);
+                            //util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
+                            //        neighbor_id,
+                            //        d_out + smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset);
+                            //d_out[ smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset] = neighbor_id;
+                            Value old_value = atomicCAS(d_out + smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset,
+                                -2, neighbor_id);
+                            if (old_value != -2)// && old_value != neighbor_id)
+                            {
+                                printf("%d\t \t storing4 [%d] -> %p + %d failed, old_value = [%d]\n",
+                                    problem -> gpu_idx, neighbor_id, d_out,
+                                    smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset, old_value);
+                            }
+                            if (app::to_track(problem->gpu_idx, neighbor_id))
+                            {
+                                printf("%d\t \t storing4 [%d] -> %p + %d\n",
+                                    problem->gpu_idx, neighbor_id,
+                                    d_out, smem_storage.state.fine_enqueue_offset + tile.progress + scratch_offset);
+                            }
                         }
 
                         if (ProblemData::ENABLE_IDEMPOTENCE && ProblemData::MARK_PREDECESSORS && d_pred_out != NULL) {

@@ -175,6 +175,24 @@ __global__ void MemsetMadVectorKernel(T *d_dst, T *d_src1, T *d_src2, T scale, i
     }
 }
 
+template <typename T>
+__global__ void MemsetCASKernel(T *d_dst, T compare, T val, int length)
+{
+    const int STRIDE = gridDim.x * blockDim.x;
+    for (int idx = (blockIdx.x * blockDim.x) + threadIdx.x; idx < length; idx += STRIDE) {
+        if (d_dst[idx] == compare) d_dst[idx] = val;
+    }
+}
+
+template <typename T>
+__global__ void MemsetCASKernel(T *d_dst, T compare, T val, int *length)
+{
+    const int STRIDE = gridDim.x * blockDim.x;
+    for (int idx = (blockIdx.x * blockDim.x) + threadIdx.x; idx < length[0]; idx += STRIDE) {
+        if (d_dst[idx] == compare) d_dst[idx] = val;
+    }
+}
+
 /** @} */
 
 } // namespace util

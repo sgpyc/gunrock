@@ -487,6 +487,20 @@ void RunTests(Test_Parameter *parameter)
     // Copy out results
     util::GRError(problem->Extract(h_labels, h_preds), "BFS Problem Data Extraction Failed", __FILE__, __LINE__);
 
+    VertexId **v_ = NULL;
+    if (num_gpus > 1)
+    {
+        v_ = new VertexId*[num_gpus];
+        for (int gpu=0; gpu<num_gpus; gpu++)
+        {
+            v_[gpu] = new VertexId[graph->nodes];
+            for (VertexId v=0; v<graph->nodes; v++)
+                v_[gpu][v] = -1;
+            for (VertexId v=0; v<problem->sub_graphs[gpu].nodes; v++)
+                v_[gpu][problem->original_vertexes[gpu][v]] = v;
+        }
+    }
+
     // Verify the result
     if (reference_check_label != NULL) {
         if (!ENABLE_IDEMPOTENCE) {
@@ -494,24 +508,75 @@ void RunTests(Test_Parameter *parameter)
             int error_num = CompareResults(h_labels, reference_check_label, graph->nodes, true);
             if (error_num > 0)
                 printf("%d errors occurred.\n", error_num);
+            printf("\n");
         } else {
             if (!MARK_PREDECESSORS) {
                 printf("Label Validity: ");
                 int error_num = CompareResults(h_labels, reference_check_label, graph->nodes, true);
                 if (error_num > 0)
                     printf("%d errors occurred.\n", error_num);
+                printf("\n");
             }
         }
 
         for (VertexId v=0; v<graph->nodes; v++)
-        if (gunrock::app::to_track(-1, v) && reference_check_label[v] != h_labels[v])
         {
-            printf("Vertex %d, reference = %d, result = %d\n",
-                v, reference_check_label[v], h_labels[v]);
+            if (!gunrock::app::to_track(-1, v)) continue;
+            printf("Vertex %d, ", v);
+            if (reference_check_label[v] != h_labels[v])
+                printf("reference = %d, ", reference_check_label[v]);
+            printf("result = %d, ", h_labels[v]);
+            if (num_gpus > 1)
+            {
+                printf("host = %d, v_ = ", problem -> partition_tables[0][v]);
+                for (int gpu=0; gpu<num_gpus; gpu++)
+                    printf("%d%s", v_[gpu][v], gpu == num_gpus-1? "" : ", ");
+            }
+            printf("\n");
+            for (SizeT j = graph->row_offsets[v]; j < graph->row_offsets[v+1]; j++)
+            {
+                VertexId u = graph -> column_indices[j];
+                if (reference_check_label[u] != reference_check_label[v] -1) continue;
+                printf("\t%d, ", u);
+                if (reference_check_label[u] != h_labels[u])
+                    printf("reference = %d, ", reference_check_label[u]);
+                printf("result = %d, ", h_labels[u]);
+                if (num_gpus > 1)
+                {
+                    printf("host = %d, u_ = ", problem -> partition_tables[0][u]);
+                    for (int gpu=0; gpu<num_gpus; gpu++)
+                        printf("%d%s", v_[gpu][u], gpu == num_gpus -1 ? "" : ", ");
+                }
+                printf("\n");
+            }
+            printf("\n");
         }
     }
 
-    //printf("\nFirst 40 labels of the GPU result."); 
+    //Output errors
+    if (reference_check_label != NULL)
+    {
+        std::ofstream fout;
+        char file_name[512];
+        sprintf(file_name,"./eval/error_dump/error_%lld.txt", (long long)time(NULL));
+        printf("\nWriting errors into %s\n", file_name);
+        fout.open(file_name);
+        
+        for (VertexId v=0; v<graph->nodes; v++)
+        {
+            if (h_labels[v] == reference_check_label[v]) continue;
+            fout<< v << "\t" << reference_check_label[v] << "\t" << h_labels[v];
+            if (num_gpus > 1)
+            {
+                fout<<"\t"<<problem->partition_tables[0][v];
+                for (int gpu=0; gpu<num_gpus; gpu++)
+                    fout<<"\t"<<v_[gpu][v];
+            }
+            fout<<endl;
+        }
+        fout.close();
+    }    
+ 
     // Display Solution
     DisplaySolution<VertexId, SizeT, MARK_PREDECESSORS, ENABLE_IDEMPOTENCE>
         (h_labels, h_preds, graph->nodes);
@@ -526,44 +591,17 @@ void RunTests(Test_Parameter *parameter)
         total_queued,
         avg_duty);
 
-    printf("\n\tMemory Usage(B)\t");
-    for (int gpu=0;gpu<num_gpus;gpu++)
-    if (num_gpus>1) {if (gpu!=0) printf(" #keys%d,0\t #keys%d,1\t #ins%d,0\t #ins%d,1",gpu,gpu,gpu,gpu); else printf(" #keys%d,0\t #keys%d,1", gpu, gpu);}
-    else printf(" #keys%d,0\t #keys%d,1", gpu, gpu);
-    if (num_gpus>1) printf(" #keys%d",num_gpus);
-    printf("\n");
-    double max_queue_sizing_[2] = {0,0}, max_in_sizing_=0;
-    // TODO: find a new way to get queue sizing
+    // Show Memory usage
+    enactor -> Show_Mem_Stats();
+
+    printf("\n\tMemory Usage(B)\n");
     for (int gpu=0;gpu<num_gpus;gpu++)
     {   
         size_t gpu_free,dummy;
         cudaSetDevice(gpu_idx[gpu]);
         cudaMemGetInfo(&gpu_free,&dummy);
-        printf("GPU_%d\t %ld",gpu_idx[gpu],org_size[gpu]-gpu_free);
-        /*for (int i=0;i<num_gpus;i++)
-        {  
-            for (int j=0; j<2; j++)
-            { 
-                SizeT x=problem->data_slices[gpu]->frontier_queues[i].keys[j].GetSize();
-                printf("\t %lld", (long long) x); 
-                double factor = 1.0*x/(num_gpus>1?problem->graph_slices[gpu]->in_counter[i]:problem->graph_slices[gpu]->nodes);
-                if (factor > max_queue_sizing_[j]) max_queue_sizing_[j]=factor;
-            }
-            if (num_gpus>1 && i!=0 )
-            for (int t=0;t<2;t++)
-            {   
-                SizeT x=problem->data_slices[gpu][0].keys_in[t][i].GetSize();
-                printf("\t %lld", (long long) x); 
-                double factor = 1.0*x/problem->graph_slices[gpu]->in_counter[i];
-                if (factor > max_in_sizing_) max_in_sizing_=factor;
-            }   
-        }   
-        if (num_gpus>1) printf("\t %lld", (long long)(problem->data_slices[gpu]->frontier_queues[num_gpus].keys[0].GetSize()));
-        */printf("\n");
+        printf("GPU_%d\t %ld\n",gpu_idx[gpu],org_size[gpu]-gpu_free);
     } 
-    printf("\t queue_sizing =\t %lf \t %lf", max_queue_sizing_[0], max_queue_sizing_[1]);
-    if (num_gpus>1) printf("\t in_sizing =\t %lf", max_in_sizing_);
-    printf("\n");
 
     // Cleanup
     if (org_size        ) {delete[] org_size        ; org_size         = NULL;}

@@ -861,10 +861,25 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 thread_slice -> ShowDebugInfo(cmssg,
                     stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> queue_length = 0;
+                
+                if (thread_slice -> retval = 
+                    Set_Record(enactor_slice, 2, stream_iterations[stream_num],
+                        stream_num, stages[stream_num])) return;
                 break;
 
-            /*case 3: // Accumulate
-                enactor_slice -> subq__wait_counter++;
+            case 3: // Accumulate
+                if (thread_slice -> retval = Check_Record(
+                    enactor_slice, 2, stream_iterations[stream_num], 
+                    stream_num, stages[stream_num] -1, stages[stream_num],
+                    to_shows[stream_num])) return;
+                if (to_shows[stream_num] == false) 
+                {
+                    //thread_slice -> ShowDebugInfo("Waiting subq...", 
+                    //    stream_num, stream_iterations[stream_num]);
+                    continue;
+                }
+               
+                /*enactor_slice -> subq__wait_counter++;
                 sprintf(cmssg, "Accumulate count = %d, target = %d", 
                     enactor_slice -> subq__wait_counter, 
                     enactor_slice -> subq__target_count[iteration%2]);
@@ -872,10 +887,10 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 if (enactor_slice -> subq__wait_counter == 
                     enactor_slice -> subq__target_count[iteration%2])
                 {
-                }
+                }*/
                 to_shows[stream_num] = false;
                 stages[stream_num] = -1;
-                break;*/
+                break;
 
             default:
                 to_shows[stream_num] = false;

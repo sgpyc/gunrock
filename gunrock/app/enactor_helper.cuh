@@ -460,6 +460,192 @@ cudaError_t Check_Record(
     return retval;
 }
 
+template <typename Enactor>
+void Show_Mem_Stats_(
+    Enactor *enactor)
+{
+    //typedef typename EnactorSlice::Enactor Enactor;
+    //typedef typename EnactorSlice<Enactor> EnactorSlice;
+    typedef typename Enactor::Problem Problem;
+    double factors[5][4];
+    for (int i=0; i<5; i++)
+    for (int j=0; j<4; j++)
+        factors[i][j] = -1;
+
+    printf("\nGPU\t      Queue\tType\tStream\tSize\tBase\tFactor\tTemp Size\tTemp Factor\n");
+    for (int gpu = 0; gpu < enactor->num_gpus; gpu ++)
+    {
+        EnactorSlice<Enactor> *enactor_slice = (EnactorSlice<Enactor>*)(enactor -> enactor_slices) + gpu;
+        for (int queue_num = 0; queue_num < 5; queue_num ++)
+        {
+            std::string queue_name = "";
+            Problem *problem = (Problem*) enactor -> problem;
+            typename Enactor::SizeT base = problem -> sub_graphs[gpu].nodes;
+            typename Enactor::CircularQueue *cq = NULL;
+            typename Enactor::FrontierT     *ft = NULL;
+            int stream_limit = 0;
+
+            switch (queue_num)
+            {
+            case  0: 
+                queue_name = "Sub   Queue "; 
+                cq = &(enactor_slice -> subq__queue    ); 
+                ft =   enactor_slice -> subq__frontiers + 0;
+                stream_limit = enactor_slice -> num_subq__streams;
+                break;
+
+            case  1: 
+                queue_name = "Full  Queue "; 
+                cq = &(enactor_slice -> fullq_queue    ); 
+                ft =   enactor_slice -> fullq_frontier + 0;
+                stream_limit = enactor_slice -> num_fullq_stream;
+                if (stream_limit <1) stream_limit = 1;
+                break;
+
+            case  2: 
+                queue_name = "Input Queue0"; 
+                cq = &(enactor_slice -> input_queues[0]); 
+                stream_limit = 1;
+                break;
+
+            case  3: 
+                queue_name = "Input Queue1"; 
+                cq = &(enactor_slice -> input_queues[1]); 
+                stream_limit = 1;
+                break;
+                
+            case  4: 
+                queue_name = "OutputQueue "; 
+                cq = &(enactor_slice -> outpu_queue    ); 
+                stream_limit = 1;
+                break;
+
+            default:
+                break; 
+            }
+            
+            for (int stream_num = 0; stream_num < stream_limit; stream_num ++)
+            for (int type_num = 0; type_num < 3; type_num++)
+            {
+                typename Enactor::SizeT size = -1, temp_size = -1;
+                if (queue_num !=0 && queue_num !=1 && type_num >0) continue;
+                if (type_num == 0 && stream_num > 0) continue;
+
+                std::string type_name = "";
+                switch (type_num)
+                {
+                case  0: 
+                    type_name = "CQ";
+                    if (cq != NULL) size = cq -> GetCapacity();
+                    if (cq != NULL) temp_size = cq -> GetTempCapacity();
+                    break;
+
+                case  1: 
+                    type_name = "FT0";
+                    if (ft!= NULL) size = ft[stream_num].keys[0].GetSize();
+                    break;
+
+                case  2:
+                    type_name = "FT1";
+                    if (ft!= NULL) size = ft[stream_num].keys[1].GetSize();
+                    break;
+
+                default:
+                    break;
+                }
+
+                if (size < 0) continue;
+
+                double factor = 1.0 * size / base;
+                if (queue_num != 3 && queue_num != 2 &&
+                    factor > factors[queue_num][type_num])
+                    factors[queue_num][type_num] = factor;
+                else if (queue_num == 3 || queue_num == 2)
+                {
+                    if (type_num == 0 && factor > factors[2][queue_num-1])
+                        factors[2][queue_num-1] = factor;
+                }
+
+                printf("%d\t%s\t%s\t", gpu, queue_name.c_str(), type_name.c_str());
+                if (queue_num == 0 && type_num > 0)
+                    printf(" %d\t", stream_num);
+                else printf("\t");
+                printf(" %lld\t %lld\t %.3lf", (long long)size, (long long)base, factor);
+
+                if (temp_size != -1)
+                {
+                    factor = 1.0 * temp_size / size;
+                    if (queue_num != 3 && factor > factors[queue_num][3])
+                        factors[queue_num][3] = factor;
+                    else if (queue_num == 3 && factor > factors[2][3])
+                        factors[2][3] = factor;
+                    printf("\t %lld\t %.3lf", (long long)temp_size, factor);
+                    
+                }
+                printf("\n");
+            }
+        }
+    }
+
+    char argument[1024] = "";
+
+    printf("\n\t      Queue\tCQ factor\tFT0 factor\tFT1 factor\tTemp factor\n");
+    for (int queue_num = 0; queue_num < 5; queue_num ++)
+    {
+        if (queue_num == 3) continue;
+        std::string queue_name = "";
+        std::string argu_name = "";
+        switch (queue_num)
+        {
+        case  0: 
+            queue_name = "Sub   Queue ";
+            argu_name  = "subq";
+            break;
+
+        case  1: 
+            queue_name = "Full  Queue "; 
+            argu_name  = "fullq";
+            break;
+
+        case  2: 
+            queue_name = "Input Queue ";
+            argu_name  = "input";
+            break;
+
+        case  3: 
+            queue_name = "Input Queue1"; 
+            argu_name  = "input";
+            break;
+            
+        case  4: 
+            queue_name = "OutputQueue "; 
+            argu_name  = "output";
+            break;
+
+        default:
+            break; 
+        }
+
+        printf("\t%s", queue_name.c_str());
+        for (int type_num = 0; type_num < 4; type_num ++)
+        {
+            if (factors[queue_num][type_num] > 0)
+            {
+                printf("\t %.3lf", factors[queue_num][type_num]);
+                sprintf(argument, "%s --%s_factor", argument, argu_name.c_str());
+                //if (queue_num == 2 || queue_num == 3)
+                //    sprintf(argument, "%s%d", argument, queue_num == 2? 0 : 1);
+                if (type_num > 0)
+                    sprintf(argument, "%s%d", argument, type_num -1);
+                sprintf(argument, "%s=%.3lf", argument, factors[queue_num][type_num] * 1.10);
+            }
+            else printf("\t      ");
+        }
+        printf("\n");
+    }
+    printf("Suggest factors: %s\n", argument);
+}
+
 } // namespace app
 } // namespace gunrock
 

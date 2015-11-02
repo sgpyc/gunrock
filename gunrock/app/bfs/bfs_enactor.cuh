@@ -159,6 +159,16 @@ struct BFSIteration : public IterationBase <
             //    enactor_stats->iteration, this->stream_num, stream);
         }
 
+        util::MemsetKernel<<<256, 256, 0, stream>>>(
+            frontier_queue -> keys[frontier_attribute -> selector^1].GetPointer(util::DEVICE),
+            (VertexId)-2,
+            frontier_queue -> keys[frontier_attribute -> selector^1].GetSize());
+        Check_Exist<<<enactor_stats -> filter_grid_size,
+            FilterKernelPolicy::THREADS, 0, stream>>>(
+            frontier_attribute -> queue_length,
+            this->gpu_num, 4, enactor_stats -> iteration,
+            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+
         // Edge Map
         //this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
@@ -211,12 +221,23 @@ struct BFSIteration : public IterationBase <
         }*/
         //return retval;
 
+        Check_Value<<<1,1,0,stream>>>(
+            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                frontier_attribute->queue_index),
+            this->gpu_num, 5, enactor_stats -> iteration);
+
         Check_Exist_<<<enactor_stats -> filter_grid_size,
             FilterKernelPolicy::THREADS, 0, stream>>>(
             work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
                 frontier_attribute->queue_index),
             this->gpu_num, 3, enactor_stats -> iteration,
             frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+        
+        util::MemsetCASKernel<<<256, 256, 0, stream>>>(
+            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
+            -2, -1,
+            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                frontier_attribute->queue_index));
  
         // Filter
         //this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
@@ -242,12 +263,12 @@ struct BFSIteration : public IterationBase <
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        Check_Exist_<<<enactor_stats -> filter_grid_size,
-            FilterKernelPolicy::THREADS, 0, stream>>>(
-            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
-                frontier_attribute->queue_index),
-            this->gpu_num, 4, enactor_stats -> iteration,
-            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+        //Check_Exist_<<<enactor_stats -> filter_grid_size,
+        //    FilterKernelPolicy::THREADS, 0, stream>>>(
+        //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+        //        frontier_attribute->queue_index),
+        //    this->gpu_num, 4, enactor_stats -> iteration,
+        //    frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
  
 
         /*if ( enactor_stats -> iteration == 267)
@@ -741,6 +762,11 @@ public:
 
         if (this->DEBUG) printf("GPU BFS Done.\n");
         return retval;
+    }
+
+    void Show_Mem_Stats()
+    {
+        Show_Mem_Stats_ <Enactor>(this);
     }
 
     typedef gunrock::oprtr::filter::KernelPolicy<
