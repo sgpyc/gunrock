@@ -10,7 +10,7 @@
  * @file
  * kernel.cuh
  *
- * @brief Load balanced Edge Map Kernel Entrypoint
+ * @brief Load balanced Edge Map Kernel Entry point
  */
 
 #pragma once
@@ -36,6 +36,10 @@ namespace edge_map_partitioned_backward {
 
 /**
  * Not valid for this arch (default)
+ * @tparam KernelPolicy Kernel policy type for partitioned edge mapping.
+ * @tparam ProblemData Problem data type for partitioned edge mapping.
+ * @tparam Functor Functor type for the specific problem type.
+ * @tparam VALID
  */
 template<
     typename    KernelPolicy,
@@ -204,13 +208,13 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
         }
 
         // Reset work progress
-        if (queue_reset)
-        {
-            if (blockIdx.x == 0 && threadIdx.x < util::CtaWorkProgress::COUNTERS) {
+        //if (queue_reset)
+        //{
+        //    if (blockIdx.x == 0 && threadIdx.x < util::CtaWorkProgress::COUNTERS) {
                 //Reset all counters
-                work_progress.template Reset<SizeT>();
-            }
-        }
+        //        work_progress.template Reset<SizeT>();
+        //    }
+        //}
 
         // Determine work decomposition
         if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -407,13 +411,13 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
         }
 
         // Reset work progress
-        if (queue_reset)
-        {
-            if (blockIdx.x == 0 && threadIdx.x < util::CtaWorkProgress::COUNTERS) {
+        //if (queue_reset)
+        //{
+        //    if (blockIdx.x == 0 && threadIdx.x < util::CtaWorkProgress::COUNTERS) {
                 //Reset all counters
-                work_progress.template Reset<SizeT>();
-            }
-        }
+        //        work_progress.template Reset<SizeT>();
+        //    }
+        //}
 
         // Determine work decomposition
         if (blockIdx.x == 0 && threadIdx.x == 0) {

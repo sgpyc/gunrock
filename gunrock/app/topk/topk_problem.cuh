@@ -57,7 +57,6 @@ struct TOPKProblem : ProblemBase<_VertexId, _SizeT, _Value,
 
     // device storage arrays
     //SizeT       *d_labels;
-    util::Array1D<SizeT, VertexId> labels;
     VertexId    *d_node_id;   //!< top k node ids
     Value       *d_degrees_s; //!< sum/total degrees
     Value       *d_degrees_i; //!< in-going  degrees
@@ -218,6 +217,7 @@ struct TOPKProblem : ProblemBase<_VertexId, _SizeT, _Value,
    * @param[in] graph_original Reference to the CSR graph object we process on. @see Csr
    * @param[in] graph_reversed Reference to the inversed CSR graph object we process on. @see Csr
    * @param[in] _num_gpus Number of the GPUs used.
+   * @param[in] streams pointer to CUDA Streams.
    *
    * \return cudaError_t object which indicates the success of all CUDA function calls.
    */
@@ -280,7 +280,6 @@ struct TOPKProblem : ProblemBase<_VertexId, _SizeT, _Value,
                 NULL,
                 NULL);
 
-            data_slices[0]->labels.SetName("labels");
 
             // Create SoA on device
             VertexId    *d_node_id;
@@ -343,7 +342,6 @@ struct TOPKProblem : ProblemBase<_VertexId, _SizeT, _Value,
    *  @brief Performs any initialization work needed for TOPK problem type. 
    *	Must be called prior to each TOPK iteration.
    *
-   *  @param[in] src Source node for one TOPK computing pass.
    *  @param[in] frontier_type The f rontier type (i.e., edge/vertex/mixed)
    * 
    *  \return cudaError_t object which indicates the success of all CUDA function calls.

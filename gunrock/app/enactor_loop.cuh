@@ -27,6 +27,31 @@ template <
     typename _Enactor>
 class ThreadSlice;
 
+/*
+ * @brief IterationBase data structure.
+ *
+ * @tparam AdvanceKernelPolicy
+ * @tparam FilterKernelPolicy
+ * @tparam Enactor
+ * @tparam _HAS_SUBQ
+ * @tparam _HAS_FULLQ
+ * @tparam _BACKWARD
+ * @tparam _FORWARD
+ * @tparam _UPDATE_PREDECESSORS
+
+ * @param[in] thread_num Number of threads.
+ * @param[in] peer_ Peer GPU index.
+ * @param[in] frontier_queue Pointer to the frontier queue.
+ * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+ * @param[in] frontier_attribute Pointer to the frontier attribute.
+ * @param[in] enactor_stats Pointer to the enactor statistics.
+ * @param[in] data_slice Pointer to the data slice we process on.
+ * @param[in] d_data_slice Pointer to the data slice on the device.
+ * @param[in] graph_slice Pointer to the graph slice we process on.
+ * @param[in] work_progress Pointer to the work progress class.
+ * @param[in] context CudaContext for ModernGPU API.
+ * @param[in] stream CUDA stream.
+ */
 template <
     typename AdvanceKernelPolicy, 
     typename FilterKernelPolicy, 

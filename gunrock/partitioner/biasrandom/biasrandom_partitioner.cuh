@@ -26,32 +26,32 @@
 namespace gunrock {
 namespace app {
 namespace brp {
-    
+
     template <typename SizeT>
     struct sort_node
-    {   
+    {
     public:
         SizeT posit;
         int   value;
-    
+
         bool operator==(const sort_node& node) const
-        {   
+        {
             return (node.value == value);
-        }   
+        }
 
         bool operator<(const sort_node& node) const
-        {   
+        {
             return (node.value < value);
-        }   
-    
+        }
+
         sort_node & operator=(const sort_node &rhs)
-        {   
+        {
             this->posit=rhs.posit;
             this->value=rhs.value;
             return *this;
-        }   
+        }
     };
-    
+
     template <typename SizeT>
     bool compare_sort_node(sort_node<SizeT> A, sort_node<SizeT> B)
     {
@@ -143,11 +143,11 @@ struct BiasRandomPartitioner : PartitionerBase<VertexId,SizeT,Value,ENABLE_BACKW
         if (seed < 0) this->seed = time(NULL);
         else this->seed = seed;
         srand(this->seed);
-        printf("partition_seed = %d\n",this->seed);fflush(stdout);
+        //printf("partition_seed = %d\n",this->seed);fflush(stdout);
 
         if (factor < 0) this->factor = 0.5;
         else this->factor = factor;
-        printf("partition_factor = %f\n", this->factor);fflush(stdout); 
+        //printf("partition_factor = %f\n", this->factor);fflush(stdout);
 
         target_level = n1;//(n1<n2? n2:n1);
         for (SizeT node=0;node<nodes;node++)
@@ -183,7 +183,7 @@ struct BiasRandomPartitioner : PartitionerBase<VertexId,SizeT,Value,ENABLE_BACKW
                         if (marker[neibor]==node) continue;
                         if (tpartition_table[neibor]<this->num_gpus)
                         {
-                            if (level < n1) 
+                            if (level < n1)
                             {
                                 counter[tpartition_table[neibor]]++;
                             }
@@ -196,18 +196,18 @@ struct BiasRandomPartitioner : PartitionerBase<VertexId,SizeT,Value,ENABLE_BACKW
             level_tail[level]=tail;
 
             total_count=0;
-            for (int i=0;i<this->num_gpus;i++) 
+            for (int i=0;i<this->num_gpus;i++)
             {
                 total_count+=counter[i];
             }
-            for (int i=0;i<this->num_gpus;i++) 
+            for (int i=0;i<this->num_gpus;i++)
             {
                 gpu_percentage[i]=(total_count==0?0:(this->factor*counter[i]/total_count));
             }
             total_count=0;
             for (int i=0;i<this->num_gpus;i++)
             {
-                SizeT e=nodes*weitage[i]-current_count[i]; 
+                SizeT e=nodes*weitage[i]-current_count[i];
                 total_count+=(e>=0?e:0);
             }
             for (int i=0;i<this->num_gpus;i++)
@@ -227,7 +227,7 @@ struct BiasRandomPartitioner : PartitionerBase<VertexId,SizeT,Value,ENABLE_BACKW
                 gpu_percentage[i]=gpu_percentage[i+1]-gpu_percentage[i];
             float x=1.0f*rand()/RAND_MAX;
             for (int i=0;i<this->num_gpus;i++)
-                if (x>=gpu_percentage[i] && x<gpu_percentage[i+1]) 
+                if (x>=gpu_percentage[i] && x<gpu_percentage[i+1])
                 {
                     current_count[i]++;
                     tpartition_table[node]=i;

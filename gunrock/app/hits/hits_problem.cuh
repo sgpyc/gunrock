@@ -64,7 +64,6 @@ struct HITSProblem : ProblemBase<_VertexId, _SizeT, _Value,
         util::Array1D<SizeT, VertexId> out_degrees;         /**< Used for keeping out-degree for each vertex */
         Value                          delta;
         VertexId                       src_node;
-        util::Array1D<SizeT, SizeT   > labels;
     };
 
     // Members
@@ -208,6 +207,7 @@ struct HITSProblem : ProblemBase<_VertexId, _SizeT, _Value,
      * @param[in] hub_graph Reference to the CSR graph object we process on. @see Csr
      * @param[in] auth_graph Reference to the CSC graph object we process on.
      * @param[in] _num_gpus Number of the GPUs used.
+     * @param[in] streams CUDA Streams.
      *
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */

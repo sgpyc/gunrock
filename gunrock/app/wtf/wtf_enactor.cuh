@@ -48,9 +48,9 @@ class WTFEnactor : public EnactorBase <typename _Problem::SizeT, _DEBUG, _SIZE_C
 {
 public:
     typedef _Problem                   Problem;
-    typedef typename Problem::SizeT    SizeT   ;   
-    typedef typename Problem::VertexId VertexId;   
-    typedef typename Problem::Value    Value   ;   
+    typedef typename Problem::SizeT    SizeT   ;
+    typedef typename Problem::VertexId VertexId;
+    typedef typename Problem::Value    Value   ;
     static const bool INSTRUMENT = _INSTRUMENT;
     static const bool DEBUG      = _DEBUG;
     static const bool SIZE_CHECK = _SIZE_CHECK;
@@ -77,7 +77,7 @@ public:
     {
         typedef typename ProblemData::SizeT         SizeT;
         typedef typename ProblemData::VertexId      VertexId;
-        
+
         cudaError_t retval = cudaSuccess;
 
 
@@ -112,7 +112,7 @@ public:
             //            "WTFEnactor cudaBindTexture row_offset_tex_ref failed", __FILE__, __LINE__)) break;
 
         } while (0);
-        
+
         return retval;
     }
 
@@ -157,7 +157,7 @@ public:
         }
 
         //swap rank_curr and rank_next
-        util::MemsetCopyVectorKernel<<<128, 128>>>(rank_curr, rank_next, nodes); 
+        util::MemsetCopyVectorKernel<<<128, 128>>>(rank_curr, rank_next, nodes);
 
         util::MemsetKernel<<<128, 128>>>(rank_next, (Value)0.0, nodes);
 
@@ -170,22 +170,23 @@ public:
      */
 
     /**
-     * @brief Obtain statistics about the last WTF search enacted.
+     * @ brief Obtain statistics about the last WTF search enacted.
      *
-     * @param[out] total_queued Total queued elements in WTF kernel running.
-     * @param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
+     * @ param[out] total_queued Total queued elements in WTF kernel running.
+     * @ param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
+     * spaces between @ and name are to eliminate doxygen warnings
      */
-    void GetStatistics(
+    /*void GetStatistics(
         long long &total_queued,
         double &avg_duty)
     {
         cudaThreadSynchronize();
 
         total_queued = this->enactor_stats->total_queued[0];
-        
+
         avg_duty = (this->enactor_stats->total_lifetimes >0) ?
             double(this->enactor_stats->total_runtimes) / this->enactor_stats->total_lifetimes : 0.0;
-    }
+    }*/
 
     /** @} */
 
@@ -245,7 +246,7 @@ public:
             Value,
             WTFProblem> CotFunctor;
 
-        GraphSlice<SizeT, VertexId, Value> 
+        GraphSlice<SizeT, VertexId, Value>
                      *graph_slice        = problem->graph_slices       [0];
         FrontierAttribute<SizeT>
                      *frontier_attribute = &this->frontier_attribute   [0];
@@ -253,7 +254,7 @@ public:
         // Single-gpu graph slice
         typename WTFProblem::DataSlice
                      *data_slice         =  problem->data_slices       [0];
-        typename WTFProblem::DataSlice     
+        typename WTFProblem::DataSlice
                      *d_data_slice       =  problem->d_data_slices     [0];
         util::DoubleBuffer<SizeT, VertexId, Value>
                      *frontier_queue     = &data_slice->frontier_queues[0];
@@ -261,7 +262,7 @@ public:
                      *work_progress      = &this->work_progress        [0];
         cudaStream_t  stream             =  data_slice->streams        [0];
         cudaError_t   retval             = cudaSuccess;
-        SizeT        *d_scanned_edges    = NULL; 
+        SizeT        *d_scanned_edges    = NULL;
         GpuTimer      gpu_timer;
         float         elapsed;
 
@@ -298,7 +299,7 @@ public:
             }
 
             gpu_timer.Start();
-            // Step through WTF iterations 
+            // Step through WTF iterations
             //while (done[0] < 0) {
             while (frontier_attribute->queue_length > 0) {
 
@@ -328,6 +329,7 @@ public:
                     stream,
                     gunrock::oprtr::advance::V2V,
                     false,
+                    false,
                     true);
 
                 if (DEBUG && (retval = util::GRError(cudaThreadSynchronize(), "edge_map_forward::Kernel failed", __FILE__, __LINE__))) break;
@@ -349,16 +351,19 @@ public:
                 //if (frontier_attribute.queue_reset)
                 //    frontier_attribute.queue_reset = false;
 
-                //if (done[0] == 0) break; 
+                //if (done[0] == 0) break;
                 if (frontier_attribute->queue_length == 0) break;
 
                 frontier_attribute->queue_length = edge_map_queue_len;
-                
+
                 //if (retval = work_progress.SetQueueLength(frontier_attribute.queue_index, edge_map_queue_len)) break;
 
                 // Vertex Map
-                gunrock::oprtr::filter::Kernel<FilterKernelPolicy, WTFProblem, PrFunctor>
-                <<<enactor_stats->filter_grid_size, FilterKernelPolicy::THREADS>>>(
+                gunrock::oprtr::filter::LaunchKernel
+                    <FilterKernelPolicy, WTFProblem, PrFunctor>(
+                    enactor_stats->filter_grid_size, 
+                    FilterKernelPolicy::THREADS,
+                    0, 0,
                     enactor_stats->iteration,
                     frontier_attribute->queue_reset,
                     frontier_attribute->queue_index,
@@ -382,18 +387,18 @@ public:
 
 
                 if (retval = work_progress->GetQueueLength(frontier_attribute->queue_index, frontier_attribute->queue_length)) break;
-                
+
                 //num_elements = queue_length;
 
                 //util::DisplayDeviceResults(problem->data_slices[0]->d_rank_next,
                 //    graph_slice->nodes);
                 //util::DisplayDeviceResults(problem->data_slices[0]->d_rank_curr,
                 //    graph_slice->nodes);
-    
+
                 //swap rank_curr and rank_next
                 util::MemsetCopyVectorKernel<<<128,128>>>(
                     problem->data_slices[0]->rank_curr.GetPointer(util::DEVICE),
-                    problem->data_slices[0]->rank_next.GetPointer(util::DEVICE), 
+                    problem->data_slices[0]->rank_next.GetPointer(util::DEVICE),
                     graph_slice->nodes);
                 util::MemsetKernel<<<128, 128>>>(
                     problem->data_slices[0]->rank_next.GetPointer(util::DEVICE),
@@ -401,7 +406,7 @@ public:
 
                 if (INSTRUMENT || DEBUG) {
                     if (retval = work_progress->GetQueueLength(frontier_attribute->queue_index, frontier_attribute->queue_length)) break;
-                    enactor_stats->total_queued[0] += frontier_attribute->queue_length;
+                    enactor_stats->edges_queued[0] += frontier_attribute->queue_length;
                     if (DEBUG) printf(", %lld", (long long) frontier_attribute->queue_length);
                     if (INSTRUMENT) {
                         if (retval = enactor_stats->filter_kernel_stats.Accumulate(
@@ -427,14 +432,14 @@ public:
             gpu_timer.Start();
 
         util::CUBRadixSort<Value, VertexId>(false, graph_slice->nodes, problem->data_slices[0]->rank_curr.GetPointer(util::DEVICE), problem->data_slices[0]->node_ids.GetPointer(util::DEVICE));
-        
+
          // 1 according to the first 1000 circle of trust nodes. Get all their neighbors.
          // 2 compute atomicAdd their neighbors' incoming node number.
-         
+
         frontier_attribute->queue_index          = 0;        // Work queue index
         frontier_attribute->selector             = 0;
         frontier_attribute->queue_reset          = true;
-        long long cot_size                       = (1000 > graph_slice->nodes) ? graph_slice->nodes : 1000; 
+        long long cot_size                       = (1000 > graph_slice->nodes) ? graph_slice->nodes : 1000;
         frontier_attribute->queue_length         = cot_size;
 
         //if (retval = work_progress.SetQueueLength(frontier_attribute.queue_index, cot_size)) break;
@@ -464,6 +469,7 @@ public:
                 stream,
                 gunrock::oprtr::advance::V2V,
                 false,
+                false,
                 true);
 
             gpu_timer.Stop();
@@ -489,7 +495,7 @@ public:
 
 
         gpu_timer.Start();
-        
+
         while (true) {
 
             //if (retval = work_progress.SetQueueLength(frontier_attribute.queue_index, frontier_attribute.queue_length)) break;
@@ -518,6 +524,7 @@ public:
                     context[0],
                     stream,
                     gunrock::oprtr::advance::V2V,
+                    false,
                     false,
                     true);
 
@@ -551,6 +558,7 @@ public:
                     stream,
                     gunrock::oprtr::advance::V2V,
                     false,
+                    false,
                     true);
 
             if (DEBUG && (retval = util::GRError(cudaThreadSynchronize(), "edge_map_forward::Kernel failed", __FILE__, __LINE__))) break;
@@ -564,7 +572,7 @@ public:
 
         util::MemsetIdxKernel<<<128, 128>>>(data_slice->node_ids.GetPointer(util::DEVICE), graph_slice->nodes);
 
-        util::CUBRadixSort<Value, VertexId>(false, graph_slice->nodes, data_slice->refscore_curr.GetPointer(util::DEVICE), data_slice->node_ids.GetPointer(util::DEVICE)); 
+        util::CUBRadixSort<Value, VertexId>(false, graph_slice->nodes, data_slice->refscore_curr.GetPointer(util::DEVICE), data_slice->node_ids.GetPointer(util::DEVICE));
 
             gpu_timer.Stop();
             elapsed = gpu_timer.ElapsedMillis();
@@ -574,7 +582,7 @@ public:
             elapsed = gpu_timer.ElapsedMillis();
             printf("WTF Time: %5f\n", elapsed);
 
-        } while(0); 
+        } while(0);
 
         if (d_scanned_edges) cudaFree(d_scanned_edges);
 
@@ -610,7 +618,7 @@ public:
         typename WTFProblem::SizeT       max_iteration,
         int                             max_grid_size = 0)
     {
-        int min_sm_version = -1; 
+        int min_sm_version = -1;
         for (int i=0;i<this->num_gpus;i++)
             if (min_sm_version == -1 || this->cuda_props[i].device_sm_version < min_sm_version)
                 min_sm_version = this->cuda_props[i].device_sm_version;

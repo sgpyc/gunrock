@@ -15,12 +15,16 @@
 #pragma once
 #include <time.h>
 
+#include <boost/predef.h>
+
 #include <gunrock/util/cuda_properties.cuh>
 #include <gunrock/util/cta_work_progress.cuh>
 #include <gunrock/util/error_utils.cuh>
 #include <gunrock/util/test_utils.cuh>
 #include <gunrock/util/array_utils.cuh>
 #include <gunrock/util/circular_queue.cuh>
+#include <gunrock/util/sharedmem.cuh>
+#include <gunrock/util/info.cuh>
 #include <gunrock/app/problem_base.cuh>
 #include <gunrock/app/enactor_kernel.cuh>
 #include <gunrock/app/enactor_helper.cuh>
@@ -36,6 +40,10 @@
 
 using namespace mgpu;
 
+/* this is the "stringize macro macro" hack */
+#define STR(x) #x
+#define XSTR(x) STR(x)
+
 namespace gunrock {
 namespace app {
 
@@ -48,7 +56,8 @@ struct EnactorStats
     long long                        iteration           ;
     unsigned long long               total_lifetimes     ;
     unsigned long long               total_runtimes      ;
-    util::Array1D<int, size_t>       total_queued        ;
+    util::Array1D<int, long long>    edges_queued        ;
+    util::Array1D<int, long long>    nodes_queued        ;
     unsigned int                     advance_grid_size   ;
     unsigned int                     filter_grid_size    ;
     util::KernelRuntimeStatsLifetime advance_kernel_stats;
@@ -56,6 +65,10 @@ struct EnactorStats
     util::Array1D<int, unsigned int> node_locks          ;
     util::Array1D<int, unsigned int> node_locks_out      ;
     clock_t                          start_time          ;
+
+    /*
+     * @brief Default EnactorStats constructor
+     */
 
     EnactorStats() :
         gpu_num          (0),
@@ -67,7 +80,8 @@ struct EnactorStats
     {
         node_locks    .SetName("node_locks"    );
         node_locks_out.SetName("node_locks_out");
-        total_queued  .SetName("total_queued");
+        edges_queued  .SetName("edges_queued");
+        nodes_queued  .SetName("nodes_queued");
     }
 
     virtual ~EnactorStats()
@@ -94,7 +108,9 @@ struct EnactorStats
             node_lock_size, util::DEVICE)) return retval;
         if (retval = node_locks_out.Allocate(
             node_lock_size, util::DEVICE)) return retval;
-        if (retval = total_queued  .Allocate(
+        if (retval = nodes_queued  .Allocate(
+            1, util::DEVICE | util::HOST)) return retval;
+        if (retval = edges_queued  .Allocate(
             1, util::DEVICE | util::HOST)) return retval;
 
         return retval;
@@ -105,7 +121,8 @@ struct EnactorStats
         cudaError_t retval = cudaSuccess;
         if (retval = node_locks    .Release()) return retval;
         if (retval = node_locks_out.Release()) return retval;
-        if (retval = total_queued  .Release()) return retval;
+        if (retval = nodes_queued  .Release()) return retval;
+        if (retval = edges_queued  .Release()) return retval;
         return retval;
     }
 
@@ -115,18 +132,44 @@ struct EnactorStats
         iteration       = 0;
         total_runtimes  = 0;
         total_lifetimes = 0;
-        total_queued[0] = 0;
-        total_queued.Move(util::HOST, util::DEVICE);
+        nodes_queued[0] = 0;
+        nodes_queued.Move(util::HOST, util::DEVICE);
+        edges_queued[0] = 0;
+        edges_queued.Move(util::HOST, util::DEVICE);
         return retval;
     }
 
+    /*
+     * @brief Accumulate edge function.
+     *
+     * @tparam SizeT2
+     *
+     * @param[in] d_queue Pointer to the queue
+     * @param[in] stream CUDA stream
+     */
     template <typename SizeT2>
-    void Accumulate(SizeT2 *d_queued, cudaStream_t stream)
+    void AccumulateEdges(SizeT2 *d_queued, cudaStream_t stream)
     {
         Accumulate_Num<<<1,1,0,stream>>> (
-            d_queued, total_queued.GetPointer(util::DEVICE));
+            d_queued, edges_queued.GetPointer(util::DEVICE));
     }
-};
+
+    /*
+     * @brief Accumulate node function.
+     *
+     * @tparam SizeT2
+     *
+     * @param[in] d_queue Pointer to the queue
+     * @param[in] stream CUDA stream
+     */
+    template <typename SizeT2>
+    void AccumulateNodes(SizeT2 *d_queued, cudaStream_t stream)
+    {
+        Accumulate_Num<<<1,1,0,stream>>> (
+            d_queued, nodes_queued.GetPointer(util::DEVICE));
+    }
+
+}; // end of EnactorStats
 
 /**
  * @brief Structure for auxiliary variables used in frontier operations.
@@ -146,6 +189,9 @@ struct FrontierAttribute
     gunrock::oprtr::advance::TYPE
                  advance_type ;
 
+    /*
+     * @brief Default FrontierAttribute constructor
+     */
     FrontierAttribute() :
         queue_length (0    ),
         queue_index  (0    ),
@@ -190,7 +236,7 @@ struct FrontierAttribute
         has_incoming = false;
         return retval;
     }
-};
+}; // end of FrontierAttribute
 
 template <
     typename VertexId,
@@ -316,7 +362,7 @@ struct MakeOutHandle
     SizeT     *backward_offset;
     int       *backward_partition;
     VertexId  *backward_convertion;
-};
+}; // end of MakeOutHandle
 
 template <
     typename _VertexId,
@@ -343,10 +389,14 @@ struct ExpandIncomingHandle
     VertexId *vertex_orgs[NUM_VERTEX_ASSOCIATES];
     Value    *value__ins [NUM_VALUE__ASSOCIATES];
     Value    *value__orgs[NUM_VALUE__ASSOCIATES];
-};
+}; // end of ExpandIncoming Handle
 
 /**
- * @brief Base class for graph problem enactors.
+ * @brief Base class for graph problem enactor.
+ *
+ * @tparam SizeT
+ * @tparam _DEBUG
+ * @tparam _SIZE_CHECK
  */
 template <
     typename _VertexId,
@@ -428,13 +478,14 @@ public:
 
     FrontierType GetFrontierType() {return frontier_type;}
 
-protected:  
+protected:
 
     /**
      * @brief Constructor
      *
      * @param[in] frontier_type The frontier type (i.e., edge/vertex/mixed)
-     * @param[in] DEBUG If set, will collect kernel running stats and display the running info.
+     * @param[in] num_gpus
+     * @param[in] gpu_idx
      */
     EnactorBase(
         FrontierType   _frontier_type, 
@@ -468,7 +519,7 @@ protected:
     }
 
     /**
-     * @brief Destructor
+     * @brief EnactorBase destructor
      */
     virtual ~EnactorBase()
     {
@@ -480,16 +531,17 @@ protected:
     }
 
    /**
-     * @brief Init function for enactor base class
+     * @brief Init function for enactor base class.
      *
-     * @tparam ProblemData
+     * @tparam Problem
      *
      * @param[in] problem The problem object for the graph primitive
      * @param[in] max_grid_size Maximum CUDA block numbers in on grid
      * @param[in] advance_occupancy CTA Occupancy for Advance operator
      * @param[in] filter_occupancy CTA Occupancy for Filter operator
      * @param[in] node_lock_size The size of an auxiliary array used in enactor, 256 by default.
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     *
+     * \return cudaError_t object indicates the success of all CUDA calls.
      */
     template <
         typename AdvanceKernelPolicy,
@@ -652,6 +704,18 @@ protected:
         return retval;
     }
 
+    /*
+     * @brief Reset function.
+     * @tparam Problem
+     *
+     * @param[in] problem The problem object for the graph primitive
+     * @param[in] max_grid_size Maximum CUDA block numbers in on grid
+     * @param[in] advance_occupancy CTA Occupancy for Advance operator
+     * @param[in] filter_occupancy CTA Occupancy for Filter operator
+     * @param[in] node_lock_size The size of an auxiliary array used in enactor, 256 by default.
+     *
+     * \return cudaError_t object indicates the success of all CUDA calls.
+     */
     template <
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy,
@@ -703,10 +767,11 @@ protected:
     /**
      * @brief Utility function for getting the max grid size.
      *
+     * @param[in] gpu
      * @param[in] cta_occupancy CTA occupancy for current architecture
      * @param[in] max_grid_size Preset max grid size. If less or equal to 0, fully populate all SMs
      *
-     * \return The maximum number of threadblocks this enactor class can launch.
+     * \return The maximum number of thread blocks this enactor class can launch.
      */
     int MaxGridSize(int gpu, int cta_occupancy, int max_grid_size = 0)
     {
@@ -715,8 +780,8 @@ protected:
         }
 
         return max_grid_size;
-    } 
-};
+    }
+}; // end of EnactorBase
 
 } // namespace app
 } // namespace gunrock

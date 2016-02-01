@@ -16,32 +16,64 @@
 #include <math.h>
 #include <stdio.h>
 #include <omp.h>
+#include <random>
 #include <time.h>
 
 #include <gunrock/graphio/utils.cuh>
 
 namespace gunrock {
 namespace graphio {
+namespace rmat {
 
-inline double Sprng (struct drand48_data *rand_data)
+typedef std::mt19937 Engine;
+typedef std::uniform_real_distribution<double> Distribution;
+
+/**
+ * @brief Utility function.
+ *
+ * @param[in] rand_data
+ */
+//inline double Sprng (struct drand48_data *rand_data)
+inline double Sprng (
+    Engine *engine, 
+    Distribution *distribution)
 {
-    double result;
-    drand48_r(rand_data, &result);
-    return result;
+    return (*distribution)(*engine);
 }
 
-inline bool Flip (struct drand48_data *rand_data)
+/**
+ * @brief Utility function.
+ *
+ * @param[in] rand_data
+ */
+//inline bool Flip (struct drand48_data *rand_data)
+inline bool Flip (
+    Engine *engine,
+    Distribution *distribution)
 {
-    return Sprng(rand_data) >= 0.5;
+    return Sprng(engine, distribution) >= 0.5;
 }
 
+/**
+ * @brief Utility function to choose partitions.
+ *
+ * @param[in] u
+ * @param[in] v
+ * @param[in] step
+ * @param[in] a
+ * @param[in] b
+ * @param[in] c
+ * @param[in] d
+ * @param[in] rand_data
+ */
 template <typename VertexId>
-void ChoosePartition (
+inline void ChoosePartition (
     VertexId *u, VertexId *v, VertexId step,
-    double a, double b, double c, double d, struct drand48_data *rand_data)
+    double a, double b, double c, double d, 
+    Engine *engine, Distribution *distribution)
 {
     double p;
-    p = Sprng(rand_data);
+    p = Sprng(engine, distribution);
 
     if (p < a)
     {
@@ -56,53 +88,64 @@ void ChoosePartition (
         *u = *u + step;
     }
     else if ((a + b + c < p) && (p < a + b + c + d))
-    {   
+    {
         *u = *u + step;
         *v = *v + step;
-    }   
+    }
 }
 
-void VaryParams (double *a, double *b, double *c, double *d, drand48_data *rand_data)
+/**
+ * @brief Utility function to very parameters.
+ *
+ * @param[in] a
+ * @param[in] b
+ * @param[in] c
+ * @param[in] d
+ * @param[in] rand_data
+ */
+inline void VaryParams(
+    double *a, double *b, double *c, double *d, 
+    Engine *engine, Distribution *distribution)
 {
     double v, S;
 
     // Allow a max. of 5% variation
     v = 0.05;
 
-    if (Flip(rand_data))
-    {   
-        *a += *a * v * Sprng(rand_data);
-    }   
+    if (Flip(engine, distribution))
+    {
+        *a += *a * v * Sprng(engine, distribution);
+    }
     else
-    {   
-        *a -= *a * v * Sprng(rand_data);
-    }   
-    if (Flip(rand_data))
-    {   
-        *b += *b * v * Sprng(rand_data);
-    }   
+    {
+        *a -= *a * v * Sprng(engine, distribution);
+    }
+    if (Flip(engine, distribution))
+    {
+        *b += *b * v * Sprng(engine, distribution);
+    }
     else
-    {   
-        *b -= *b * v * Sprng(rand_data);
-    }   
-    if (Flip(rand_data))
-    {   
-        *c += *c * v * Sprng(rand_data);
-    }   
+    {
+        *b -= *b * v * Sprng(engine, distribution);
+    }
+    if (Flip(engine, distribution))
+    {
+        *c += *c * v * Sprng(engine, distribution);
+    }
     else
-    {   
-        *c -= *c * v * Sprng(rand_data);
-    }   
-    if (Flip(rand_data))
-    {   
-        *d += *d * v * Sprng(rand_data);
-    }   
+    {
+        *c -= *c * v * Sprng(engine, distribution);
+    }
+    if (Flip(engine, distribution))
+    {
+        *d += *d * v * Sprng(engine, distribution);
+    }
     else
-    {   
-        *d -= *d * v * Sprng(rand_data);
-    }   
+    {
+        *d -= *d * v * Sprng(engine, distribution);
+    }
 
-    S = *a + *b + *c + *d; 
+    S = *a + *b + *c + *d;
 
     *a = *a / S;
     *b = *b / S;
@@ -111,10 +154,27 @@ void VaryParams (double *a, double *b, double *c, double *d, drand48_data *rand_
 }
 
 /**
- * @brief Builds a R-MAT CSR graph
+ * @brief Builds a R-MAT CSR graph.
+ *
+ * @tparam WITH_VALUES Whether or not associate with per edge weight values.
+ * @tparam VertexId Vertex identifier.
+ * @tparam Value Value type.
+ * @tparam SizeT Graph size type.
+ *
+ * @param[in] nodes
+ * @param[in] edges
+ * @param[in] graph
+ * @param[in] undirected
+ * @param[in] a0
+ * @param[in] b0
+ * @param[in] c0
+ * @param[in] d0
+ * @param[in] vmultipiler
+ * @param[in] vmin
+ * @param[in] seed
  */
 template <bool WITH_VALUES, typename VertexId, typename Value, typename SizeT>
-int BuildRmatGraph (
+int BuildRmatGraph(
     SizeT nodes, SizeT edges,
     Csr<VertexId, Value, SizeT> &graph,
     bool undirected,
@@ -124,13 +184,15 @@ int BuildRmatGraph (
     double d0 = 0.05,
     double vmultipiler = 1.00,
     double vmin = 1.00,
-    int    seed = -1)
+    int    seed = -1,
+    bool quiet = false)
 {
     typedef Coo<VertexId, Value> EdgeTupleType;
 
     if ((nodes < 0) || (edges < 0))
     {
-        fprintf(stderr, "Invalid graph size: nodes=%d, edges=%d", nodes, edges);
+        fprintf(stderr, "Invalid graph size: nodes=%lld, edges=%lld", 
+            (long long)nodes, (long long)edges);
         return -1;
     }
 
@@ -141,26 +203,23 @@ int BuildRmatGraph (
         sizeof(EdgeTupleType) * directed_edges);
 
     if (seed == -1) seed = time(NULL);
-    printf("rmat_seed = %lld\n", (long long)seed);
+    if (!quiet)
+    {
+        printf("rmat_seed = %lld\n", (long long)seed);
+    }
 
-    //omp_set_num_threads(2);
     #pragma omp parallel
     {
-        struct drand48_data rand_data;
-        int thread_num    = omp_get_thread_num();
-        int num_threads   = omp_get_num_threads();
-        SizeT i_start     = (long long )(edges) * thread_num / num_threads;
-        SizeT i_end       = (long long )(edges) * (thread_num + 1) / num_threads;
+        int thread_num  = omp_get_thread_num();
+        int num_threads = omp_get_num_threads();
+        SizeT i_start   = (long long )(edges) * thread_num / num_threads;
+        SizeT i_end     = (long long )(edges) * (thread_num + 1) / num_threads;
         unsigned int seed_ = seed + 616 * thread_num;
-        srand48_r(seed_, &rand_data);
+        Engine engine(seed_);
+        Distribution distribution(0.0, 1.0);
 
         for (SizeT i = i_start; i < i_end; i++)
         {
-            /*if ((i%10000)==0) 
-            {
-                int thread_num = omp_get_thread_num();
-                printf("%d:%d \t",thread_num, i);//fflush(stdout);
-            }*/ 
             EdgeTupleType *coo_p = coo + i;
             double a = a0;
             double b = b0;
@@ -173,9 +232,9 @@ int BuildRmatGraph (
 
             while (step >= 1)
             {
-                ChoosePartition (&u, &v, step, a, b, c, d, &rand_data);
+                ChoosePartition (&u, &v, step, a, b, c, d, &engine, &distribution);
                 step /= 2;
-                VaryParams (&a, &b, &c, &d, &rand_data);
+                VaryParams (&a, &b, &c, &d, &engine, &distribution);
             }
 
             // create edge
@@ -183,9 +242,7 @@ int BuildRmatGraph (
             coo_p->col = v - 1; // zero-based
             if (WITH_VALUES)
             {
-                double t_value;
-                drand48_r(&rand_data, &t_value);
-                coo_p->val = t_value * vmultipiler + vmin;
+                coo_p->val = Sprng(&engine, &distribution) * vmultipiler + vmin;
             } else coo_p->val = 1;
 
             if (undirected)
@@ -196,24 +253,23 @@ int BuildRmatGraph (
                 cooi_p->col = coo_p->row;
                 if (WITH_VALUES)
                 {
-                    double t_value;
-                    drand48_r(&rand_data, &t_value);
-                    cooi_p->val = t_value * vmultipiler + vmin;
+                    cooi_p->val = Sprng(&engine, &distribution) * vmultipiler + vmin;
                 } else coo_p->val = 1;
             }
         }
     }
 
     // convert COO to CSR
-    char *out_file = NULL; // TODO: currently does not support write CSR file
+    char *out_file = NULL;  // TODO: currently does not support write CSR file
     graph.template FromCoo<WITH_VALUES, EdgeTupleType>(
-        out_file, coo, nodes, directed_edges);
+        out_file, coo, nodes, directed_edges, false, undirected, false, quiet);
 
     free(coo);
 
     return 0;
 }
 
+} // namespace rmat
 } // namespace graphio
 } // namespace gunrock
 

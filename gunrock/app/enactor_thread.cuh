@@ -105,6 +105,9 @@ public:
     IterationBase <AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
                  *iteration_loops;
 
+    /*
+     * @brief Default ThreadSlice constructor
+     */
     ThreadSlice() :
         thread_num (0   ),  
         thread_type(Type::Last),  
@@ -144,6 +147,9 @@ public:
         }
     }
 
+    /*
+     * @brief Default ThreadSlice destructor
+     */
     virtual ~ThreadSlice()
     {
         ShowDebugInfo("~ThreadSlice() begin.");

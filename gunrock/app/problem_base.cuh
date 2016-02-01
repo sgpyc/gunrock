@@ -9,11 +9,26 @@
  * @file
  * problem_base.cuh
  *
- * @brief Base struct for all the application types
+ * @brief Base structure for all the application types
  */
 
 #pragma once
 
+#include <vector>
+#include <string>
+
+// Graph construction utilities
+#include <gunrock/graphio/market.cuh>
+#include <gunrock/graphio/rmat.cuh>
+#include <gunrock/graphio/rgg.cuh>
+
+// Information stats utilities
+#include <boost/filesystem.hpp>
+#include <gunrock/util/sysinfo.h>
+#include <gunrock/util/gitsha1.h>
+#include <gunrock/util/json_spirit_writer_template.h>
+
+// Gunrock test error utilities
 #include <gunrock/util/basic_utils.h>
 #include <gunrock/util/cuda_properties.cuh>
 #include <gunrock/util/memset_kernel.cuh>
@@ -24,6 +39,9 @@
 #include <gunrock/util/io/modified_store.cuh>
 #include <gunrock/util/array_utils.cuh>
 #include <gunrock/util/test_utils.cuh>
+#include <gunrock/util/track_utils.cuh>
+
+// Graph partitioner utilities
 #include <gunrock/partitioner/random/random_partitioner.cuh>
 #include <gunrock/partitioner/cluster/cluster_partitioner.cuh>
 #include <gunrock/partitioner/biasrandom/biasrandom_partitioner.cuh>
@@ -34,148 +52,18 @@
 
 #include <moderngpu.cuh>
 
+// this is the "stringize macro macro" hack
+#define STR(x) #x
+#define XSTR(x) STR(x)
+
 namespace gunrock {
 namespace app {
-
-#define TO_TRACK true
-#define NUM_TO_TRACK 68
-
-template <typename VertexId>
-static __device__ __host__ __inline__ bool to_track(int gpu_num, VertexId node)
-{
-    /* for delaunay_n11, partition-seed=14450901028
-    NUM_TO_TRACK = 11
-    const VertexId node_to_track[NUM_TO_TRACK][3] = {
-        {92, 49, -2},
-        {99, 55, 1903},
-        {345, 165, -2},
-        {438, 1185, 227},
-        {658, 331, 1628},
-        {1478, 724, 1487},
-        {86, 44, 1843},
-        {1385, 682, 1842},
-        {104, 58, 1532},
-        {657, 330, 1239},
-        {686, 350, 1240}
-    };
-    */
-
-    /* for delaunay_n12 partition-seed=1445846616
-    NUM_TO_TRACK = 22
-    const VertexId node_to_track[NUM_TO_TRACK][3] = {
-        {218, 5132, 109},
-        {262, 128, 5410},
-        {359, 5739, 186},
-        {868, 426, 4416},
-        {916, 5158, 468},
-        {219, 6708, 110},
-        {242, 119, 6806},
-        {257, 6975, 130},
-        {870, 5133, 443},
-        {878, 6723, 448},
-        {871, 5134, 444},
-        {3447, 1748, 4419},
-        {3644, 1853, 5340},
-        {4187, 2109, 4470},
-        {4204, 2115, 4471},
-        {4194, 4473, 2083},
-        {4196, 4474, 2084},
-        {5759, 5836, 2909},
-        {871, 5134, 444},
-        {868, 426, 4416},
-        {3479, 1766, 5222},
-        {3594, 5751, 1766}
-    };*/
-
-    /*for soc_LiveJournal1 partition-seed=1444776384
-    NUM_TO_TRACK = 68*/
-    const VertexId node_to_track[NUM_TO_TRACK][3] = {
-        { 575247, 2508089,  288071},
-        {1522964, 2721296,  762079},
-        { 393805, 2514154,  197573},
-        { 421988, 2973182,  211519},
-        { 453165, 3096208,  227111},
-        {3163679, 3452246, 1582638},
-        {3234294, 1616291, 3509933},
-        { 451574, 3462528,  226312},
-        { 818238, 3470763,  409820},
-        {4762510, 4420824, 2381099},
-        {4813624, 4450341, 2406670},
-        {3756589, 3888674, 1878759},
-        {4026128, 4043342, 2013035},
-        {4477111, 4281098, 2238126},
-        {4724483, 4401115, 2362084},
-        {2936235, 3205777, 1468982},
-        { 143458,   71450, 3148457},
-        {1318649, 4407011,  659632},
-        {4783658, 2391953, 4432671},
-        {4839752, 2419893, 4469581},
-        { 143456, 3153946,   72006},
-        {   5429,    2716, 2489195},
-        { 393826,  196242, 3207576},
-        {1829080,  914039, 2891405},
-        {  77367,   38582, 2431339},
-        { 407218,  203032, 2865024},
-        { 417281,  208102, 2791740},
-        { 337711,  168266, 3213788},
-        { 337720,  168270, 3340665},
-        { 387199,  192935, 2504359},
-        { 588305,  293616, 3210749},
-        { 962811,  480878, 3321008},
-        {1207154,  603279, 2488437},
-        {1436754,  717883, 3213366},
-        {1758482,  878709, 3460230},
-        {3312755, 1655641, 3575911},
-        {3312759, 1655642, 3575912},
-        { 124724,   62022, 2436915},
-        { 343775,  171330, 2948216},
-        {   4994,    2499, 2470481},
-        {  32684,   16357, 2600334},
-        {  52616,   26254, 2574001},
-        { 223522,  111333, 2669305},
-        { 591882,  295395, 2802433},
-        { 344768,  171832, 2958663},
-        {3973076, 1986366, 4012273},
-        {  27324,   13783, 2693865},
-        { 269649,  134276, 2786551},
-        { 400117,  199427, 2786580},
-        {1522945,  760874, 3336397},
-        {2324351, 1161761, 2433845},
-        { 166045,   82656, 3201122},
-        {2936237, 1467254, 4316119},
-        { 329486,  164139, 4340298},
-        { 465716,  232447, 2876845},
-        {4574544, 2287569, 4327967},
-        { 382183, 2935250,  191744},
-        {1142154, 2570160,  571491},
-        {1808271, 3543865,  904716},
-        { 957185,  478027, 2993506},
-        {1425940,  712449, 2715216},
-        {2655304, 1327241, 2616878},
-        {3895110, 1947288, 3969035},
-        {4161958, 2080985, 4119398},
-        {4560887, 2280743, 4321361},
-        {4330572, 4208241, 2165314},
-        {4580499, 2290511, 4330837},
-        {4790220, 4436189, 2394958}
-        };
-
-    if (TO_TRACK)
-    {
-        #pragma unroll
-        for (int i=0; i<NUM_TO_TRACK; i++)
-            //if (gpu_num == gpu_to_track[i] &&
-            //    node == node_to_track[i]) 
-            if (node_to_track[i][gpu_num+1] == node)
-                return true;
-        return false;
-    } else return false;
-}
 
 /**
  * @brief Enumeration of global frontier queue configurations
  */
-enum FrontierType {
+enum FrontierType
+{
     VERTEX_FRONTIERS,       // O(n) ping-pong global vertex frontiers
     EDGE_FRONTIERS,         // O(m) ping-pong global edge frontiers
     MIXED_FRONTIERS         // O(n) global vertex frontier, O(m) global edge frontier
@@ -184,9 +72,9 @@ enum FrontierType {
 /**
  * @brief Graph slice structure which contains common graph structural data.
  *
- * @tparam SizeT               Type of unsigned integer to use for array indexing. (e.g., uint32)
- * @tparam VertexId            Type of signed integer to use as vertex id (e.g., uint32)
- * @tparam Value               Type to use as vertex / edge associated values
+ * @tparam SizeT    Type of unsigned integer to use for array indexing. (e.g., uint32)
+ * @tparam VertexId Type of signed integer to use as vertex id (e.g., uint32)
+ * @tparam Value    Type to use as vertex / edge associated values
  */
 template <
     typename VertexId,
@@ -209,10 +97,10 @@ struct GraphSlice
     util::Array1D<SizeT, int     > partition_table    ; // Partition number for vertices, local is always 0
     util::Array1D<SizeT, VertexId> convertion_table   ; // IDs of vertices in their hosting partition
     util::Array1D<SizeT, VertexId> original_vertex    ; // Original IDs of vertices
-    util::Array1D<SizeT, SizeT   > in_counter         ; // Incoming vertices counter from peers 
+    util::Array1D<SizeT, SizeT   > in_counter         ; // Incoming vertices counter from peers
     util::Array1D<SizeT, SizeT   > out_offset         ; // Outgoing vertices offsets
     util::Array1D<SizeT, SizeT   > out_counter        ; // Outgoing vertices counter
-    util::Array1D<SizeT, SizeT   > backward_offset    ; // Backward offsets for partition and convertion tables
+    util::Array1D<SizeT, SizeT   > backward_offset    ; // Backward offsets for partition and conversion tables
     util::Array1D<SizeT, int     > backward_partition ; // Remote peers having the same vertices
     util::Array1D<SizeT, VertexId> backward_convertion; // IDs of vertices in remote peers
 
@@ -237,13 +125,13 @@ struct GraphSlice
         partition_table    .SetName("partition_table"    );
         convertion_table   .SetName("convertion_table"   );
         original_vertex    .SetName("original_vertex"    );
-        in_counter         .SetName("in_counter"         );  
+        in_counter         .SetName("in_counter"         );
         out_offset         .SetName("out_offset"         );
         out_counter        .SetName("out_counter"        );
         backward_offset    .SetName("backward_offset"    );
         backward_partition .SetName("backward_partition" );
         backward_convertion.SetName("backward_convertion");
-    } // end GraphSlice(int index)
+    }  // end GraphSlice(int index)
 
     /**
      * @brief GraphSlice Destructor to free all device memories.
@@ -271,29 +159,29 @@ struct GraphSlice
         backward_convertion.Release();
     } // end ~GraphSlice()
 
-   /**
-     * @brief Initalize graph slice
-     *
-     * @param[in] stream_from_host    Whether to stream data from host
-     * @param[in] num_gpus            Number of gpus
-     * @param[in] graph               Pointer to the sub graph
-     * @param[in] inverstgraph        Pointer to the inverst graph
-     * @param[in] partition_table     The partition table
-     * @param[in] convertion_table    The convertion table
-     * @param[in] original_vertex     The original vertex table
-     * @param[in] in_counter          In_counters
-     * @param[in] out_offset          Out_offsets
-     * @param[in] out_counter         Out_counters
-     * @param[in] backward_offsets    Backward_offsets
-     * @param[in] backward_partition  The backward partition table
-     * @param[in] backward_convertion The backward convertion table 
-     * \return cudaError_t            Object incidating the success of all CUDA function calls
-     */
+    /**
+      * @brief Initialize graph slice
+      *
+      * @param[in] stream_from_host    Whether to stream data from host
+      * @param[in] num_gpus            Number of GPUs
+      * @param[in] graph               Pointer to the sub graph
+      * @param[in] inverstgraph        Pointer to the invert graph
+      * @param[in] partition_table     The partition table
+      * @param[in] convertion_table    The conversion table
+      * @param[in] original_vertex     The original vertex table
+      * @param[in] in_counter          In_counters
+      * @param[in] out_offset          Out_offsets
+      * @param[in] out_counter         Out_counters
+      * @param[in] backward_offsets    Backward_offsets
+      * @param[in] backward_partition  The backward partition table
+      * @param[in] backward_convertion The backward conversion table
+      * \return cudaError_t            Object indicating the success of all CUDA function calls
+      */
     cudaError_t Init(
         bool                       stream_from_host,
         int                        num_gpus,
-        Csr<VertexId,Value,SizeT>* graph,
-        Csr<VertexId,Value,SizeT>* inverstgraph,
+        Csr<VertexId, Value, SizeT>* graph,
+        Csr<VertexId, Value, SizeT>* inverstgraph,
         int*                       partition_table,
         VertexId*                  convertion_table,
         VertexId*                  original_vertex,
@@ -302,7 +190,7 @@ struct GraphSlice
         SizeT*                     out_counter,
         SizeT*                     backward_offsets   = NULL,
         int*                       backward_partition = NULL,
-        VertexId*                  backward_convertion= NULL)
+        VertexId*                  backward_convertion = NULL)
     {
         cudaError_t retval     = cudaSuccess;
 
@@ -314,97 +202,99 @@ struct GraphSlice
         if (partition_table  != NULL) this->partition_table    .SetPointer(partition_table      , nodes     );
         if (convertion_table != NULL) this->convertion_table   .SetPointer(convertion_table     , nodes     );
         if (original_vertex  != NULL) this->original_vertex    .SetPointer(original_vertex      , nodes     );
-        if (in_counter       != NULL) this->in_counter         .SetPointer(in_counter           , num_gpus+1);
-        if (out_offset       != NULL) this->out_offset         .SetPointer(out_offset           , num_gpus+1);
-        if (out_counter      != NULL) this->out_counter        .SetPointer(out_counter          , num_gpus+1);
-        this->row_offsets        .SetPointer(graph->row_offsets   , nodes+1   );
+        if (in_counter       != NULL) this->in_counter         .SetPointer(in_counter           , num_gpus + 1);
+        if (out_offset       != NULL) this->out_offset         .SetPointer(out_offset           , num_gpus + 1);
+        if (out_counter      != NULL) this->out_counter        .SetPointer(out_counter          , num_gpus + 1);
+        this->row_offsets        .SetPointer(graph->row_offsets   , nodes + 1   );
         this->column_indices     .SetPointer(graph->column_indices, edges     );
         if (inverstgraph != NULL)
         {
-            this->column_offsets .SetPointer(inverstgraph->row_offsets, nodes+1);
+            this->column_offsets .SetPointer(inverstgraph->row_offsets, nodes + 1);
             this->row_indices    .SetPointer(inverstgraph->column_indices   , edges  );
         }
 
-        do {
+        do
+        {
             // Set device using slice index
             if (retval = util::SetDevice(index)) break;
 
             // Allocate and initialize row_offsets
-            if (retval = this->row_offsets.Allocate(nodes+1      ,util::DEVICE)) break;
-            if (retval = this->row_offsets.Move    (util::HOST   ,util::DEVICE)) break;
-            
+            if (retval = this->row_offsets.Allocate(nodes + 1      , util::DEVICE)) break;
+            if (retval = this->row_offsets.Move    (util::HOST   , util::DEVICE)) break;
+
             // Allocate and initialize column_indices
-            if (retval = this->column_indices.Allocate(edges     ,util::DEVICE)) break;
-            if (retval = this->column_indices.Move    (util::HOST,util::DEVICE)) break;
+            if (retval = this->column_indices.Allocate(edges     , util::DEVICE)) break;
+            if (retval = this->column_indices.Move    (util::HOST, util::DEVICE)) break;
 
             // Allocate out degrees for each node
-            if (retval = this->out_degrees.Allocate(nodes        ,util::DEVICE)) break;
+            if (retval = this->out_degrees.Allocate(nodes        , util::DEVICE)) break;
             // count number of out-going degrees for each node
-            util::MemsetMadVectorKernel<<<128, 128>>>(
+            util::MemsetMadVectorKernel <<< 128, 128>>>(
                 this->out_degrees.GetPointer(util::DEVICE),
                 this->row_offsets.GetPointer(util::DEVICE),
                 this->row_offsets.GetPointer(util::DEVICE) + 1,
-                -1, nodes);
-           
+                (SizeT)-1, nodes);
+
 
             if (inverstgraph != NULL)
             {
                 // Allocate and initialize column_offsets
-                if (retval = this->column_offsets.Allocate(nodes+1      ,util::DEVICE)) break;
-                if (retval = this->column_offsets.Move    (util::HOST   ,util::DEVICE)) break;
-                
-                // Allocate and initialize row_indices
-                if (retval = this->row_indices.Allocate(edges     ,util::DEVICE)) break;
-                if (retval = this->row_indices.Move    (util::HOST,util::DEVICE)) break;
+                if (retval = this->column_offsets.Allocate(nodes + 1      , util::DEVICE)) break;
+                if (retval = this->column_offsets.Move    (util::HOST   , util::DEVICE)) break;
 
-                // Allocate in degrees for each node
+                // Allocate and initialize row_indices
+                if (retval = this->row_indices.Allocate(edges     , util::DEVICE)) break;
+                if (retval = this->row_indices.Move    (util::HOST, util::DEVICE)) break;
+
+
                 if (retval = this->in_degrees .Allocate(nodes,  util::DEVICE)) break;
                 // count number of in-going degrees for each node
-                util::MemsetMadVectorKernel<<<128, 128>>>(
+                util::MemsetMadVectorKernel <<< 128, 128>>>(
                     this->in_degrees    .GetPointer(util::DEVICE),
                     this->column_offsets.GetPointer(util::DEVICE),
                     this->column_offsets.GetPointer(util::DEVICE) + 1,
-                    -1, nodes);
+                    (SizeT)-1, nodes);
             }
 
             // For multi-GPU cases
             if (num_gpus > 1)
             {
-                // Allocate and initalize convertion_table
-                if (retval = this->partition_table.Allocate (nodes     ,util::DEVICE)) break;
+                // Allocate and initialize convertion_table
+                if (retval = this->partition_table.Allocate (nodes     , util::DEVICE)) break;
                 if (partition_table  != NULL)
-                    if (retval = this->partition_table.Move (util::HOST,util::DEVICE)) break;
-                
-                // Allocate and initalize convertion_table
-                if (retval = this->convertion_table.Allocate(nodes     ,util::DEVICE)) break;
-                if (convertion_table != NULL)
-                    if (retval = this->convertion_table.Move(util::HOST,util::DEVICE)) break;
+                    if (retval = this->partition_table.Move (util::HOST, util::DEVICE)) break;
 
-                // Allocate and initalize original_vertex
-                if (retval = this->original_vertex .Allocate(nodes     ,util::DEVICE)) break;
+                // Allocate and initialize convertion_table
+                if (retval = this->convertion_table.Allocate(nodes     , util::DEVICE)) break;
+                if (convertion_table != NULL)
+                    if (retval = this->convertion_table.Move(util::HOST, util::DEVICE)) break;
+
+                // Allocate and initialize original_vertex
+                if (retval = this->original_vertex .Allocate(nodes     , util::DEVICE)) break;
                 if (original_vertex  != NULL)
-                    if (retval = this->original_vertex .Move(util::HOST,util::DEVICE)) break;
-                
-                // If need backward information progation
-                if (backward_offsets!=NULL)
+                    if (retval = this->original_vertex .Move(util::HOST, util::DEVICE)) break;
+
+                // If need backward information proration
+                if (backward_offsets != NULL)
                 {
-                    // Allocate and initalize backward_offset
-                    this->backward_offset    .SetPointer(backward_offsets     , nodes+1);
-                    if (retval = this->backward_offset    .Allocate(nodes+1, util::DEVICE)) break;
+                    // Allocate and initialize backward_offset
+                    this->backward_offset    .SetPointer(backward_offsets     , nodes + 1);
+                    if (retval = this->backward_offset    .Allocate(nodes + 1, util::DEVICE)) break;
                     if (retval = this->backward_offset    .Move(util::HOST, util::DEVICE)) break;
 
-                    // Allocate and initalize backward_partition
+                    // Allocate and initialize backward_partition
                     this->backward_partition .SetPointer(backward_partition   , backward_offsets[nodes]);
                     if (retval = this->backward_partition .Allocate(backward_offsets[nodes], util::DEVICE)) break;
                     if (retval = this->backward_partition .Move(util::HOST, util::DEVICE)) break;
 
-                    // Allocate and initalize backward_convertion
+                    // Allocate and initialize backward_convertion
                     this->backward_convertion.SetPointer(backward_convertion  , backward_offsets[nodes]);
                     if (retval = this->backward_convertion.Allocate(backward_offsets[nodes], util::DEVICE)) break;
                     if (retval = this->backward_convertion.Move(util::HOST, util::DEVICE)) break;
                 }
             } // end if num_gpu>1
-        } while (0);
+        }
+        while (0);
 
         return retval;
     } // end of Init(...)
@@ -412,8 +302,9 @@ struct GraphSlice
     /**
      * @brief overloaded = operator
      *
-     * @param[in] GraphSlice to copy from
-     * \return a copy of local GraphSlice
+     * @param[in] other GraphSlice to copy from
+     *
+     * \return GraphSlice& a copy of local GraphSlice
      */
     GraphSlice& operator=(GraphSlice other)
     {
@@ -441,7 +332,7 @@ struct GraphSlice
 }; // end GraphSlice
 
 /**
- * @brief Baase data slice structure which contains common data structural needed for permitives.
+ * @brief Base data slice structure which contains common data structural needed for primitives.
  *
  * @tparam SizeT               Type of unsigned integer to use for array indexing. (e.g., uint32)
  * @tparam VertexId            Type of signed integer to use as vertex id (e.g., uint32)
@@ -453,11 +344,58 @@ template <
     typename Value>
 struct DataSliceBase
 {
-    int                             gpu_idx     ; // GPU index
-    SizeT                           nodes       ; // Numver of vertices
-    util::Array1D<SizeT, VertexId>  preds       ; // predecessors of vertices
-    util::Array1D<SizeT, VertexId>  temp_preds  ; // tempory storages for predecessors
-    
+    int    num_gpus            ; // Number of GPUs
+    int    gpu_idx             ; // GPU index
+    int    wait_counter        ; // Wait counter for iteration loop control
+    int    gpu_mallocing       ; // Whether GPU is in malloc
+    int    num_vertex_associate; // Number of associate values in VertexId type for each vertex
+    int    num_value__associate; // Number of associate values in Value type for each vertex
+    int    num_stages          ; // Number of stages
+    SizeT  nodes               ; // Number of vertices
+    util::Array1D<SizeT, VertexId    > **vertex_associate_in  [2]; // Incoming VertexId type associate values
+    util::Array1D<SizeT, VertexId*   >  *vertex_associate_ins [2]; // Device pointers to incoming VertexId type associate values
+    util::Array1D<SizeT, VertexId    > **vertex_associate_out    ; // Outgoing VertexId type associate values
+    util::Array1D<SizeT, VertexId*   >  *vertex_associate_outs   ; // Device pointers to outgoing VertexId type associate values
+    util::Array1D<SizeT, VertexId**  >   vertex_associate_outss  ; // Device pointers to device points to outgoing VertexId type associate values
+    util::Array1D<SizeT, VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
+    util::Array1D<SizeT, Value       > **value__associate_in  [2]; // Incoming Value type associate values
+    util::Array1D<SizeT, Value*      >  *value__associate_ins [2]; // Device pointers to incoming Value type associate values
+    util::Array1D<SizeT, Value       > **value__associate_out    ; // Outgoing Value type associate values
+    util::Array1D<SizeT, Value*      >  *value__associate_outs   ; // Device pointers to outgoing Value type associate values
+    util::Array1D<SizeT, Value**     >   value__associate_outss  ; // Device pointers to device pointers to outgoing Value type associate values
+    util::Array1D<SizeT, Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
+    util::Array1D<SizeT, SizeT       >   out_length              ; // Number of outgoing vertices to peers
+    util::Array1D<SizeT, SizeT       >   in_length            [2]; // Number of incoming vertices from peers
+    util::Array1D<SizeT, VertexId    >  *keys_in              [2]; // Incoming vertices
+    util::Array1D<SizeT, VertexId*   >   keys_outs               ; // Outgoing vertices
+    util::Array1D<SizeT, VertexId    >  *keys_out                ; // Device pointers to outgoing vertices
+    util::Array1D<SizeT, SizeT       >  *keys_marker             ; // Markers to separate vertices to peer GPUs
+    util::Array1D<SizeT, SizeT*      >   keys_markers            ; // Device pointer to the markers
+    util::Array1D<SizeT, cudaEvent_t*>   events               [4]; // GPU stream events arrays
+    util::Array1D<SizeT, bool*       >   events_set           [4]; // Whether the GPU stream events are set
+    util::Array1D<SizeT, int         >   wait_marker             ; //
+    util::Array1D<SizeT, cudaStream_t>   streams                 ; // GPU streams
+    util::Array1D<SizeT, int         >   stages                  ; // current stages of each streams
+    util::Array1D<SizeT, bool        >   to_show                 ; // whether to show debug information for the streams
+    util::Array1D<SizeT, char        >   make_out_array          ; // compressed data structure for make_out kernel
+    util::Array1D<SizeT, char        >  *expand_incoming_array   ; // compressed data structure for expand_incoming kernel
+    util::Array1D<SizeT, VertexId    >   preds                   ; // predecessors of vertices
+    util::Array1D<SizeT, VertexId    >   temp_preds              ; // temporary storages for predecessors
+    util::Array1D<SizeT, VertexId    >   labels                  ; // Used for source distance
+
+    //Frontier queues. Used to track working frontier.
+    util::DoubleBuffer<SizeT, VertexId, Value>  *frontier_queues ; // frontier queues
+    util::Array1D<SizeT, SizeT       >  *scanned_edges           ; // length / offsets for offsets of the frontier queues
+
+    // arrays used to track data race, containing info about pervious assigment
+    util::Array1D<SizeT, int         > org_checkpoint            ; // checkpoint number
+    util::Array1D<SizeT, VertexId*   > org_d_out                 ; // d_out address
+    util::Array1D<SizeT, SizeT       > org_offset1               ; // offset1
+    util::Array1D<SizeT, SizeT       > org_offset2               ; // offset2
+    util::Array1D<SizeT, VertexId    > org_queue_idx             ; // queue index
+    util::Array1D<SizeT, int         > org_block_idx             ; // blockIdx.x
+    util::Array1D<SizeT, int         > org_thread_idx            ; // threadIdx.x
+
     /**
      * @brief DataSliceBase default constructor
      */
@@ -466,8 +404,36 @@ struct DataSliceBase
         nodes   (0)
     {
         // Assign names to arrays
+        keys_outs              .SetName("keys_outs"              );
+        vertex_associate_outss .SetName("vertex_associate_outss" );
+        value__associate_outss .SetName("value__associate_outss" );
+        vertex_associate_orgs  .SetName("vertex_associate_orgs"  );
+        value__associate_orgs  .SetName("value__associate_orgs"  );
+        out_length             .SetName("out_length"             );
+        in_length           [0].SetName("in_length[0]"           );
+        in_length           [1].SetName("in_length[1]"           );
+        wait_marker            .SetName("wait_marker"            );
+        keys_markers           .SetName("keys_marker"            );
+        stages                 .SetName("stages"                 );
+        to_show                .SetName("to_show"                );
+        make_out_array         .SetName("make_out_array"         );
+        streams                .SetName("streams"                );
         preds                  .SetName("preds"                  );
         temp_preds             .SetName("temp_preds"             );
+        labels                 .SetName("labels"                 );
+        org_checkpoint         .SetName("org_checkpoint"         );  
+        org_d_out              .SetName("org_d_out"              );  
+        org_offset1            .SetName("org_offset1"            );  
+        org_offset2            .SetName("org_offset2"            );  
+        org_queue_idx          .SetName("org_queue_idx"          );  
+        org_block_idx          .SetName("org_block_idx"          );  
+        org_thread_idx         .SetName("org_thread_idx"         );  
+
+        for (int i = 0; i < 4; i++)
+        {
+            events[i].SetName("events[]");
+            events_set[i].SetName("events_set[]");
+        }
     } // end DataSliceBase()
 
     /**
@@ -482,10 +448,194 @@ struct DataSliceBase
     {
         cudaError_t retval;   
         // Set device by index
-        if (retval = util::SetDevice(gpu_idx)) return retval;
-        if (retval = preds     .Release())     return retval;
-        if (retval = temp_preds.Release())     return retval;
-        return retval;
+        if (util::SetDevice(gpu_idx)) return;
+
+        // Release VertexId type incoming associate values and related pointers
+        if (vertex_associate_in[0] != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                for (int i = 0; i < num_vertex_associate; i++)
+                {
+                    vertex_associate_in[0][gpu][i].Release();
+                    vertex_associate_in[1][gpu][i].Release();
+                }
+                delete[] vertex_associate_in[0][gpu];
+                delete[] vertex_associate_in[1][gpu];
+                vertex_associate_in [0][gpu] = NULL;
+                vertex_associate_in [1][gpu] = NULL;
+                vertex_associate_ins[0][gpu].Release();
+                vertex_associate_ins[1][gpu].Release();
+            }
+            delete[] vertex_associate_in [0];
+            delete[] vertex_associate_in [1];
+            delete[] vertex_associate_ins[0];
+            delete[] vertex_associate_ins[1];
+            vertex_associate_in [0] = NULL;
+            vertex_associate_in [1] = NULL;
+            vertex_associate_ins[0] = NULL;
+            vertex_associate_ins[1] = NULL;
+        }
+
+        // Release Value type incoming associate values and related pointers
+        if (value__associate_in[0] != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                for (int i = 0; i < num_value__associate; i++)
+                {
+                    value__associate_in[0][gpu][i].Release();
+                    value__associate_in[1][gpu][i].Release();
+                }
+                delete[] value__associate_in[0][gpu];
+                delete[] value__associate_in[1][gpu];
+                value__associate_in [0][gpu] = NULL;
+                value__associate_in [1][gpu] = NULL;
+                value__associate_ins[0][gpu].Release();
+                value__associate_ins[1][gpu].Release();
+            }
+            delete[] value__associate_in [0];
+            delete[] value__associate_in [1];
+            delete[] value__associate_ins[0];
+            delete[] value__associate_ins[1];
+            value__associate_in [0] = NULL;
+            value__associate_in [1] = NULL;
+            value__associate_ins[0] = NULL;
+            value__associate_ins[1] = NULL;
+        }
+
+        // Release incoming keys and related pointers
+        if (keys_in[0] != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                keys_in[0][gpu].Release();
+                keys_in[1][gpu].Release();
+            }
+            delete[] keys_in[0];
+            delete[] keys_in[1];
+            keys_in[0] = NULL;
+            keys_in[1] = NULL;
+        }
+
+        // Release outgoing keys and markers
+        if (keys_marker != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                keys_out   [gpu].Release();
+                keys_marker[gpu].Release();
+            }
+            delete[] keys_out   ; keys_out    = NULL;
+            delete[] keys_marker; keys_marker = NULL;
+            keys_markers.Release();
+        }
+
+        // Release VertexId type outgoing associate values and pointers
+        if (vertex_associate_out != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                for (int i = 0; i < num_vertex_associate; i++)
+                    vertex_associate_out[gpu][i].Release();
+                delete[] vertex_associate_out[gpu];
+                vertex_associate_out [gpu] = NULL;
+                vertex_associate_outs[gpu].Release();
+            }
+            delete[] vertex_associate_out;
+            delete[] vertex_associate_outs;
+            vertex_associate_out = NULL;
+            vertex_associate_outs = NULL;
+            vertex_associate_outss.Release();
+        }
+
+        // Release Value type outgoing associate values and pointers
+        if (value__associate_out != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                for (int i = 0; i < num_value__associate; i++)
+                    value__associate_out[gpu][i].Release();
+                delete[] value__associate_out[gpu];
+                value__associate_out [gpu] = NULL;
+                value__associate_outs[gpu].Release();
+            }
+            delete[] value__associate_out ;
+            delete[] value__associate_outs;
+            value__associate_out = NULL;
+            value__associate_outs = NULL;
+            value__associate_outss.Release();
+        }
+
+        // Release events and markers
+        for (int i = 0; i < 4; i++)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                for (int stage = 0; stage < num_stages; stage++)
+                    cudaEventDestroy(events[i][gpu][stage]);
+                delete[] events    [i][gpu]; events    [i][gpu] = NULL;
+                delete[] events_set[i][gpu]; events_set[i][gpu] = NULL;
+            }
+            events    [i].Release();
+            events_set[i].Release();
+        }
+
+        // Release expand_incoming_arrays
+        if (expand_incoming_array != NULL)
+        {
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+                expand_incoming_array[gpu].Release();
+            delete[] expand_incoming_array;
+            expand_incoming_array = NULL;
+        }
+
+        // Release frontiers
+        if (frontier_queues != NULL)
+        {
+            for (int gpu = 0; gpu <= num_gpus; gpu++)
+            {
+                for (int i = 0; i < 2; ++i)
+                {
+                    frontier_queues[gpu].keys  [i].Release();
+                    frontier_queues[gpu].values[i].Release();
+                }
+            }
+            delete[] frontier_queues; frontier_queues = NULL;
+        }
+
+        // Release scanned_edges
+        if (scanned_edges != NULL)
+        {
+            for (int gpu = 0; gpu <= num_gpus; gpu++)
+                scanned_edges          [gpu].Release();
+            delete[] scanned_edges;
+            scanned_edges           = NULL;
+        }
+
+        //Release all other arrays
+        keys_outs     .Release();
+        in_length  [0].Release();
+        in_length  [1].Release();
+        wait_marker   .Release();
+        out_length    .Release();
+        vertex_associate_orgs.Release();
+        value__associate_orgs.Release();
+        streams       .Release();
+        stages        .Release();
+        to_show       .Release();
+        make_out_array.Release();
+        preds         .Release();
+        temp_preds    .Release();
+        labels        .Release();
+
+        org_checkpoint.Release();
+        org_d_out     .Release();
+        org_offset1   .Release();
+        org_offset2   .Release();
+        org_queue_idx .Release();
+        org_block_idx .Release();
+        org_thread_idx.Release();
     } // end ~DataSliceBase()
 
     /**
@@ -494,44 +644,345 @@ struct DataSliceBase
      * @param[in] num_gpus             Number of GPUs
      * @param[in] gpu_idx              GPU index
      * @param[in] num_vertex_associate Number of VertexId type associate values
-     * @param[in] num_value__associate Numver of Value type associate values
+     * @param[in] num_value__associate Number of Value type associate values
      * @param[in] graph                Pointer to the CSR formated sub-graph
      * @param[in] num_in_nodes         Number of incoming vertices from peers
      * @param[in] num_out_nodes        Number of outgoing vertices to peers
      * @param[in] in_sizing            Preallocation factor for incoming / outgoing vertices
-     * \return                         Error occured if any, otherwise cudaSuccess
+     * \return                         Error occurred if any, otherwise cudaSuccess
      */
     cudaError_t Init(
+        int    num_gpus            ,
         int    gpu_idx             ,
-        Csr<VertexId, Value, SizeT> 
-              *graph               )
+        int    num_vertex_associate,
+        int    num_value__associate,
+        Csr<VertexId, Value, SizeT>
+              *graph               ,
+        SizeT *num_in_nodes        ,
+        SizeT *num_out_nodes       ,
+        float  in_sizing = 1.0     )
     {
         cudaError_t retval         = cudaSuccess;
         // Copy input values
+        this->num_gpus             = num_gpus;
         this->gpu_idx              = gpu_idx;
         this->nodes                = graph->nodes;
-        
+        this->num_vertex_associate = num_vertex_associate;
+        this->num_value__associate = num_value__associate;
+
+        // Set device by index
+        if (retval = util::SetDevice(gpu_idx))  return retval;
+
+        // Allocate frontiers and scanned_edges
+        this->frontier_queues      = new util::DoubleBuffer<SizeT, VertexId, Value>[num_gpus + 1];
+        this->scanned_edges        = new util::Array1D<SizeT, SizeT>[num_gpus + 1];
+        for (int i = 0; i < num_gpus + 1; i++)
+        {
+            this->scanned_edges[i].SetName("scanned_edges[]");
+        }
+        if (retval = in_length[0].Allocate(num_gpus, util::HOST)) return retval;
+        if (retval = in_length[1].Allocate(num_gpus, util::HOST)) return retval;
+        if (retval = out_length  .Allocate(num_gpus, util::HOST | util::DEVICE)) return retval;
+        if (retval = vertex_associate_orgs.Allocate(num_vertex_associate, util::HOST | util::DEVICE)) return retval;
+        if (retval = value__associate_orgs.Allocate(num_value__associate, util::HOST | util::DEVICE)) return retval;
+
+        // Allocate / create event related variables
+        wait_marker .Allocate(num_gpus * 2);
+        stages      .Allocate(num_gpus * 2);
+        to_show     .Allocate(num_gpus * 2);
+        for (int gpu = 0; gpu < num_gpus; gpu++)
+        {
+            wait_marker[gpu] = 0;
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            events    [i].Allocate(num_gpus);
+            events_set[i].Allocate(num_gpus);
+            for (int gpu = 0; gpu < num_gpus; gpu++)
+            {
+                events    [i][gpu] = new cudaEvent_t[num_stages];
+                events_set[i][gpu] = new bool       [num_stages];
+                for (int stage = 0; stage < num_stages; stage++)
+                {
+                    if (retval = util::GRError(cudaEventCreate(&(events[i][gpu][stage])),
+                                               "cudaEventCreate failed.", __FILE__, __LINE__)) return retval;
+                    events_set[i][gpu][stage] = false;
+                }
+            }
+        }
+        for (int gpu = 0; gpu < num_gpus; gpu++)
+        {
+            for (int i = 0; i < 2; i++)
+                in_length[i][gpu] = 0;
+        }
+
+        if (num_gpus == 1) return retval;
+        // Create incoming buffer on device
+        keys_in             [0] = new util::Array1D<SizeT, VertexId > [num_gpus];
+        keys_in             [1] = new util::Array1D<SizeT, VertexId > [num_gpus];
+        vertex_associate_in [0] = new util::Array1D<SizeT, VertexId >*[num_gpus];
+        vertex_associate_in [1] = new util::Array1D<SizeT, VertexId >*[num_gpus];
+        vertex_associate_ins[0] = new util::Array1D<SizeT, VertexId*> [num_gpus];
+        vertex_associate_ins[1] = new util::Array1D<SizeT, VertexId*> [num_gpus];
+        value__associate_in [0] = new util::Array1D<SizeT, Value    >*[num_gpus];
+        value__associate_in [1] = new util::Array1D<SizeT, Value    >*[num_gpus];
+        value__associate_ins[0] = new util::Array1D<SizeT, Value   *> [num_gpus];
+        value__associate_ins[1] = new util::Array1D<SizeT, Value   *> [num_gpus];
+        for (int gpu = 0; gpu < num_gpus; gpu++)
+            for (int t = 0; t < 2; t++)
+            {
+                SizeT num_in_node = num_in_nodes[gpu] * in_sizing;
+                vertex_associate_in [t][gpu] = new util::Array1D<SizeT, VertexId>[num_vertex_associate];
+                for (int i = 0; i < num_vertex_associate; i++)
+                {
+                    vertex_associate_in [t][gpu][i].SetName("vertex_associate_in[]");
+                    if (gpu != 0) if (retval = vertex_associate_in[t][gpu][i].Allocate(num_in_node, util::DEVICE)) return retval;
+                }
+                value__associate_in [t][gpu] = new util::Array1D<SizeT, Value   >[num_value__associate];
+                for (int i = 0; i < num_value__associate; i++)
+                {
+                    value__associate_in[t][gpu][i].SetName("value__associate_ins[]");
+                    if (gpu != 0) if (retval = value__associate_in[t][gpu][i].Allocate(num_in_node, util::DEVICE)) return retval;
+                }
+
+                vertex_associate_ins[t][gpu].SetName("vertex_associate_ins");
+                if (retval = vertex_associate_ins[t][gpu].Allocate(num_vertex_associate, util::DEVICE | util::HOST)) return retval;
+                for (int i = 0; i < num_vertex_associate; i++)
+                    vertex_associate_ins[t][gpu][i] = vertex_associate_in[t][gpu][i].GetPointer(util::DEVICE);
+                if (retval = vertex_associate_ins[t][gpu].Move(util::HOST, util::DEVICE)) return retval;
+
+                value__associate_ins[t][gpu].SetName("value__associate_ins");
+                if (retval = value__associate_ins[t][gpu].Allocate(num_value__associate, util::DEVICE | util::HOST)) return retval;
+                for (int i = 0; i < num_value__associate; i++)
+                    value__associate_ins[t][gpu][i] = value__associate_in[t][gpu][i].GetPointer(util::DEVICE);
+                if (retval = value__associate_ins[t][gpu].Move(util::HOST, util::DEVICE)) return retval;
+
+                keys_in[t][gpu].SetName("keys_in");
+                if (gpu != 0) if (retval = keys_in[t][gpu].Allocate(num_in_node, util::DEVICE)) return retval;
+            }
+
+        // Allocate outgoing buffer on device
+        vertex_associate_out  = new util::Array1D<SizeT, VertexId >*[num_gpus];
+        vertex_associate_outs = new util::Array1D<SizeT, VertexId*> [num_gpus];
+        value__associate_out  = new util::Array1D<SizeT, Value    >*[num_gpus];
+        value__associate_outs = new util::Array1D<SizeT, Value*   > [num_gpus];
+        keys_marker           = new util::Array1D<SizeT, SizeT    > [num_gpus];
+        keys_out              = new util::Array1D<SizeT, VertexId > [num_gpus];
+        if (retval = vertex_associate_outss.Allocate(num_gpus, util::HOST | util::DEVICE)) return retval;
+        if (retval = value__associate_outss.Allocate(num_gpus, util::HOST | util::DEVICE)) return retval;
+        if (retval = keys_markers          .Allocate(num_gpus, util::HOST | util::DEVICE)) return retval;
+        if (retval = keys_outs             .Allocate(num_gpus, util::HOST | util::DEVICE)) return retval;
+        for (int gpu = 0; gpu < num_gpus; gpu++)
+        {
+            SizeT num_out_node = num_out_nodes[gpu] * in_sizing;
+            keys_marker[gpu].SetName("keys_marker[]");
+            if (retval = keys_marker[gpu].Allocate(num_out_nodes[num_gpus] * in_sizing, util::DEVICE)) return retval;
+            keys_markers[gpu] = keys_marker[gpu].GetPointer(util::DEVICE);
+            keys_out   [gpu].SetName("keys_out[]");
+            if (gpu != 0)
+            {
+                if (retval = keys_out[gpu].Allocate(num_out_node, util::DEVICE)) return retval;
+                keys_outs[gpu] = keys_out[gpu].GetPointer(util::DEVICE);
+            }
+
+            vertex_associate_out  [gpu] = new util::Array1D<SizeT, VertexId>[num_vertex_associate];
+            vertex_associate_outs [gpu].SetName("vertex_associate_outs[]");
+            if (retval = vertex_associate_outs[gpu].Allocate(num_vertex_associate, util::HOST | util::DEVICE)) return retval;
+            vertex_associate_outss[gpu] = vertex_associate_outs[gpu].GetPointer(util::DEVICE);
+            for (int i = 0; i < num_vertex_associate; i++)
+            {
+                vertex_associate_out[gpu][i].SetName("vertex_associate_out[][]");
+                if (gpu != 0)
+                    if (retval = vertex_associate_out[gpu][i].Allocate(num_out_node, util::DEVICE)) return retval;
+                vertex_associate_outs[gpu][i] = vertex_associate_out[gpu][i].GetPointer(util::DEVICE);
+            }
+            if (retval = vertex_associate_outs[gpu].Move(util::HOST, util::DEVICE)) return retval;
+
+            value__associate_out [gpu] = new util::Array1D<SizeT, Value>[num_value__associate];
+            value__associate_outs[gpu].SetName("value__associate_outs[]");
+            if (retval = value__associate_outs[gpu].Allocate(num_value__associate, util::HOST | util::DEVICE)) return retval;
+            value__associate_outss[gpu] = value__associate_outs[gpu].GetPointer(util::DEVICE);
+            for (int i = 0; i < num_value__associate; i++)
+            {
+                value__associate_out[gpu][i].SetName("value__associate_out[][]");
+                if (gpu != 0)
+                    if (retval = value__associate_out[gpu][i].Allocate(num_out_node, util::DEVICE)) return retval;
+                value__associate_outs[gpu][i] = value__associate_out[gpu][i].GetPointer(util::DEVICE);
+            }
+            if (retval = value__associate_outs[gpu].Move(util::HOST, util::DEVICE)) return retval;
+        }
+        if (retval = keys_markers          .Move(util::HOST, util::DEVICE)) return retval;
+        if (retval = vertex_associate_outss.Move(util::HOST, util::DEVICE)) return retval;
+        if (retval = value__associate_outss.Move(util::HOST, util::DEVICE)) return retval;
+
+        // Allocate make_out_array and expand_incoming array
+        if (retval = make_out_array.Allocate(
+             sizeof(SizeT*   ) * num_gpus +
+             sizeof(VertexId*) * num_gpus +
+             sizeof(VertexId*) * num_vertex_associate +
+             sizeof(Value*   ) * num_value__associate +
+             sizeof(VertexId*) * num_vertex_associate * num_gpus +
+             sizeof(Value*   ) * num_value__associate * num_gpus +
+             sizeof(SizeT    ) * num_gpus,
+             util::HOST | util::DEVICE)) return retval;
+        expand_incoming_array = new util::Array1D<SizeT, char>[num_gpus];
+        for (int i = 0; i < num_gpus; i++)
+        {
+            expand_incoming_array[i].SetName("expand_incoming_array[]");
+            if (retval = expand_incoming_array[i].Allocate(
+                             sizeof(Value*   ) * num_value__associate * 2 +
+                             sizeof(VertexId*) * num_vertex_associate * 2,
+                             util::HOST | util::DEVICE)) return retval;
+        }
+
         return retval;
     } // end Init(..)
 
-    /** 
+    /**
      * @brief Performs reset work needed for DataSliceBase. Must be called prior to each search
      *
      * @param[in] frontier_type      The frontier type (i.e., edge/vertex/mixed)
-     * @param[in] graph_slice        Pointer to the correspoding graph slice
+     * @param[in] graph_slice        Pointer to the corresponding graph slice
      * @param[in] queue_sizing       Sizing scaling factor for work queue allocation. 1.0 by default. Reserved for future use.
      * @param[in] _USE_DOUBLE_BUFFER Whether to use double buffer
      * @param[in] queue_sizing1      Scaling factor for frontier_queue1
      *
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */
-    cudaError_t Reset()
-    {   
+     cudaError_t Reset(
+        FrontierType frontier_type,
+        GraphSlice<SizeT, VertexId, Value>
+        *graph_slice,
+        double  queue_sizing       = 2.0,
+        bool    _USE_DOUBLE_BUFFER = false,
+        double  queue_sizing1      = -1.0,
+        bool    skip_scanned_edges = false)
+    {
         cudaError_t retval = cudaSuccess;
-        // TODO: move to somewhere else
-        /*for (int peer=0; peer<num_gpus; peer++)
-            out_length[peer] = 1;*/
+        SizeT max_queue_length = 0;
 
+        for (int peer = 0; peer < num_gpus; peer++)
+            out_length[peer] = 1;
+        if (queue_sizing1 < 0) queue_sizing1 = queue_sizing;
+
+        //
+        // Allocate frontier queues if necessary
+        //
+
+        // Determine frontier queue sizes
+        SizeT new_frontier_elements[2] = {0, 0};
+        // if (num_gpus > 1) util::cpu_mt::PrintCPUArray<int, SizeT>("in_counter", graph_slice->in_counter.GetPointer(util::HOST), num_gpus + 1, gpu_idx);
+
+        for (int peer = 0; peer < (num_gpus > 1 ? num_gpus + 1 : 1); peer++)
+        for (int i = 0; i < 2; i++)
+        {
+            double queue_sizing_ = i == 0 ? queue_sizing : queue_sizing1;
+            switch (frontier_type)
+            {
+            case VERTEX_FRONTIERS :
+                // O(n) ping-pong global vertex frontiers
+                new_frontier_elements[0] = ((num_gpus > 1) ? 
+                    graph_slice->in_counter[peer] : graph_slice->nodes) * queue_sizing_ + 2;
+                new_frontier_elements[1] = new_frontier_elements[0];
+                break;
+
+            case EDGE_FRONTIERS :
+                // O(m) ping-pong global edge frontiers
+                new_frontier_elements[0] = graph_slice->edges * queue_sizing_ + 2;
+                new_frontier_elements[1] = new_frontier_elements[0];
+                break;
+
+            case MIXED_FRONTIERS :
+                // O(n) global vertex frontier, O(m) global edge frontier
+                new_frontier_elements[0] = ((num_gpus > 1) ? 
+                    graph_slice->in_counter[peer] : graph_slice->nodes) * queue_sizing_ + 2;
+                new_frontier_elements[1] = graph_slice->edges * queue_sizing_ + 2;
+                break;
+            }
+
+            // if froniter_queue is not big enough
+            if (frontier_queues[peer].keys[i].GetSize() < new_frontier_elements[i])
+            {
+
+                // If previously allocated
+                if (frontier_queues[peer].keys[i].GetPointer(util::DEVICE) != NULL && 
+                    frontier_queues[peer].keys[i].GetSize() != 0)
+                {
+                    if (retval = frontier_queues[peer].keys[i].EnsureSize(
+                        new_frontier_elements[i])) 
+                        return retval;
+                }
+                else
+                {
+                    if (retval = frontier_queues[peer].keys[i].Allocate(
+                        new_frontier_elements[i], util::DEVICE)) 
+                        return retval;
+                }
+
+                // If use double buffer
+                if (_USE_DOUBLE_BUFFER)
+                {
+                    if (frontier_queues[peer].values[i].GetPointer(util::DEVICE) != NULL && 
+                        frontier_queues[peer].values[i].GetSize() != 0)
+                    {
+                        if (retval = frontier_queues[peer].values[i].EnsureSize(
+                            new_frontier_elements[i])) 
+                            return retval;
+                    }
+                    else
+                    {
+                        if (retval = frontier_queues[peer].values[i].Allocate(
+                            new_frontier_elements[i], util::DEVICE)) 
+                            return retval;
+                    }
+                }
+
+            } //end if
+
+            if (new_frontier_elements[0] > max_queue_length)
+                max_queue_length = new_frontier_elements[0];
+            if (new_frontier_elements[1] > max_queue_length)
+                max_queue_length = new_frontier_elements[1];
+
+            if (i == 1 || skip_scanned_edges) continue;
+
+            // Allocate scanned_edges
+            SizeT max_elements = new_frontier_elements[0];
+            if (new_frontier_elements[1] > max_elements) 
+                max_elements = new_frontier_elements[1];
+            if (scanned_edges[peer].GetSize() < max_elements)
+            {
+                if (scanned_edges[peer].GetPointer(util::DEVICE) != NULL && 
+                    scanned_edges[peer].GetSize() != 0)
+                {
+                    if (retval = scanned_edges[peer].EnsureSize(max_elements)) 
+                        return retval;
+                }
+                else
+                {
+                    if (retval = scanned_edges[peer].Allocate(max_elements, util::DEVICE)) 
+                        return retval;
+                }
+            }
+        }
+
+        if (TO_TRACK)
+        {
+            if (retval = org_checkpoint.Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_d_out     .Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_offset1   .Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_offset2   .Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_queue_idx .Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_block_idx .Allocate(max_queue_length, util::DEVICE))
+                return retval;
+            if (retval = org_thread_idx.Allocate(max_queue_length, util::DEVICE))
+                return retval;
+        }
         return retval;
     } // end Reset(...)
 
@@ -540,37 +991,41 @@ struct DataSliceBase
 /**
  * @brief Base test parameter structure
  */
-struct TestParameter_Base {
+struct TestParameter_Base
+{
 public:
+    json_spirit::mObject        info; // JSON information storing running stats
+    bool                     g_quiet; // Don't print anything unless specifically directed
     bool          g_quick           ; // Whether or not to skip CPU based computation
     bool          g_stream_from_host; // Whether or not to use stream data from host
     bool          g_undirected      ; // Whether or not to use undirected graph
     bool          instrumented      ; // Whether or not to collect instrumentation from kernels
-    bool          debug             ; // Whether or not to use debug mode  
+    bool          debug             ; // Whether or not to use debug mode
     bool          size_check        ; // Whether or not to enable size_check
     bool          mark_predecessors ; // Whether or not to mark src-distance vs. parent vertices
-    bool          enable_idempotence; // Whether or not to enable idempotence operation
-    void         *graph             ; // Pointer to the input CSR graph  
-    long long     src               ; // Source vertex ID
+    bool          enable_idempotence; // Whether or not to enable idempotent operation
+    void         *graph             ; // Pointer to the input CSR graph
+    long long    *src               ; // Source vertex IDs
     int           max_grid_size     ; // maximum grid size (0: leave it up to the enactor)
-    int           num_gpus          ; // Number of GPUs for multi-gpu enactor to use
+    int           num_gpus          ; // Number of GPUs for multi-GPU enactor to use
     double        max_queue_sizing  ; // Maximum size scaling factor for work queues (e.g., 1.0 creates n and m-element vertex and edge frontiers).
-    double        max_in_sizing     ; // Maximum size scaling factor for data communication  
-    void         *context           ; // GPU context array used by morden gpu
+    double        max_in_sizing     ; // Maximum size scaling factor for data communication
+    void         *context           ; // GPU context array used by MordernGPU
     std::string   partition_method  ; // Partition method
-    int          *gpu_idx           ; // Array of GPU indices 
+    int          *gpu_idx           ; // Array of GPU indices
     cudaStream_t *streams           ; // Array of GPU streams
     float         partition_factor  ; // Partition factor
     int           partition_seed    ; // Partition seed
     int           iterations        ; // Number of repeats
-    int           traversal_mode    ; // Load-balacned or Dynamic cooperative
+    int           traversal_mode    ; // Load-balanced or Dynamic cooperative
 
     /**
      * @brief TestParameter_Base constructor
      */
     TestParameter_Base()
-    {  
-        // Assign default values 
+    {
+        // Assign default values
+        g_quiet            = false;
         g_quick            = false;
         g_stream_from_host = false;
         g_undirected       = false;
@@ -578,7 +1033,7 @@ public:
         debug              = false;
         size_check         = true;
         graph              = NULL;
-        src                = -1; 
+        src                = NULL;
         max_grid_size      = 0;
         num_gpus           = 1;
         max_queue_sizing   = 1.0;
@@ -587,15 +1042,15 @@ public:
         partition_method   = "random";
         gpu_idx            = NULL;
         streams            = NULL;
-        partition_factor   = -1; 
+        partition_factor   = -1;
         partition_seed     = -1;
         iterations         = 1;
         traversal_mode     = -1;
-    } // end TestParameter_Base() 
-  
-   /**
-    * @brief TestParameter_Base destructor
-    */
+    }  // end TestParameter_Base()
+
+    /**
+     * @brief TestParameter_Base destructor
+     */
     ~TestParameter_Base()
     {
         // Clear pointers
@@ -604,6 +1059,47 @@ public:
         gpu_idx = NULL;
         streams = NULL;
     } // end ~TestParameter_Base()
+
+    /**
+     * @brief Utility function to print parameters for debugging
+     */
+    void PrintParameters()
+    {
+        using std::cout;
+        using std::endl;
+
+        cout << endl << "______________________________"       << endl;
+        cout << "==> Test Parameters:  "                       << endl;
+        cout << "g_quiet:            \t" << g_quiet            << endl;
+        cout << "g_quick:            \t" << g_quick            << endl;
+        cout << "g_stream_from_host: \t" << g_stream_from_host << endl;
+        cout << "g_undirected:       \t" << g_undirected       << endl;
+        cout << "instrumented:       \t" << instrumented       << endl;
+        cout << "debug:              \t" << debug              << endl;
+        cout << "size_check:         \t" << size_check         << endl;
+        cout << "mark_predecessors:  \t" << mark_predecessors  << endl;
+        cout << "enable_idempotence: \t" << enable_idempotence << endl;
+        cout << "src:                \t" << src                << endl;
+        cout << "max_grid_size:      \t" << max_grid_size      << endl;
+        cout << "num_gpus:           \t" << num_gpus           << endl;
+        cout << "max_queue_sizing:   \t" << max_queue_sizing   << endl;
+        cout << "max_in_sizing:      \t" << max_in_sizing      << endl;
+        cout << "partition_method:   \t" << partition_method   << endl;
+        cout << "partition_factor:   \t" << partition_factor   << endl;
+        cout << "partition_seed:     \t" << partition_seed     << endl;
+        cout << "iterations:         \t" << iterations         << endl;
+        cout << "traversal_mode:     \t" << traversal_mode     << endl;
+        cout << "------------------------------" << endl       << endl;
+    }
+
+    /**
+     * @brief Utility function to print collected info
+     */
+    void PrintInfo()
+    {
+        json_spirit::write_stream(json_spirit::mValue(info), std::cout,
+                                  json_spirit::pretty_print);
+    }
 
     /**
      * @brief Initialization process for TestParameter_Base
@@ -628,8 +1124,8 @@ public:
         args.GetCmdLineArgument("partition-seed"  , partition_seed  );
         args.GetCmdLineArgument("iteration-num"   , iterations      );
         if (args.CheckCmdLineFlag  ("partition-method"))
-            args.GetCmdLineArgument("partition-method",partition_method);
-    } // end Init(..)
+            args.GetCmdLineArgument("partition-method", partition_method);
+    }  // end Init(..)
 };
 
 /**
@@ -639,9 +1135,9 @@ public:
  * @tparam _SizeT               Type of unsigned integer to use for array indexing. (e.g., uint32)
  * @tparam _USE_DOUBLE_BUFFER   Boolean type parameter which defines whether to use double buffer
  * @tparam _MARK_PREDCESSORS    Whether or not to mark predecessors for vertices
- * @tparam _ENABLE_IDEMPOTENCE  Whether or not to use idempotence
+ * @tparam _ENABLE_IDEMPOTENCE  Whether or not to use idempotent
  * @tparam _USE_DOUBLE_BUFFER   Whether or not to use double buffer for frontier queues
- * @tparam _ENABLE_BACKWARD     Whether or not to use backward propergation
+ * @tparam _ENABLE_BACKWARD     Whether or not to use backward propagation
  * @tparam _KEEP_ORDER          Whether or not to keep vertices order after partitioning
  * @tparam _KEEP_NODE_NUM       Whether or not to keep vertex IDs after partitioning
  */
@@ -654,7 +1150,7 @@ template <
     bool        _USE_DOUBLE_BUFFER,
     bool        _ENABLE_BACKWARD = false,
     bool        _KEEP_ORDER      = false,
-    bool        _KEEP_NODE_NUM   = false>
+    bool        _KEEP_NODE_NUM   = false >
 struct ProblemBase
 {
     typedef _VertexId           VertexId;
@@ -677,27 +1173,27 @@ struct ProblemBase
 
     // Members
     int                 num_gpus              ; // Number of GPUs to be sliced over
-    int                 *gpu_idx              ; // GPU indices 
+    int                 *gpu_idx              ; // GPU indices
     SizeT               nodes                 ; // Number of vertices in the graph
     SizeT               edges                 ; // Number of edges in the graph
-    GraphSlice<SizeT, VertexId, Value>  
-                        **graph_slices        ; // Set of graph slices (one for each GPU)
-    Csr<VertexId,Value,SizeT> *sub_graphs     ; // Subgraphs for multi-gpu implementation
-    Csr<VertexId,Value,SizeT> *org_graph      ; // Original graph
-    PartitionerBase<VertexId,SizeT,Value,_ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        *partitioner          ; // Partitioner
+    GraphSlice<SizeT, VertexId, Value>
+    **graph_slices        ; // Set of graph slices (one for each GPU)
+    Csr<VertexId, Value, SizeT> *sub_graphs     ; // Subgraphs for multi-GPU implementation
+    Csr<VertexId, Value, SizeT> *org_graph      ; // Original graph
+    PartitionerBase<VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+    *partitioner          ; // Partitioner
     int                 **partition_tables    ; // Partition tables indicating which GPU the vertices are hosted
-    VertexId            **convertion_tables   ; // Convertions tables indicating vertex IDs on local / remote GPUs 
+    VertexId            **convertion_tables   ; // Conversions tables indicating vertex IDs on local / remote GPUs
     VertexId            **original_vertexes   ; // Vertex IDs in the original graph
     SizeT               **in_counter          ; // Number of in vertices
     SizeT               **out_offsets         ; // Out offsets for data communication
     SizeT               **out_counter         ; // Number of out vertices
-    SizeT               **backward_offsets    ; // Offsets for backward propergation
-    int                 **backward_partitions ; // Partition tables for backward propergation
-    VertexId            **backward_convertions; // Convertion tables for backward propergation
+    SizeT               **backward_offsets    ; // Offsets for backward propagation
+    int                 **backward_partitions ; // Partition tables for backward propagation
+    VertexId            **backward_convertions; // Conversion tables for backward propagation
 
     // Methods
-    
+
     /**
      * @brief ProblemBase default constructor
      */
@@ -721,7 +1217,7 @@ struct ProblemBase
         backward_convertions(NULL)
     {
     } // end ProblemBase()
-    
+
     /**
      * @brief ProblemBase default destructor to free all graph slices allocated.
      */
@@ -730,32 +1226,35 @@ struct ProblemBase
         // Cleanup graph slices on the heap
         for (int i = 0; i < num_gpus; ++i)
         {
-            delete   graph_slices     [i  ]; graph_slices     [i  ] = NULL;
+            delete graph_slices[i]; graph_slices[i] = NULL;
         }
         if (num_gpus > 1)
         {
-            delete   partitioner;           partitioner          = NULL;
+            delete partitioner; partitioner = NULL;
         }
         delete[] graph_slices; graph_slices = NULL;
         delete[] gpu_idx;      gpu_idx      = NULL;
-    } // end ~ProblemBase()
+    }  // end ~ProblemBase()
 
     /**
      * @brief Get the GPU index for a specified vertex id.
      *
      * @tparam VertexId Type of signed integer to use as vertex id
      * @param[in] vertex Vertex Id to search
-     * \return Index of the gpu that owns the neighbor list of the specified vertex
+     * \return Index of the GPU that owns the neighbor list of the specified vertex
      */
     template <typename VertexId>
     int GpuIndex(VertexId vertex)
     {
-        if (num_gpus <= 1) {
-            
+        if (num_gpus <= 1)
+        {
+
             // Special case for only one GPU, which may be set as with
             // an ordinal other than 0.
             return graph_slices[0]->index;
-        } else {
+        }
+        else
+        {
             return partition_tables[0][vertex];
         }
     }
@@ -771,9 +1270,12 @@ struct ProblemBase
     template <typename VertexId>
     VertexId GraphSliceRow(VertexId vertex)
     {
-        if (num_gpus <= 1) {
+        if (num_gpus <= 1)
+        {
             return vertex;
-        } else {
+        }
+        else
+        {
             return convertion_tables[0][vertex];
         }
     }
@@ -784,14 +1286,14 @@ struct ProblemBase
      * @param[in] stream_from_host Whether to stream data from host.
      * @param[in] graph            Pointer to the input CSR graph.
      * @param[in] inverse_graph    Pointer to the inversed input CSR graph.
-     * @param[in] num_gpus         Number of gpus
-     * @param[in] gpu_idx          Array of gpu indices
+     * @param[in] num_gpus         Number of GPUs
+     * @param[in] gpu_idx          Array of GPU indices
      * @param[in] partition_method Partition methods
      * @param[in] queue_sizing     Queue sizing
      * @param[in] partition_factor Partition factor
      * @param[in] partition_seed   Partition seed
      *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object indicates the success of all CUDA calls.
      */
     cudaError_t Init(
         bool        stream_from_host,
@@ -810,62 +1312,79 @@ struct ProblemBase
         this->num_gpus          = num_gpus;
         this->gpu_idx           = new int [num_gpus];
 
-        do {
-            if (num_gpus==1 && gpu_idx==NULL)
+        do
+        {
+            if (num_gpus == 1 && gpu_idx == NULL)
             {
-                if (retval = util::GRError(cudaGetDevice(&(this->gpu_idx[0])), "ProblemBase cudaGetDevice failed", __FILE__, __LINE__)) break;
-            } else {
-                for (int gpu=0;gpu<num_gpus;gpu++)
-                    this->gpu_idx[gpu]=gpu_idx[gpu];
+                if (retval = util::GRError(cudaGetDevice(&(this->gpu_idx[0])),
+                    "ProblemBase cudaGetDevice failed", __FILE__, __LINE__)) break;
+            }
+            else
+            {
+                for (int gpu = 0; gpu < num_gpus; gpu++)
+                    this->gpu_idx[gpu] = gpu_idx[gpu];
             }
 
             graph_slices = new GraphSlice<SizeT, VertexId, Value>*[num_gpus];
 
-            if (num_gpus >1)
+            if (num_gpus > 1)
             {
                 util::CpuTimer cpu_timer;
 
-                printf("partition_method = %s\n", partition_method.c_str());
+                //printf("partition_method = %s\n", partition_method.c_str());
                 if      (partition_method == "random")
+                {
                     partitioner = new rp::RandomPartitioner <
                         VertexId, SizeT, Value, 
                         _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
+                } 
                 else if (partition_method == "metis" )
+                {
                     partitioner = new metisp::MetisPartitioner <
                         VertexId, SizeT, Value, 
                         _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
+                }
                 else if (partition_method == "static")
+                {
                     partitioner = new sp::StaticPartitioner <
                         VertexId, SizeT, Value, 
                         _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
+                }
                 else if (partition_method == "cluster")
+                {
                     partitioner = new cp::ClusterPartitioner <
                         VertexId, SizeT, Value, 
                         _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
+                }
                 else if (partition_method == "biasrandom")
+                {
                     partitioner = new brp::BiasRandomPartitioner <
                         VertexId, SizeT, Value, 
                         _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
                         (*graph,num_gpus);
-                else util::GRError("partition_method invalid", __FILE__,__LINE__);
+                }
+                else 
+                {
+                    util::GRError("partition_method invalid", __FILE__,__LINE__);
+                }
                 cpu_timer.Start();
                 retval = partitioner->Partition(
-                    sub_graphs,
-                    partition_tables,
-                    convertion_tables,
-                    original_vertexes,
-                    in_counter,
-                    out_offsets,
-                    out_counter,
-                    backward_offsets,
-                    backward_partitions,
-                    backward_convertions,
-                    partition_factor,
-                    partition_seed);
+                     sub_graphs,
+                     partition_tables,
+                     convertion_tables,
+                     original_vertexes,
+                     in_counter,
+                     out_offsets,
+                     out_counter,
+                     backward_offsets,
+                     backward_partitions,
+                     backward_convertions,
+                     partition_factor,
+                     partition_seed);
                 cpu_timer.Stop();
                 printf("partition end. (%f ms)\n", cpu_timer.ElapsedMillis());fflush(stdout);
                 
@@ -902,8 +1421,10 @@ struct ProblemBase
                     out_offsets[gpu][peer]*=2;
                 }*/
                 if (retval) break;
-            } else {
-                sub_graphs=graph;
+            }
+            else
+            {
+                sub_graphs = graph;
             }
 
             /*if (TO_TRACK)
@@ -952,19 +1473,20 @@ struct ProblemBase
                 }
             }*/
 
-            for (int gpu=0;gpu<num_gpus;gpu++)
+            for (int gpu = 0; gpu < num_gpus; gpu++)
             {
                 graph_slices[gpu] = new GraphSlice<SizeT, VertexId, Value>(this->gpu_idx[gpu]);
                 if (num_gpus > 1)
                 {
                     if (_ENABLE_BACKWARD)
+                    {
                         retval = graph_slices[gpu]->Init(
                             stream_from_host,
                             num_gpus,
                             &(sub_graphs     [gpu]),
                             NULL,
-                            partition_tables    [gpu+1],
-                            convertion_tables   [gpu+1],
+                            partition_tables    [gpu + 1],
+                            convertion_tables   [gpu + 1],
                             original_vertexes   [gpu],
                             in_counter          [gpu],
                             out_offsets         [gpu],
@@ -972,14 +1494,16 @@ struct ProblemBase
                             backward_offsets    [gpu],
                             backward_partitions [gpu],
                             backward_convertions[gpu]);
-                    else  
+                    }
+                    else
+                    {
                         retval = graph_slices[gpu]->Init(
                             stream_from_host,
                             num_gpus,
                             &(sub_graphs[gpu]),
                             NULL,
-                            partition_tables [gpu+1],
-                            convertion_tables[gpu+1],
+                            partition_tables [gpu + 1],
+                            convertion_tables[gpu + 1],
                             original_vertexes[gpu],
                             in_counter       [gpu],
                             out_offsets      [gpu],
@@ -987,7 +1511,11 @@ struct ProblemBase
                             NULL,
                             NULL,
                             NULL);
-                } else retval = graph_slices[gpu]->Init(
+                    }
+                }
+                else
+                {
+                    retval = graph_slices[gpu]->Init(
                         stream_from_host,
                         num_gpus,
                         &(sub_graphs[gpu]),
@@ -1001,10 +1529,12 @@ struct ProblemBase
                         NULL,
                         NULL,
                         NULL);
-               if (retval) break;
-            }// end for (gpu)
+                }
+                if (retval) break;
+            }  // end for (gpu)
 
-       } while (0);
+        }
+        while (0);
 
         return retval;
     } // end Init(...)

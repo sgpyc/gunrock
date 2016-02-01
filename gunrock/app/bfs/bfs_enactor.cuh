@@ -14,6 +14,7 @@
 
 #pragma once
 
+//#include <thread>
 #include <gunrock/util/multithreading.cuh>
 #include <gunrock/util/multithread_utils.cuh>
 #include <gunrock/util/kernel_runtime_stats.cuh>
@@ -34,65 +35,88 @@ namespace gunrock {
 namespace app {
 namespace bfs {
 
-    template <typename Problem, bool INSTRUMENT, bool DEBUG, bool SIZE_CHECK> class Enactor;
-        
-    template <typename VertexId, typename SizeT, typename Value,
-        typename ExpandIncomingHandle>
-    __global__ void Expand_Incoming_BFS (
-        ExpandIncomingHandle* d_handle)
-        //int gpu_num,
-        //int thread_num)
+template <typename Problem, bool INSTRUMENT, bool DEBUG, bool SIZE_CHECK> class Enactor;
+ 
+/*
+ * @brief Expand incoming function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ * @tparam Value
+ * @tparam NUM_VERTEX_ASSOCIATES
+ * @tparam NUM_VALUE__ASSOCIATES
+ *
+ * @param[in] num_elements
+ * @param[in] keys_in
+ * @param[in] keys_out
+ * @param[in] array_size
+ * @param[in] array
+ */   
+template <typename VertexId, typename SizeT, typename Value,
+    typename ExpandIncomingHandle>
+__global__ void Expand_Incoming_BFS (
+    ExpandIncomingHandle* d_handle)
+    //int gpu_num,
+    //int thread_num)
+{
+    __shared__ ExpandIncomingHandle s_handle;
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
+    SizeT x = threadIdx.x;
+    VertexId key = 0, label = 0;
+
+    while (x<sizeof(ExpandIncomingHandle))
     {
-        __shared__ ExpandIncomingHandle s_handle;
-        const SizeT STRIDE = gridDim.x * blockDim.x;
-        SizeT x = threadIdx.x;
-        VertexId key = 0, label = 0;
+        ((char*)&s_handle)[x] = ((char*)d_handle)[x];
+        x += blockDim.x;
+    }
+    __syncthreads();
 
-        while (x<sizeof(ExpandIncomingHandle))
+    x = (SizeT)blockIdx.x * blockDim.x + threadIdx.x;
+    while ( x < s_handle.num_elements)
+    {
+        key   = s_handle.keys_in      [x];
+        label = s_handle.vertex_ins[0][x];
+
+        if (key < 0 || key >= s_handle.num_nodes || label < 0)
         {
-            ((char*)&s_handle)[x] = ((char*)d_handle)[x];
-            x += blockDim.x;
+            printf("%d\t %s: x, key, label = %d, %d, %d\n", 
+                s_handle.gpu_num, __func__, x, key, label);
+            s_handle.keys_out[x] = -1;
+            x += STRIDE;
+            continue;
         }
-        __syncthreads();
-
-        x = blockIdx.x * blockDim.x + threadIdx.x;
-        while ( x < s_handle.num_elements)
+        
+        Value old_label = atomicCAS(s_handle.vertex_orgs[0] + key, -1, label);
+        if (old_label != -1)
         {
-            key   = s_handle.keys_in      [x];
-            label = s_handle.vertex_ins[0][x];
-
-            if (key < 0 || key >= s_handle.num_nodes || label < 0)
+            old_label = atomicMin(s_handle.vertex_orgs[0] + key, label);
+            if (old_label <= label)
             {
-                printf("%d\t %s: x, key, label = %d, %d, %d\n", 
-                    s_handle.gpu_num, __func__, x, key, label);
                 s_handle.keys_out[x] = -1;
                 x += STRIDE;
                 continue;
             }
-            
-            Value old_label = s_handle.vertex_orgs[0][key];
-            if (atomicCAS(s_handle.vertex_orgs[0] + key, -1, label)!= -1)
-            {
-                if (atomicMin(s_handle.vertex_orgs[0] + key, label) <= label)
-                {
-                    s_handle.keys_out[x]=-1;
-                    x+=STRIDE;
-                    continue;
-                }
-            }
-            if (TO_TRACK && to_track(s_handle.gpu_num, key))
-            {
-                printf("%d\t %s: label[%d] (%d) -> (%d)\n", 
-                    s_handle.gpu_num, __func__, key, old_label, label);
-            }
-
-            s_handle.keys_out[x]=key;
-            if (s_handle.num_vertex_associates == 2) 
-                s_handle.vertex_orgs[1][key]=s_handle.vertex_ins[1][x];
-            x+=STRIDE;
         }
-    }
+        if (TO_TRACK && to_track(s_handle.gpu_num, key))
+        {
+            printf("%d\t %s: label[%d] (%d) -> (%d)\n", 
+                s_handle.gpu_num, __func__, key, old_label, label);
+        }
 
+        s_handle.keys_out[x]=key;
+        if (s_handle.num_vertex_associates == 2) // && s_handle.vertex_orgs[0][key] == label 
+            s_handle.vertex_orgs[1][key] = s_handle.vertex_ins[1][x];
+        x+=STRIDE;
+    }
+}
+
+/*
+ * @brief Iteration structure derived from IterationBase.
+ *
+ * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
+ * @tparam FilterKernelPolicy Kernel policy for filter operator.
+ * @tparam Enactor Enactor we process on.
+ */
 template<
     typename AdvanceKernelPolicy,
     typename FilterKernelPolicy,
@@ -128,6 +152,22 @@ struct BFSIteration : public IterationBase <
         return retval;
     }
 
+     /*
+     * @brief SubQueue_Core function.
+     *
+     * @param[in] thread_num Number of threads.
+     * @param[in] peer_ Peer GPU index.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] enactor_stats Pointer to the enactor statistics.
+     * @param[in] data_slice Pointer to the data slice we process on.
+     * @param[in] d_data_slice Pointer to the data slice on the device.
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     * @param[in] work_progress Pointer to the work progress class.
+     * @param[in] context CudaContext for ModernGPU API.
+     * @param[in] stream CUDA stream.
+     */
     cudaError_t SubQueue_Core()
     {
         cudaError_t   retval         = cudaSuccess;
@@ -145,29 +185,24 @@ struct BFSIteration : public IterationBase <
         cudaStream_t  stream         = this->stream;
         
         frontier_attribute->queue_reset = true;
-        //if (enactor_stats -> iteration == 267)
-        {
-            //frontier_queue -> keys[frontier_attribute -> selector].EnsureSize(
-            //    frontier_attribute -> queue_length);
-            //frontier_queue -> keys[frontier_attribute -> selector].Move_In(
-            //    util::DEVICE, util::DEVICE, this->d_keys_in,
-            //    frontier_attribute -> queue_length, 0, 0, stream);
-            //util::cpu_mt::PrintGPUArray("key0", this->d_keys_in, frontier_attribute -> queue_length, 
-            //    this-> gpu_num, enactor_stats -> iteration, this -> stream_num, stream);
-            //util::cpu_mt::PrintGPUArray("val0", h_data_slice -> labels.GetPointer(util::DEVICE), 
-            //    graph_slice -> nodes, this -> gpu_num, 
-            //    enactor_stats->iteration, this->stream_num, stream);
-        }
+        enactor_stats     ->nodes_queued[0] += frontier_attribute->queue_length;
 
-        util::MemsetKernel<<<256, 256, 0, stream>>>(
-            frontier_queue -> keys[frontier_attribute -> selector^1].GetPointer(util::DEVICE),
-            (VertexId)-2,
-            frontier_queue -> keys[frontier_attribute -> selector^1].GetSize());
-        Check_Exist<<<enactor_stats -> filter_grid_size,
-            FilterKernelPolicy::THREADS, 0, stream>>>(
-            frontier_attribute -> queue_length,
-            this->gpu_num, 4, enactor_stats -> iteration,
-            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+        if (TO_TRACK)
+        {
+            //printf("%d\t %lld\t %d SubQueue_Core queue_length = %lld\n",
+            //    thread_num, (long long)enactor_stats->iteration, peer_,
+            //    (long long)frontier_attribute -> queue_length);
+            //fflush(stdout);
+            util::MemsetKernel<<<256, 256, 0, stream>>>(
+                frontier_queue -> keys[frontier_attribute -> selector^1].GetPointer(util::DEVICE),
+                (VertexId)-2,
+                frontier_queue -> keys[frontier_attribute -> selector^1].GetSize());
+            Check_Exist<<<enactor_stats -> filter_grid_size,
+                FilterKernelPolicy::THREADS, 0, stream>>>(
+                frontier_attribute -> queue_length,
+                this->gpu_num, 4, enactor_stats -> iteration,
+                frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+        }
 
         // Edge Map
         //this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
@@ -196,6 +231,7 @@ struct BFSIteration : public IterationBase <
             stream,
             gunrock::oprtr::advance::V2V,
             false,
+            false,
             false);
         //this -> ShowDebugInfo("Advance end", enactor_stats->iteration);
 
@@ -203,48 +239,48 @@ struct BFSIteration : public IterationBase <
         frontier_attribute -> queue_reset = false;
         frontier_attribute -> queue_index++;
         frontier_attribute -> selector ^= 1;
-        enactor_stats      -> Accumulate(
-            work_progress  ->template GetQueueLengthPointer<unsigned int,SizeT>(
+        enactor_stats      -> AccumulateEdges(
+            work_progress  -> GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
-        
-        /*if ( enactor_stats -> iteration == 267)
+
+        if (TO_TRACK)
         {
-            work_progress -> GetQueueLength(frontier_attribute -> queue_index, frontier_attribute -> queue_length, false, stream, true);
-            if (retval = cudaStreamSynchronize(stream)) return retval;
-            //sprintf(this -> mssg, 
-            //    "keys1.length = %d", frontier_attribute->queue_length);
-            //this -> ShowDebugInfo(this -> mssg, enactor_stats -> iteration);
-            util::cpu_mt::PrintGPUArray("keys1",
-                frontier_queue -> keys[frontier_attribute->selector].GetPointer(util::DEVICE), 
-                frontier_attribute->queue_length, this->gpu_num, 
-                enactor_stats -> iteration, this-> stream_num, stream);
-        }*/
-        //return retval;
+            util::Check_Value<<<1,1,0,stream>>>(
+                work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                    frontier_attribute->queue_index),
+                this->gpu_num, 3, enactor_stats -> iteration);
 
-        Check_Value<<<1,1,0,stream>>>(
-            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
-                frontier_attribute->queue_index),
-            this->gpu_num, 5, enactor_stats -> iteration);
+            util::Check_Exist_<<<enactor_stats -> filter_grid_size,
+                FilterKernelPolicy::THREADS, 0, stream>>>(
+                work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                    frontier_attribute->queue_index),
+                this->gpu_num, 3, enactor_stats -> iteration,
+                frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
 
-        Check_Exist_<<<enactor_stats -> filter_grid_size,
-            FilterKernelPolicy::THREADS, 0, stream>>>(
-            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
-                frontier_attribute->queue_index),
-            this->gpu_num, 3, enactor_stats -> iteration,
-            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
-        
-        util::MemsetCASKernel<<<256, 256, 0, stream>>>(
-            frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
-            -2, -1,
-            work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
-                frontier_attribute->queue_index));
+            //util::Verify_Value_<<<256, 256, 0, stream>>>(
+            //    data_slice -> gpu_idx, 3, 
+            //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+            //        frontier_attribute -> queue_index),
+            //    enactor_stats -> iteration,
+            //    frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
+            //    data_slice -> labels.GetPointer(util::DEVICE),
+            //    enactor_stats -> iteration+1);
+           
+            util::MemsetCASKernel<<<256, 256, 0, stream>>>(
+                frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
+                -2, -1,
+                work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+                    frontier_attribute->queue_index));
+        }
  
         // Filter
         //this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
-        gunrock::oprtr::filter::Kernel
-            <FilterKernelPolicy, Problem, BfsFunctor>
-            <<< enactor_stats->filter_grid_size, 
-                FilterKernelPolicy::THREADS, 0, stream>>>(
+        gunrock::oprtr::filter::LaunchKernel
+            <FilterKernelPolicy, Problem, BfsFunctor>(
+            enactor_stats->filter_grid_size, 
+            FilterKernelPolicy::THREADS, 
+            0, 
+            stream,
             enactor_stats -> iteration+1,
             frontier_attribute -> queue_reset,
             frontier_attribute -> queue_index,
@@ -263,13 +299,27 @@ struct BFSIteration : public IterationBase <
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
 
-        //Check_Exist_<<<enactor_stats -> filter_grid_size,
-        //    FilterKernelPolicy::THREADS, 0, stream>>>(
-        //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
-        //        frontier_attribute->queue_index),
-        //    this->gpu_num, 4, enactor_stats -> iteration,
-        //    frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
- 
+        if (TO_TRACK)
+        {
+            //util::Check_Value<<<1,1,0,stream>>>(
+            //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+            //        frontier_attribute->queue_index),
+            //    data_slice->gpu_idx, 4, enactor_stats -> iteration);
+            //uil::Check_Exist_<<<enactor_stats -> filter_grid_size,
+            //    FilterKernelPolicy::THREADS, 0, stream>>>(
+            //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+            //        frontier_attribute->queue_index),
+            //    this->gpu_num, 4, enactor_stats -> iteration,
+            //    frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE));
+            //util::Verify_Value_<<<256, 256, 0, stream>>>(
+            //    data_slice -> gpu_idx, 4, 
+            //    work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
+            //        frontier_attribute -> queue_index),
+            //    enactor_stats -> iteration,
+            //    frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
+            //    data_slice -> labels.GetPointer(util::DEVICE),
+            //    (Value)enactor_stats -> iteration+1);
+        }   
 
         /*if ( enactor_stats -> iteration == 267)
         {
@@ -286,6 +336,23 @@ struct BFSIteration : public IterationBase <
         return retval;
     }
 
+    /*
+     * @brief Expand incoming function.
+     *
+     * @tparam NUM_VERTEX_ASSOCIATES
+     * @tparam NUM_VALUE__ASSOCIATES
+     *
+     * @param[in] grid_size
+     * @param[in] block_size
+     * @param[in] shared_size
+     * @param[in] stream
+     * @param[in] num_elements
+     * @param[in] keys_in
+     * @param[in] keys_out
+     * @param[in] array_size
+     * @param[in] array
+     * @param[in] data_slice
+     */
     //template <int NUM_VERTEX_ASSOCIATES, int NUM_VALUE__ASSOCIATES>
     cudaError_t Expand_Incoming()
     /*          int             grid_size,
@@ -316,6 +383,23 @@ struct BFSIteration : public IterationBase <
         return retval;
     }
 
+    /*
+     * @brief Compute output queue length function.
+     *
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] d_offsets Pointer to the offsets.
+     * @param[in] d_indices Pointer to the indices.
+     * @param[in] d_in_key_queue Pointer to the input mapping queue.
+     * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+     * @param[in] max_in Maximum input queue size.
+     * @param[in] max_out Maximum output queue size.
+     * @param[in] context CudaContext for ModernGPU API.
+     * @param[in] stream CUDA stream.
+     * @param[in] ADVANCE_TYPE Advance kernel mode.
+     * @param[in] express Whether or not enable express mode.
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
+     */
     cudaError_t Compute_OutputLength()
         /*FrontierAttribute<SizeT> *frontier_attribute,
         SizeT       *d_offsets,
@@ -328,19 +412,29 @@ struct BFSIteration : public IterationBase <
         cudaStream_t                   stream,
         gunrock::oprtr::advance::TYPE  ADVANCE_TYPE,
         bool                           express = false)*/
+      //bool                            in_inv = false,
+      //bool                            out_inv = false)
     {
         cudaError_t retval = cudaSuccess;
+        //printf("SIZE_CHECK = %s\n", Enactor::SIZE_CHECK ? "true" : "false");
         bool over_sized = false;
-        if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
-            "scanned_edges", this->frontier_attribute->queue_length, 
-            this-> scanned_edge, over_sized, -1, -1, -1, false)) 
+        if (!Enactor::SIZE_CHECK &&
+            (AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_FORWARD ||
+             AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_BACKWARD))
+        {
             return retval;
-        //printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, "
-        //    "d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %p\n",
-        //    this-> frontier_attribute, this->d_offsets, this->d_indices, 
-        //    this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
-        //    this -> max_in, this-> max_out, this->stream);
-        //fflush(stdout);
+
+        } else {
+            if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
+                "scanned_edges", this->frontier_attribute->queue_length, 
+                this-> scanned_edge, over_sized, -1, -1, -1, false)) 
+                return retval;
+            //printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, "
+            //    "d_keys_in = %p, scanned_edge = %p, max_in = %d, max_out = %d, stream = %p\n",
+            //    this-> frontier_attribute, this->d_offsets, this->d_indices, 
+            //    this->d_keys_in, this->scanned_edge ->GetPointer(util::DEVICE),
+            //    this -> max_in, this-> max_out, this->stream);
+            //fflush(stdout);
 
         retval = gunrock::oprtr::advance::ComputeOutputLength
             <AdvanceKernelPolicy, Problem, BfsFunctor>(
@@ -354,10 +448,23 @@ struct BFSIteration : public IterationBase <
             this-> context[0],
             this-> stream,
             this-> advance_type,
-            this-> express);
+            this-> express/*
+            in_inv,
+            out_inv*/);
         return retval;
     }
 
+    /*
+     * @brief Check frontier queue size function.
+     *
+     * @param[in] thread_num Number of threads.
+     * @param[in] peer_ Peer GPU index.
+     * @param[in] request_length Request frontier queue length.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] enactor_stats Pointer to the enactor statistics.
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     */
     cudaError_t Check_Queue_Size()
     {    
         cudaError_t   retval             = cudaSuccess;
@@ -372,11 +479,11 @@ struct BFSIteration : public IterationBase <
         int           selector           = frontier_attribute->selector;
         long long     iteration          = enactor_stats -> iteration;
 
-        //if (Enactor::DEBUG)
+        if (Enactor::DEBUG)
         {
-            sprintf(this -> mssg, "queue_size = %d, request_length = %d",
-                frontier_queue -> keys[selector^1].GetSize(),
-                request_length);
+            sprintf(this -> mssg, "queue_size = %lld, request_length = %lld",
+                (long long)frontier_queue -> keys[selector^1].GetSize(),
+                (long long)request_length);
             this -> ShowDebugInfo(this -> mssg, iteration, stream_num);
         }
 
@@ -406,12 +513,37 @@ struct BFSIteration : public IterationBase <
         return retval;
     }    
 
+    /*
+     * @brief Iteration_Update_Preds function.
+     *
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     * @param[in] data_slice Pointer to the data slice we process on.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] num_elements Number of elements.
+     * @param[in] stream CUDA stream.
+     */
+    static void Iteration_Update_Preds(
+        GraphSlice                    *graph_slice,
+        DataSlice                     *data_slice,
+        FrontierAttribute<SizeT>
+                                      *frontier_attribute,
+        util::DoubleBuffer<SizeT, VertexId, Value>
+                                      *frontier_queue,
+        SizeT                          num_elements,
+        cudaStream_t                   stream)
+    {
+        return ;
+    }
 };
 
 /**
- * @brief BFS problem enactor class.
+ * @brief Problem enactor class.
  *
- * @tparam INSTRUMWENT Boolean type to show whether or not to collect per-CTA clock-count statistics
+ * @tparam _Problem Problem type we process on.
+ * @tparam _INSTRUMENT Whether or not to collect per-CTA clock-count stats.
+ * @tparam _DEBUG Whether or not to enable debug mode.
+ * @tparam _SIZE_CHECK Whether or not to enable size check.
  */
 template <
     typename _Problem, 
@@ -477,52 +609,18 @@ public:
     }
 
     /**
-     * \addtogroup PublicInterface
-     * @{
-     */
-
-    /**
-     * @brief Obtain statistics about the last BFS search enacted.
+     * @brief Initialize the problem.
      *
-     * @param[out] total_queued Total queued elements in BFS kernel running.
-     * @param[out] search_depth Search depth of BFS algorithm.
-     * @param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
+     * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
+     * @tparam FilterKernelPolicy Kernel policy for filter operator.
+     *
+     * @param[in] context CudaContext pointer for ModernGPU API.
+     * @param[in] problem Pointer to Problem object.
+     * @param[in] max_grid_size Maximum grid size for kernel calls.
+     * @param[in] size_check Whether or not to enable size check.
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
-    void GetStatistics(
-        long long &total_queued,
-        SizeT     &search_depth,
-        double    &avg_duty)
-    {
-        unsigned long long total_lifetimes=0;
-        unsigned long long total_runtimes =0;
-        total_queued = 0;
-        search_depth = 0;
-        EnactorSlice<Enactor> *enactor_slices 
-            = (EnactorSlice<Enactor>*) this->enactor_slices;
-        for (int gpu=0; gpu<this->num_gpus; gpu++)
-        {
-            if (this->num_gpus!=1)
-                if (util::SetDevice(this->gpu_idx[gpu])) return;
-            cudaThreadSynchronize();
-
-            for (int stream=0; stream< this->num_subq__streams + this->num_fullq_stream ; stream++)
-            {
-                EnactorStats *enactor_stats_ = (stream < this->num_subq__streams) ?
-                    enactor_slices[gpu].subq__enactor_statses + stream :
-                    enactor_slices[gpu].fullq_enactor_stats   + stream - this->num_subq__streams;
-                total_queued += enactor_stats_ -> total_queued[0];
-                enactor_stats_ -> total_queued.Move(util::DEVICE, util::HOST);
-                total_queued += enactor_stats_ -> total_queued[0];
-                if (enactor_stats_ -> iteration > search_depth) 
-                    search_depth = enactor_stats_ -> iteration;
-                total_lifetimes += enactor_stats_ -> total_lifetimes;
-                total_runtimes  += enactor_stats_ -> total_runtimes;
-            }
-        }
-        avg_duty = (total_lifetimes >0) ?
-            double(total_runtimes) / total_lifetimes : 0.0;
-    }
-
     template<
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy>
@@ -612,6 +710,11 @@ public:
         return retval;
     }
 
+    /**
+     * @brief Reset enactor
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
+     */
     template <typename AdvanceKernelPolicy, typename FilterKernelPolicy>
     cudaError_t ResetBFS(
         VertexId src,
@@ -696,14 +799,10 @@ public:
      *
      * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
      * @tparam FilterKernelPolicy Kernel policy for filter operator.
-     * @tparam BFSProblem BFS Problem type.
      *
-     * @param[in] context CudaContext pointer for moderngpu APIs
-     * @param[in] problem BFSProblem object.
-     * @param[in] src Source node for BFS.
-     * @param[in] max_grid_size Max grid size for BFS kernel calls.
+     * @param[in] src Source node to start primitive.
      *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     template<
         typename AdvanceKernelPolicy,
@@ -832,7 +931,7 @@ public:
         32,                                 // WARP_GATHER_THRESHOLD
         128 * 4,                            // CTA_GATHER_THRESHOLD
         7,                                  // LOG_SCHEDULE_GRANULARITY
-        gunrock::oprtr::advance::LB>
+        gunrock::oprtr::advance::LB_LIGHT>
     LBAdvanceKernelPolicy_IDEM;
 
     typedef gunrock::oprtr::advance::KernelPolicy<
@@ -849,7 +948,7 @@ public:
         32,                                 // WARP_GATHER_THRESHOLD
         128 * 4,                            // CTA_GATHER_THRESHOLD
         7,                                  // LOG_SCHEDULE_GRANULARITY
-        gunrock::oprtr::advance::LB>
+        gunrock::oprtr::advance::LB_LIGHT>
     LBAdvanceKernelPolicy;
 
     /**
@@ -858,31 +957,36 @@ public:
      */
 
     /**
-     * @brief BFS Enact kernel entry.
+     * @brief SSSP Enact kernel entry.
      *
-     * @tparam BFSProblem BFS Problem type. @see BFSProblem
+     * @param[in] src Source node to start primitive.
+     * @param[in] traversal_mode Load-balanced or Dynamic cooperative.
      *
-     * @param[in] problem Pointer to BFSProblem object.
-     * @param[in] src Source node for BFS.
-     * @param[in] max_grid_size Max grid size for BFS kernel calls.
-     *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Enact(VertexId    src)
     {
         int min_sm_version = -1;
-        for (int i=0;i<this->num_gpus;i++)
-            if (min_sm_version == -1 || this->cuda_props[i].device_sm_version < min_sm_version)
+        for (int i = 0; i < this->num_gpus; i++)
+        {
+            if (min_sm_version == -1 ||
+                this->cuda_props[i].device_sm_version < min_sm_version)
+            {
                 min_sm_version = this->cuda_props[i].device_sm_version;
+            }
+        }
 
         if (min_sm_version >= 300)
         {
-            if (Problem::ENABLE_IDEMPOTENCE) {
+            if (Problem::ENABLE_IDEMPOTENCE)
+            {
                 if (traversal_mode == 0)
                     return EnactBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
                 else
                     return EnactBFS<ForwardAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(src);
-            } else {
+            }
+            else
+            {
                 if (traversal_mode == 0)
                     return EnactBFS<     LBAdvanceKernelPolicy     , FilterKernelPolicy>(src);
                 else
@@ -891,29 +995,22 @@ public:
         }
 
         //to reduce compile time, get rid of other architecture for now
-        //TODO: add all the kernelpolicy settings for all archs
+        //TODO: add all the kernel policy settings for all archs
         printf("Not yet tuned for this architecture\n");
         return cudaErrorInvalidDeviceFunction;
 
     }
 
     /**
-     * \addtogroup PublicInterface
-     * @{
-     */
-
-    /**
      * @brief BFS Enact kernel entry.
      *
-     * @tparam BFSProblem BFS Problem type. @see BFSProblem
+     * @param[in] context CudaContext pointer for ModernGPU API.
+     * @param[in] problem Pointer to Problem object.
+     * @param[in] max_grid_size Maximum grid size for kernel calls.
+     * @param[in] size_check Whether or not to enable size check.
+     * @param[in] traversal_mode Load-balanced or Dynamic cooperative.
      *
-     * @param[in] context CudaContext pointer for moderngpu APIs
-     * @param[in] problem Pointer to BFSProblem object.
-     * @param[in] src Source node for BFS.
-     * @param[in] max_grid_size Max grid size for BFS kernel calls.
-     * @param[in] traversal_mode Traversal Mode for advance operator: Load-balanced or Dynamic cooperative
-     *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Init(
         Problem     *problem,
@@ -924,11 +1021,18 @@ public:
         this -> traversal_mode = traversal_mode;
 
         for (int i=0;i<this->num_gpus;i++)
-            if (min_sm_version == -1 || this->cuda_props[i].device_sm_version < min_sm_version)
+        {
+            if (min_sm_version == -1 ||
+                this->cuda_props[i].device_sm_version < min_sm_version)
+            {
                 min_sm_version = this->cuda_props[i].device_sm_version;
+            }
+        }
 
-        if (min_sm_version >= 300) {
-            if (Problem::ENABLE_IDEMPOTENCE) {
+        if (min_sm_version >= 300)
+        {
+            if (Problem::ENABLE_IDEMPOTENCE)
+            {
                 if (traversal_mode == 0)
                     return InitBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(
                             problem, max_grid_size);
@@ -946,7 +1050,7 @@ public:
         }
 
         //to reduce compile time, get rid of other architecture for now
-        //TODO: add all the kernelpolicy settings for all archs
+        //TODO: add all the kernel policy settings for all archs
         printf("Not yet tuned for this architecture\n");
         return cudaErrorInvalidDeviceFunction;
 
@@ -1023,9 +1127,9 @@ public:
     /** @} */
 };
 
-} // namespace bfs
-} // namespace app
-} // namespace gunrock
+}  // namespace bfs
+}  // namespace app
+}  // namespace gunrock
 
 // Leave this at the end of the file
 // Local Variables:

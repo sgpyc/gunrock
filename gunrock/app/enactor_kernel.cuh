@@ -17,6 +17,15 @@
 namespace gunrock {
 namespace app {
 
+/*
+ * @brief Accumulate number function.
+ *
+ * @tparam SizeT1
+ * @tparam SizeT2
+ *
+ * @param[in] num
+ * @param[in] sum
+ */
 template <typename SizeT1, typename SizeT2>
 __global__ void Accumulate_Num (
     SizeT1 *num,
@@ -25,6 +34,17 @@ __global__ void Accumulate_Num (
     sum[0]+=num[0];
 }
 
+/*
+ * @brief Copy predecessor function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ *
+ * @param[in] num_elements Number of elements in the array.
+ * @param[in] keys Pointer to the key array.
+ * @param[in] in_preds Pointer to the input predecessor array.
+ * @param[out] out_preds Pointer to the output predecessor array.
+ */
 template <typename VertexId, typename SizeT>
 __global__ void Copy_Preds (
     const SizeT     num_elements,
@@ -32,8 +52,8 @@ __global__ void Copy_Preds (
     const VertexId* in_preds,
           VertexId* out_preds)
 {
-    const SizeT STRIDE = gridDim.x * blockDim.x;
-    VertexId x = blockIdx.x*blockDim.x+threadIdx.x;
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
+    VertexId x = (SizeT)blockIdx.x*blockDim.x+threadIdx.x;
     VertexId t;
 
     while (x<num_elements)
@@ -44,6 +64,19 @@ __global__ void Copy_Preds (
     }
 }
 
+/*
+ * @brief Update predecessor function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ *
+ * @param[in] num_elements Number of elements in the array.
+ * @param[in] nodes Number of nodes in graph.
+ * @param[in] keys Pointer to the key array.
+ * @param[in] org_vertexs
+ * @param[in] in_preds Pointer to the input predecessor array.
+ * @param[out] out_preds Pointer to the output predecessor array.
+ */
 template <typename VertexId, typename SizeT>
 __global__ void Update_Preds (
     const SizeT     num_elements,
@@ -53,8 +86,8 @@ __global__ void Update_Preds (
     const VertexId* in_preds,
           VertexId* out_preds)
 {
-    const SizeT STRIDE = gridDim.x * blockDim.x;
-    VertexId x = blockIdx.x*blockDim.x + threadIdx.x;
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
+    VertexId x = (SizeT)blockIdx.x*blockDim.x + threadIdx.x;
     VertexId t, p;
 
     while (x<num_elements)
@@ -66,6 +99,18 @@ __global__ void Update_Preds (
     }
 }
 
+/*
+ * @brief Assign marker function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ *
+ * @param[in] num_elements Number of elements in the array.
+ * @param[in] num_gpus Number of GPUs used for testing.
+ * @param[in] keys_in Pointer to the key array.
+ * @param[in] partition_table Pointer to the partition table.
+ * @param[out] marker
+ */
 template <typename VertexId, typename SizeT, typename MakeOutHandle>
 __global__ void Assign_Marker(
     const typename MakeOutHandle::Direction direction,
@@ -79,9 +124,11 @@ __global__ void Assign_Marker(
     const int*      const  backward_partition,
           SizeT**          markers)
 {
-    extern __shared__ SizeT* s_marker[];
-    const SizeT STRIDE = gridDim.x * blockDim.x;
-    SizeT x = blockIdx.x * blockDim.x + threadIdx.x;
+    //extern __shared__ SizeT* s_marker[];
+    SharedMemory<SizeT*> smem;
+    SizeT** s_marker = smem.getPointer();
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
+    SizeT x = (SizeT)blockIdx.x * blockDim.x + threadIdx.x;
     VertexId key = 0;
     int gpu = 0;
 
@@ -126,6 +173,23 @@ __global__ void Assign_Marker(
     }
 }
 
+/*
+ * @brief Make output function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ * @tparam Value
+ * @tparam num_vertex_associates
+ * @tparam num_value__associates
+ *
+ * @param[in] num_elements Number of elements.
+ * @param[in] num_gpus Number of GPUs used.
+ * @param[in] keys_in Pointer to the key array.
+ * @param[in] partition_table
+ * @param[in] convertion_table
+ * @param[in] array_size
+ * @param[in] array
+ */
 template <typename MakeOutHandle>
 __global__ void Make_Out(MakeOutHandle* d_handle)
 {
@@ -134,7 +198,7 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
     typedef typename MakeOutHandle::Value    Value   ;
 
     __shared__ MakeOutHandle s_handle;
-    const SizeT STRIDE = gridDim.x * blockDim.x;
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
     //const typename MakeOutHandle::Direction direction = d_handle->direction,
     VertexId x = threadIdx.x;
     VertexId key = 0;
@@ -151,7 +215,7 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
     __syncthreads();
 
     target_gpu = s_handle.target_gpu;
-    x = blockIdx.x * blockDim.x + threadIdx.x;
+    x = (SizeT)blockIdx.x * blockDim.x + threadIdx.x;
     while ( x < s_handle.num_elements )
     {
         key = s_handle.keys_in[x];
@@ -213,6 +277,16 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
     }
 }
 
+/*
+ * @brief Mark_Queue function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ *
+ * @param[in] num_elements
+ * @param[in] keys
+ * @param[in] market
+ */
 /*template <typename VertexId, typename SizeT>
 __global__ void Mark_Queue (
     const SizeT     num_elements,

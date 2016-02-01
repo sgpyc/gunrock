@@ -16,6 +16,7 @@
 
 #include <gunrock/app/problem_base.cuh>
 #include <gunrock/util/memset_kernel.cuh>
+#include <gunrock/util/track_utils.cuh>
 #include <gunrock/app/cc/cc_functor.cuh>
 
 namespace gunrock {
@@ -38,14 +39,14 @@ template <
 struct CCProblem : ProblemBase<VertexId, SizeT, Value,
     false, // _MARK_PREDECESSORS
     false, // _ENABLE_IDEMPOTENCE,
-    _USE_DOUBLE_BUFFER, 
+    _USE_DOUBLE_BUFFER,
     false, // _EnABLE_BACKWARD
     false, // _KEEP_ORDER
     true>  // _KEEP_NODE_NUM
 {
     //Helper structures
 
-    /** 
+    /**
      * @brief Data slice structure which contains CC problem specific data.
      */
     struct DataSlice : DataSliceBase<SizeT, VertexId, Value>
@@ -60,14 +61,14 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
         util::Array1D<SizeT, VertexId> tos;           /**< Size equals to edge number, to vertex of one edge */
         util::Array1D<SizeT, int     > vertex_flag;   /**< Finish flag for per-vertex kernels in CC algorithm */
         util::Array1D<SizeT, int     > edge_flag;     /**< Finish flag for per-edge kernels in CC algorithm */
-        util::Array1D<SizeT, VertexId> labels;
-        //util::Array1D<SizeT, VertexId> preds;
-        //util::Array1D<SizeT, VertexId> temp_preds;
         int turn;
         //DataSlice *d_pointer;
         bool has_change;
         //util::CtaWorkProgressLifetime *work_progress;
 
+        /*
+         * @brief Default constructor
+         */
         DataSlice()
         {
             component_ids.SetName("component_ids");
@@ -83,9 +84,11 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             //d_pointer     = NULL;
             //work_progress = NULL;
             has_change    = true;
-            //labels       .SetName("labels"       );
         }
 
+        /*
+         * @brief Default destructor
+         */
         ~DataSlice()
         {
             if (util::SetDevice(this->gpu_idx)) return;
@@ -100,9 +103,24 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             edge_flag    .Release();
             //d_pointer     = NULL;
             //work_progress = NULL;
-            //labels       .Release();
         }
 
+        /**
+         * @brief initialization function.
+         *
+         * @param[in] num_gpus Number of the GPUs used.
+         * @param[in] gpu_idx GPU index used for testing.
+         * @param[in] num_vertex_associate Number of vertices associated.
+         * @param[in] num_value__associate Number of value associated.
+         * @param[in] graph Pointer to the graph we process on.
+         * @param[in] num_in_nodes
+         * @param[in] num_out_nodes
+         * @param[in] original_vertex
+         * @param[in] queue_sizing Maximum queue sizing factor.
+         * @param[in] in_sizing
+         *
+         * \return cudaError_t object Indicates the success of all CUDA calls.
+         */
         cudaError_t Init(
             int   num_gpus,
             int   gpu_idx,
@@ -114,7 +132,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             VertexId *original_vertex,
             float queue_sizing = 2.0,
             float in_sizing    = 1.0)
-        {   
+        {
             cudaError_t retval = cudaSuccess;
             SizeT       nodes  = graph->nodes;
             SizeT       edges  = graph->edges;
@@ -152,7 +170,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             for (int node=0; node<graph->nodes; node++)
             {
                 if (TO_TRACK)
-                if (to_track(node)) 
+                if (util::to_track(node))
                     printf("node %d @ gpu %d : %d -> %d\n", node, gpu_idx, graph->row_offsets[node], graph->row_offsets[node+1]);
                 int start_edge = graph->row_offsets[node], end_edge = graph->row_offsets[node+1];
                 for (int edge = start_edge; edge < end_edge; ++edge)
@@ -160,8 +178,8 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
                     froms[edge] = node;
                     //tos  [edge] = graph->column_indices[edge];
                     if (TO_TRACK)
-                    if (to_track(node) || to_track(tos[edge]))
-                        printf("edge %d @ gpu %d : %d -> %d\n", edge, gpu_idx, froms[edge], tos[edge]); 
+                    if (util::to_track(node) || util::to_track(tos[edge]))
+                        printf("edge %d @ gpu %d : %d -> %d\n", edge, gpu_idx, froms[edge], tos[edge]);
                 }
             }
             if (retval = froms.Move(util::HOST, util::DEVICE)) return retval;
@@ -197,7 +215,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
 
     // Set of data slices (one for each GPU)
     util::Array1D<SizeT, DataSlice> *data_slices;
-   
+
     // Methods
 
     /**
@@ -233,7 +251,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
      *
      * @param[out] h_component_ids host-side vector to store computed component ids.
      *
-     *\return cudaError_t object which indicates the success of all CUDA function calls.
+     *\return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Extract(VertexId *h_component_ids)
     {
@@ -248,7 +266,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
                 if (retval = data_slices[0]->component_ids.Move(util::DEVICE, util::HOST)) return retval;
                 num_components=0;
                 for (int node=0; node<this->nodes; node++)
-                if (marker[h_component_ids[node]] == 0) 
+                if (marker[h_component_ids[node]] == 0)
                 {
                     num_components++;
                     //printf("%d\t ",node);
@@ -263,12 +281,12 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
                     if (retval = data_slices[gpu]->component_ids.Move(util::DEVICE, util::HOST)) return retval;
                     th_component_ids[gpu] = data_slices[gpu]->component_ids.GetPointer(util::HOST);
                 }
-                
+
                 num_components=0;
                 for (VertexId node=0; node<this->nodes; node++)
                 {
                     h_component_ids[node]=th_component_ids[this->partition_tables[0][node]][this->convertion_tables[0][node]];
-                    if (marker[h_component_ids[node]] == 0) 
+                    if (marker[h_component_ids[node]] == 0)
                     {
                         num_components++;
                         //printf("%d ",node);
@@ -341,20 +359,28 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
     }
 
     /**
-     * @brief CCProblem initialization
+     * @brief initialization function.
      *
      * @param[in] stream_from_host Whether to stream data from host.
-     * @param[in] graph Reference to the CSR graph object we process on. @see Csr
-     * @param[in] _num_gpus Number of the GPUs used.
+     * @param[in] graph Pointer to the CSR graph object we process on. @see Csr
+     * @param[in] inversegraph Pointer to the inversed CSR graph object we process on.
+     * @param[in] num_gpus Number of the GPUs used.
+     * @param[in] gpu_idx GPU index used for testing.
+     * @param[in] partition_method Partition method to partition input graph.
+     * @param[in] streams CUDA stream.
+     * @param[in] queue_sizing Maximum queue sizing factor.
+     * @param[in] in_sizing
+     * @param[in] partition_factor Partition factor for partitioner.
+     * @param[in] partition_seed Partition seed used for partitioner.
      *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Init(
             bool          stream_from_host,       // Only meaningful for single-GPU
-            Csr<VertexId, Value, SizeT> 
+            Csr<VertexId, Value, SizeT>
                          *graph,
             Csr<VertexId, Value, SizeT>
-                         *inversgraph      = NULL,
+                         *inversegraph      = NULL,
             int           num_gpus         = 1,
             int          *gpu_idx          = NULL,
             std::string   partition_method = "random",
@@ -367,7 +393,7 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
         ProblemBase<VertexId, SizeT, Value, false, false, _USE_DOUBLE_BUFFER, false, false, true>::Init(
             stream_from_host,
             graph,
-            inversgraph,
+            inversegraph,
             num_gpus,
             gpu_idx,
             partition_method,
@@ -376,13 +402,13 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             partition_seed);
 
         // No data in DataSlice needs to be copied from host
-         
+
         /**
          * Allocate output labels/preds
          */
         cudaError_t retval = cudaSuccess;
         data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
-        
+
         do {
             for (int gpu=0; gpu<this->num_gpus; gpu++)
             {
@@ -410,15 +436,15 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
     }
 
     /**
-     *  @brief Performs any initialization work needed for CC problem type. Must be called prior to each CC run.
+     * @brief Reset problem function. Must be called prior to each run.
      *
-     *  @param[in] frontier_type The frontier type (i.e., edge/vertex/mixed)
-     * 
-     *  \return cudaError_t object which indicates the success of all CUDA function calls.
+     * @param[in] frontier_type The frontier type (i.e., edge/vertex/mixed).
+     * @param[in] queue_sizing Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively).
+     *
+     *  \return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Reset(
         FrontierType frontier_type,   // The frontier type (i.e., edge/vertex/mixed)
-
         double       queue_sizing)
     {
         cudaError_t retval = cudaSuccess;
@@ -453,15 +479,15 @@ struct CCProblem : ProblemBase<VertexId, SizeT, Value,
             data_slice_->vertex_flag[0]=1;
             if (retval = data_slice_->edge_flag  .Move(util::HOST, util::DEVICE)) return retval;
 
-            if (retval = data_slices[gpu].Move(util::HOST, util::DEVICE)) return retval;  
- 
+            if (retval = data_slices[gpu].Move(util::HOST, util::DEVICE)) return retval;
+
             // Initialize edge frontier_queue
             util::MemsetIdxKernel<<<128, 128>>>(data_slice_->frontier_queues[0].keys  [0].GetPointer(util::DEVICE), edges);
 
             // Initialize vertex frontier queue
             util::MemsetIdxKernel<<<128, 128>>>(data_slice_->frontier_queues[0].values[0].GetPointer(util::DEVICE), nodes);
         }
-       
+
         return retval;
     }
 

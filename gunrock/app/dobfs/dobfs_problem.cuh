@@ -32,10 +32,10 @@ namespace dobfs {
  * @tparam _USE_DOUBLE_BUFFER   Boolean type parameter which defines whether to use double buffer.
  */
 template <
-    typename    _VertexId,                       
-    typename    _SizeT,                          
-    typename    _Value,                          
-    bool        _MARK_PREDECESSORS,             
+    typename    _VertexId,
+    typename    _SizeT,
+    typename    _Value,
+    bool        _MARK_PREDECESSORS,
     bool        _ENABLE_IDEMPOTENCE,
     bool        _USE_DOUBLE_BUFFER>
 struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
@@ -53,7 +53,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
 
     static const bool MARK_PREDECESSORS     = _MARK_PREDECESSORS;
     static const bool ENABLE_IDEMPOTENCE    = _ENABLE_IDEMPOTENCE;
-    
+
 
     //Helper structures
 
@@ -63,17 +63,16 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
     struct DataSlice : DataSliceBase<SizeT, VertexId, Value>
     {
         // device storage arrays
-        util::Array1D<SizeT, VertexId> labels;  /**< Used for source distance */
-        //VertexId        *d_labels;              /**< Used for source distance */
-        //VertexId        *d_preds;               /**< Used for predecessor */
         bool            *d_frontier_map_in;     /**< Input frontier bitmap */
         bool            *d_frontier_map_out;    /**< Output frontier bitmap */
         VertexId        *d_index_queue;         /**< Index of unvisited queue */
         unsigned char   *d_visited_mask;        /**< Used for bitmask for visited nodes */
+
+        util::Array1D<SizeT, VertexId>      original_vertex;
     };
 
     // Members
-    
+
     // Number of GPUs to be sliced over
     int                 num_gpus;
 
@@ -83,7 +82,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
 
     // Set of data slices (one for each GPU)
     DataSlice           **data_slices;
-   
+
     // Nasty method for putting struct on device
     // while keeping the SoA structure
     DataSlice           **d_data_slices;
@@ -148,9 +147,6 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
         {
             if (util::GRError(cudaSetDevice(gpu_idx[i]),
                 "~DOBFSProblem cudaSetDevice failed", __FILE__, __LINE__)) break;
-            data_slices[i]->labels.Release();
-            //if (data_slices[i]->d_labels)       util::GRError(cudaFree(data_slices[i]->d_labels), "GpuSlice cudaFree d_labels failed", __FILE__, __LINE__);
-            //if (data_slices[i]->d_preds)        util::GRError(cudaFree(data_slices[i]->d_preds), "GpuSlice cudaFree d_preds failed", __FILE__, __LINE__);
             if (data_slices[i]->d_frontier_map_in)  util::GRError(cudaFree(data_slices[i]->d_frontier_map_in), "GpuSlice cudaFree d_frontier_map_in failed", __FILE__, __LINE__);
             if (data_slices[i]->d_frontier_map_out)  util::GRError(cudaFree(data_slices[i]->d_frontier_map_out), "GpuSlice cudaFree d_frontier_map_out failed", __FILE__, __LINE__);
             if (data_slices[i]->d_index_queue)  util::GRError(cudaFree(data_slices[i]->d_index_queue), "GpuSlice cudaFree d_index_queue failed", __FILE__, __LINE__);
@@ -185,7 +181,9 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                 if (util::GRError(cudaSetDevice(gpu_idx[0]),
                             "DOBFSProblem cudaSetDevice failed", __FILE__, __LINE__)) break;
 
-                printf("h_labels = %p, d_labels = %p, nodes = %d\n", h_labels, data_slices[0]->labels.GetPointer(util::DEVICE), nodes);
+                // printf("h_labels = %p, d_labels = %p, nodes = %d\n",
+                // h_labels, data_slices[0]->labels.GetPointer(util::DEVICE),
+                // nodes);
                 if (retval = util::GRError(cudaMemcpy(
                                 h_labels,
                                 data_slices[0]->labels.GetPointer(util::DEVICE),
@@ -220,6 +218,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
      * @param[in] _num_gpus Number of the GPUs used.
      * @param[in] _alpha Tuning parameter for switching to backward BFS
      * @param[in] _beta Tuning parameter for switching back to normal BFS
+     * @param[in] streams CUDA stream.
      *
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */
@@ -298,7 +297,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                 //data_slices[0]->d_labels = d_labels;
                 data_slices[0]->labels.SetName("labels");
                 if (retval = data_slices[0]->labels. Allocate(nodes, util::DEVICE)) return retval;
- 
+
                 //VertexId   *d_preds;
                 //    if (retval = util::GRError(cudaMalloc(
                 //        (void**)&d_preds,
@@ -306,7 +305,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                 //    "DOBFSProblem cudaMalloc d_preds failed", __FILE__, __LINE__)) return retval;
                 if (retval = data_slices[0]->preds.Allocate(nodes, util::DEVICE)) return retval;
 
-                //data_slices[0]->d_preds = d_preds; 
+                //data_slices[0]->d_preds = d_preds;
 
                 bool    *d_frontier_map_in;
                 if (retval = util::GRError(cudaMalloc(
@@ -352,25 +351,30 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
      *  @param[in] src Source node for one BFS computing pass.
      *  @param[in] frontier_type The frontier type (i.e., edge/vertex/mixed)
      *  @param[in] queue_sizing Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively).
-     * 
+     *  @param[in] queue_sizing1  Size scaling factor for work queue allocation
+     *
      *  \return cudaError_t object which indicates the success of all CUDA function calls.
      */
     cudaError_t Reset(
             VertexId    src,
             FrontierType frontier_type,             // The frontier type (i.e., edge/vertex/mixed)
-            double queue_sizing)                    // Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively). 0.0 is unspecified.
+            double queue_sizing,
+            double queue_sizing1 = -1)                    // Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively). 0.0 is unspecified.
     {
         //load ProblemBase Reset
         //BaseProblem::Reset(frontier_type, queue_sizing);
 
         cudaError_t retval = cudaSuccess;
+        if (queue_sizing1 < 0) queue_sizing1 = queue_sizing;
 
+        //printf("queue_sizing = %lf, %lf\n", queue_sizing, queue_sizing1);
         for (int gpu = 0; gpu < num_gpus; ++gpu) {
             // Set device
             if (retval = util::GRError(cudaSetDevice(gpu_idx[gpu]),
                         "BSFProblem cudaSetDevice failed", __FILE__, __LINE__)) return retval;
 
-            data_slices[gpu]->Reset(frontier_type, this->graph_slices[gpu], queue_sizing, queue_sizing);
+            data_slices[gpu]->Reset(frontier_type,
+                this->graph_slices[gpu], queue_sizing, false, queue_sizing1);
             // Allocate output labels if necessary
             /*if (!data_slices[gpu]->d_labels) {
                 VertexId    *d_labels;
@@ -396,7 +400,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
             }*/
             if (data_slices[gpu]->preds.GetPointer(util::DEVICE)==NULL)
                 if (retval = data_slices[gpu]->preds.Allocate(nodes, util::DEVICE)) return retval;
-            
+
             util::MemsetKernel<<<128, 128>>>(data_slices[gpu]->preds.GetPointer(util::DEVICE), -2, nodes);
 
             // Allocate input/output frontier map if necessary
@@ -437,7 +441,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                 int visited_mask_elements = visited_mask_bytes * sizeof(unsigned char);
                 util::MemsetKernel<<<128, 128>>>(data_slices[gpu]->d_visited_mask, (unsigned char)0, visited_mask_elements);
             }
-                
+
             if (retval = util::GRError(cudaMemcpy(
                             d_data_slices[gpu],
                             data_slices[gpu],
@@ -446,7 +450,7 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                         "DOBFSProblem cudaMemcpy data_slices to d_data_slices failed", __FILE__, __LINE__)) return retval;
         }
 
-        
+
         // Fillin the initial input_queue for BFS problem, this needs to be modified
         // in multi-GPU scene
         if (retval = util::GRError(cudaMemcpy(
@@ -456,14 +460,14 @@ struct DOBFSProblem : ProblemBase<_VertexId, _SizeT, _Value,
                         sizeof(VertexId),
                         cudaMemcpyHostToDevice),
                     "DOBFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__)) return retval;
-        VertexId src_label = 0; 
+        VertexId src_label = 0;
         if (retval = util::GRError(cudaMemcpy(
                         data_slices[0]->labels.GetPointer(util::DEVICE)+src,
                         &src_label,
                         sizeof(VertexId),
                         cudaMemcpyHostToDevice),
                     "DOBFSProblem cudaMemcpy frontier_queues failed", __FILE__, __LINE__)) return retval;
-        VertexId src_pred = -1; 
+        VertexId src_pred = -1;
         if (retval = util::GRError(cudaMemcpy(
                         data_slices[0]->preds.GetPointer(util::DEVICE)+src,
                         &src_pred,

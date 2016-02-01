@@ -19,6 +19,17 @@
 namespace gunrock {
 namespace app {
 
+/*
+ * @brief
+ *
+ * @tparam SizeT
+ * @tparam DataSlice
+ *
+ * @param[in] enactor_stats Pointer to the enactor stats.
+ * @param[in] frontier_attribute Pointer to the frontier attribute.
+ * @param[in] data_slice Pointer to the data slice we process on.
+ * @param[in] num_gpus Number of GPUs used for testing.
+ */
 template <typename ThreadSlice>
 bool All_Done(typename ThreadSlice::Enactor *enactor,
               int      gpu_num  = 0)
@@ -199,6 +210,24 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
     return true;
 } 
 
+/*
+ * @brief Check size function.
+ *
+ * @tparam SIZE_CHECK
+ * @tparam SizeT
+ * @tparam Type
+ *
+ * @param[in] name
+ * @param[in] target_length
+ * @param[in] array
+ * @param[in] oversized
+ * @param[in] thread_num
+ * @param[in] iteration
+ * @param[in] peer_
+ * @param[in] keep_content
+ *
+ * \return cudaError_t object Indicates the success of all CUDA calls.
+ */
 template <
     bool     SIZE_CHECK,
     typename SizeT,
@@ -238,6 +267,29 @@ cudaError_t Check_Size(
     return retval;
 }
 
+/*
+ * @brief Check size function.
+ *
+ * @tparam SIZE_CHECK
+ * @tparam SizeT
+ * @tparam VertexId
+ * @tparam Value
+ * @tparam GraphSlice
+ * @tparam DataSlice
+ * @tparam num_vertex_associate
+ * @tparam num_value__associate
+ *
+ * @param[in] gpu
+ * @param[in] peer
+ * @param[in] array
+ * @param[in] queue_length
+ * @param[in] enactor_stats
+ * @param[in] data_slice_l
+ * @param[in] data_slice_p
+ * @param[in] graph_slice_l Graph slice local
+ * @param[in] graph_slice_p
+ * @param[in] stream CUDA stream.
+ */
 template <typename Enactor>
 cudaError_t PushNeibor(
     typename Enactor::PRequest *request,
@@ -332,6 +384,21 @@ cudaError_t PushNeibor(
     return retval;
 }
 
+/*
+ * @brief Show debug information function.
+ *
+ * @tparam Problem
+ *
+ * @param[in] thread_num
+ * @param[in] peer_
+ * @param[in] frontier_attribute
+ * @param[in] enactor_stats
+ * @param[in] data_slice
+ * @param[in] graph_slice
+ * @param[in] work_progress
+ * @param[in] check_name
+ * @param[in] stream CUDA stream.
+ */
 template <typename Enactor>
 void ShowDebugInfo(
     int           gpu_num,
@@ -387,6 +454,17 @@ void ShowDebugInfo(
     //    util::cpu_mt::PrintGPUArray<SizeT, unsigned char>("mask1", data_slice[0]->visited_mask.GetPointer(util::DEVICE), (graph_slice->nodes+7)/8, thread_num, enactor_stats->iteration);
 }  
 
+/*
+ * @brief Set record function.
+ *
+ * @tparam DataSlice
+ *
+ * @param[in] data_slice
+ * @param[in] iteration
+ * @param[in] peer_
+ * @param[in] stage
+ * @param[in] stream CUDA stream.
+ */
 template <typename EnactorSlice>
 cudaError_t Set_Record(
     EnactorSlice *enactor_slice,
@@ -415,6 +493,18 @@ cudaError_t Set_Record(
     return retval;
 }
 
+/*
+ * @brief Set record function.
+ *
+ * @tparam DataSlice
+ *
+ * @param[in] data_slice
+ * @param[in] iteration
+ * @param[in] peer_
+ * @param[in] stage_to_check
+ * @param[in] stage
+ * @param[in] to_show
+ */
 template <typename EnactorSlice>
 cudaError_t Check_Record(
     EnactorSlice *enactor_slice,

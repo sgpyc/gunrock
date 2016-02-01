@@ -35,61 +35,88 @@ namespace gunrock {
 namespace app {
 namespace sssp {
 
-    template <typename Problem, bool INSTRUMENT, bool DEBUG, bool SIZE_CHECK> class Enactor;
+template <typename Problem, bool INSTRUMENT, bool DEBUG, bool SIZE_CHECK> class Enactor;
 
-    template <typename VertexId, typename SizeT, typename Value, SizeT NUM_VERTEX_ASSOCIATES, SizeT NUM_VALUE__ASSOCIATES>
-    __global__ void Expand_Incoming_SSSP (
-        const SizeT            num_elements,
-        const VertexId* const  keys_in,
-              VertexId*        keys_out,
-        const size_t           array_size,
-              char*            array)
+/*
+ * @brief Expand incoming function.
+ *
+ * @tparam VertexId
+ * @tparam SizeT
+ * @tparam Value
+ * @tparam NUM_VERTEX_ASSOCIATES
+ * @tparam NUM_VALUE__ASSOCIATES
+ *
+ * @param[in] num_elements
+ * @param[in] keys_in
+ * @param[in] keys_out
+ * @param[in] array_size
+ * @param[in] array
+ */
+template <
+    typename VertexId,
+    typename SizeT,
+    typename Value,
+    int      NUM_VERTEX_ASSOCIATES,
+    int      NUM_VALUE__ASSOCIATES>
+__global__ void Expand_Incoming_SSSP (
+    const SizeT            num_elements,
+    const VertexId* const  keys_in,
+          VertexId*        keys_out,
+    const size_t           array_size,
+          char*            array)
+{
+    extern __shared__ char s_array[];
+    const SizeT STRIDE = gridDim.x * blockDim.x;
+    size_t      offset                = 0;
+    VertexId** s_vertex_associate_in  = (VertexId**)&(s_array[offset]);
+    offset+=sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES;
+    Value**    s_value__associate_in  = (Value**   )&(s_array[offset]);
+    offset+=sizeof(Value*   ) * NUM_VALUE__ASSOCIATES;
+    VertexId** s_vertex_associate_org = (VertexId**)&(s_array[offset]);
+    offset+=sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES;
+    Value**    s_value__associate_org = (Value**   )&(s_array[offset]);
+    SizeT x = threadIdx.x;
+    if (x < array_size)
     {
-        extern __shared__ char s_array[];
-        const SizeT STRIDE = gridDim.x * blockDim.x;
-        size_t      offset                = 0;
-        VertexId** s_vertex_associate_in  = (VertexId**)&(s_array[offset]);
-        offset+=sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES;
-        Value**    s_value__associate_in  = (Value**   )&(s_array[offset]);
-        offset+=sizeof(Value*   ) * NUM_VALUE__ASSOCIATES;
-        VertexId** s_vertex_associate_org = (VertexId**)&(s_array[offset]);
-        offset+=sizeof(VertexId*) * NUM_VERTEX_ASSOCIATES;
-        Value**    s_value__associate_org = (Value**   )&(s_array[offset]);
-        SizeT x = threadIdx.x;
-        if (x < array_size)
-        {
-            s_array[x]=array[x];
-            x+=blockDim.x; 
-        }
-        __syncthreads();
-
-        x = blockIdx.x * blockDim.x + threadIdx.x;
-
-        while (x<num_elements)
-        {
-            VertexId key=keys_in[x];
-            Value t=s_value__associate_in[0][x];
-
-            Value old_value = atomicMin(s_value__associate_org[0]+key, t);
-            if (old_value<=t)
-            {
-                keys_out[x]=-1;
-                x+=STRIDE;
-                continue;
-            }
-
-            keys_out[x]=key;
-
-            #pragma unrool
-            for (SizeT i=1;i<NUM_VALUE__ASSOCIATES;i++)
-                s_value__associate_org[i][key]=s_value__associate_in[i][x];
-            #pragma unrool
-            for (SizeT i=0;i<NUM_VERTEX_ASSOCIATES;i++)
-                s_vertex_associate_org[i][key]=s_vertex_associate_in[i][x];
-            x+=STRIDE;
-        }
+        s_array[x]=array[x];
+        x+=blockDim.x;
     }
+    __syncthreads();
 
+    x = blockIdx.x * blockDim.x + threadIdx.x;
+
+    while (x<num_elements)
+    {
+        VertexId key=keys_in[x];
+        Value t=s_value__associate_in[0][x];
+
+        Value old_value = atomicMin(s_value__associate_org[0]+key, t);
+        if (old_value<=t)
+        {
+            keys_out[x]=-1;
+            x+=STRIDE;
+            continue;
+        }
+
+        keys_out[x]=key;
+
+        #pragma unroll
+        for (SizeT i=1;i<NUM_VALUE__ASSOCIATES;i++)
+            s_value__associate_org[i][key]=s_value__associate_in[i][x];
+        #pragma unroll
+        for (SizeT i=0;i<NUM_VERTEX_ASSOCIATES;i++)
+            s_vertex_associate_org[i][key]=s_vertex_associate_in[i][x];
+        x+=STRIDE;
+    }
+}
+
+/*
+ * @brief Iteration structure derived from IterationBase.
+ *
+ * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
+ * @tparam FilterKernelPolicy Kernel policy for filter operator.
+ * @tparam Enactor Enactor we process on.
+ */
 template <
     typename AdvanceKernelPolicy,
     typename FilterKernelPolicy,
@@ -98,14 +125,30 @@ struct SSSPIteration : public IterationBase <
     AdvanceKernelPolicy, FilterKernelPolicy, Enactor,
     true, false, false, true, Enactor::Problem::MARK_PATHS>
 {
-    typedef typename Enactor::SizeT      SizeT     ;    
-    typedef typename Enactor::Value      Value     ;    
+    typedef typename Enactor::SizeT      SizeT     ;
+    typedef typename Enactor::Value      Value     ;
     typedef typename Enactor::VertexId   VertexId  ;
     typedef typename Enactor::Problem    Problem ;
     typedef typename Problem::DataSlice  DataSlice ;
     typedef GraphSlice<SizeT, VertexId, Value> GraphSlice;
     typedef SSSPFunctor<VertexId, SizeT, Value, Problem> SsspFunctor;
 
+    /*
+     * @brief SubQueue_Core function.
+     *
+     * @param[in] thread_num Number of threads.
+     * @param[in] peer_ Peer GPU index.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] enactor_stats Pointer to the enactor statistics.
+     * @param[in] data_slice Pointer to the data slice we process on.
+     * @param[in] d_data_slice Pointer to the data slice on the device.
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     * @param[in] work_progress Pointer to the work progress class.
+     * @param[in] context CudaContext for ModernGPU API.
+     * @param[in] stream CUDA stream.
+     */
     static void SubQueue_Core(
         int                            thread_num,
         int                            peer_,
@@ -123,6 +166,7 @@ struct SSSPIteration : public IterationBase <
     {
         if (Enactor::DEBUG) util::cpu_mt::PrintMessage("Advance begin",thread_num, enactor_stats->iteration);
         frontier_attribute->queue_reset = true;
+        enactor_stats     ->nodes_queued[0] += frontier_attribute -> queue_length;
 
         // Edge Map
         gunrock::oprtr::advance::LaunchKernel<AdvanceKernelPolicy, Problem, SsspFunctor>(
@@ -148,19 +192,23 @@ struct SSSPIteration : public IterationBase <
             stream,
             gunrock::oprtr::advance::V2V,
             false,
+            false,
             false);
 
         frontier_attribute->queue_reset = false;
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
-        enactor_stats     -> Accumulate(
+        enactor_stats     -> AccumulateEdges(
             work_progress -> GetQueueLengthPointer<unsigned int, SizeT>(frontier_attribute->queue_index), stream);
 
         if (Enactor::DEBUG) util::cpu_mt::PrintMessage("Advance end", thread_num, enactor_stats->iteration, peer_);
 
         //Vertex Map
-        gunrock::oprtr::filter::Kernel<FilterKernelPolicy, Problem, SsspFunctor>
-            <<<enactor_stats->filter_grid_size, FilterKernelPolicy::THREADS, 0, stream>>>(
+        gunrock::oprtr::filter::LaunchKernel
+            <FilterKernelPolicy, Problem, SsspFunctor>(
+            enactor_stats->filter_grid_size, 
+            FilterKernelPolicy::THREADS, 
+            0, stream,
             enactor_stats->iteration+1,
             frontier_attribute->queue_reset,
             frontier_attribute->queue_index,
@@ -174,76 +222,103 @@ struct SSSPIteration : public IterationBase <
             frontier_queue->keys[frontier_attribute->selector  ].GetSize(), // max_in_queue
             frontier_queue->keys[frontier_attribute->selector^1].GetSize(), // max_out_queue
             enactor_stats->filter_kernel_stats);
-        
+
         if (Enactor::DEBUG && (enactor_stats->retval = util::GRError("filter_forward::Kernel failed", __FILE__, __LINE__))) return;
         if (Enactor::DEBUG) util::cpu_mt::PrintMessage("Filter end.", thread_num, enactor_stats->iteration, peer_);
 
         //TODO: split the output queue into near/far pile, put far pile in far queue, put near pile as the input queue
         //for next round.
-        /*out_length = 0;
-        if (frontier_attribute->queue_length > 0) {
-            out_length = gunrock::priority_queue::Bisect
-                <PriorityQueueKernelPolicy, SSSPProblem, NearFarPriorityQueue, PqFunctor>(
-                (int*)graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE),
-                pq,
-                (unsigned int)frontier_attribute->queue_length,
-                d_data_slice,
-                graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector^1].GetPointer(util::DEVICE),
-                pq->queue_length,
-                pq_level,
-                (pq_level+1),
-                context[0],
-                graph_slice->nodes);
-            //printf("out:%d, pq_length:%d\n", out_length, pq->queue_length);
-            if (retval = work_progress->SetQueueLength(frontier_attribute->queue_index, out_length)) break;
-        }
-        //
-        //If the output queue is empty and far queue is not, then add priority level and split the far pile.
-        if ( out_length == 0 && pq->queue_length > 0) {
-            while (pq->queue_length > 0 && out_length == 0) {
-                pq->selector ^= 1;
-                pq_level++;
+        if (data_slice->num_gpus == 1)
+        { // when #gpus == 1, use priority queue
+            frontier_attribute->queue_index ++;
+            frontier_attribute->selector ^= 1;
+            /*if (enactor_stats->retval = util::GRError(
+                work_progress -> GetQueueLength(frointer_attribute->queue_index,
+                frontier_attribute->queue_length, true, stream),
+                "work_progress -> GetQueueLength failed", __FILE__, __LINE__))
+                return;
+            out_length = 0;
+
+            if (frontier_attribute->queue_length > 0) {
                 out_length = gunrock::priority_queue::Bisect
-                    <PriorityQueueKernelPolicy, SSSPProblem, NearFarPriorityQueue, PqFunctor>(
-                    (int*)pq->nf_pile[0]->d_queue[pq->selector^1],
+                    <PriorityQueueKernelPolicy, SSSPProblem,
+                    NearFarPriorityQueue, PqFunctor>(
+                    (int*)frontier_queue->keys[frontier_attribute->selector].GetPointer(util::DEVICE),
                     pq,
-                    (unsigned int)pq->queue_length,
+                    (unsigned int)frontier_attribute->queue_length,
                     d_data_slice,
-                    graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector^1],
-                    0,
+                    frontier_queue->keys[frontier_attribute->selector^1].GetPointer(util::DEVICE),
+                    pq->queue_length,
                     pq_level,
                     (pq_level+1),
                     context[0],
                     graph_slice->nodes);
-                //printf("out after p:%d, pq_length:%d\n", out_length, pq->queue_length);
-                if (out_length > 0) {
-                    if (retval = work_progress->SetQueueLength(frontier_attribute->queue_index, out_length)) break;
-                }
+                //printf("out:%d, pq_length:%d\n", out_length, pq->queue_length);
+                if (retval = work_progress->SetQueueLength(frontier_attribute->queue_index, out_length)) break;
             }
-        }
-        */
-
-        frontier_attribute->queue_index++;
-        frontier_attribute->selector ^= 1;
-
-        if (data_slice->num_gpus == 1)
-        {
-            util::MemsetKernel<<<128, 128, 0, stream>>> (data_slice -> sssp_marker.GetPointer(util::DEVICE), (int)0, graph_slice->nodes);
+            //
+            //If the output queue is empty and far queue is not, then add priority level and split the far pile.
+            if ( out_length == 0 && pq->queue_length > 0) {
+                while (pq->queue_length > 0 && out_length == 0) {
+                    pq->selector ^= 1;
+                    pq_level++;
+                    out_length = gunrock::priority_queue::Bisect
+                        <PriorityQueueKernelPolicy, SSSPProblem, NearFarPriorityQueue, PqFunctor>(
+                        (int*)pq->nf_pile[0]->d_queue[pq->selector^1],
+                        pq,
+                        (unsigned int)pq->queue_length,
+                        d_data_slice,
+                        graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector^1],
+                        0,
+                        pq_level,
+                        (pq_level+1),
+                        context[0],
+                        graph_slice->nodes);
+                    //printf("out after p:%d, pq_length:%d\n", out_length, pq->queue_length);
+                    if (out_length > 0) {
+                        if (retval = work_progress->SetQueueLength(frontier_attribute->queue_index, out_length)) break;
+                    }
+                }
+            }*/
+            util::MemsetKernel<<<128, 128, 0, stream>>> (
+                data_slice -> sssp_marker.GetPointer(util::DEVICE),
+                (int)0, graph_slice->nodes);
+        } else { // #gpus != 1
+            frontier_attribute->queue_index++;
+            frontier_attribute->selector ^= 1;
         }
     }
 
+    /*
+     * @brief Expand incoming function.
+     *
+     * @tparam NUM_VERTEX_ASSOCIATES
+     * @tparam NUM_VALUE__ASSOCIATES
+     *
+     * @param[in] grid_size
+     * @param[in] block_size
+     * @param[in] shared_size
+     * @param[in] stream
+     * @param[in] num_elements
+     * @param[in] keys_in
+     * @param[in] keys_out
+     * @param[in] array_size
+     * @param[in] array
+     * @param[in] data_slice
+     *
+     */
     template <int NUM_VERTEX_ASSOCIATES, int NUM_VALUE__ASSOCIATES>
     static void Expand_Incoming(
-              int             grid_size,
-              int             block_size,
-              size_t          shared_size,
-              cudaStream_t    stream,
-              SizeT           &num_elements,
-              VertexId*       keys_in,
-        util::Array1D<SizeT, VertexId>*       keys_out,
-        const size_t          array_size,
-              char*           array,
-              DataSlice*      data_slice)
+        int             grid_size,
+        int             block_size,
+        size_t          shared_size,
+        cudaStream_t    stream,
+        SizeT           &num_elements,
+        VertexId*       keys_in,
+        util::Array1D<SizeT, VertexId>* keys_out,
+        const size_t    array_size,
+        char*           array,
+        DataSlice*      data_slice)
     {
         bool over_sized = false;
         Check_Size<Enactor::SIZE_CHECK, SizeT, VertexId>(
@@ -258,18 +333,39 @@ struct SSSPIteration : public IterationBase <
             array);
     }
 
+    /*
+     * @brief Compute output queue length function.
+     *
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] d_offsets Pointer to the offsets.
+     * @param[in] d_indices Pointer to the indices.
+     * @param[in] d_in_key_queue Pointer to the input mapping queue.
+     * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+     * @param[in] max_in Maximum input queue size.
+     * @param[in] max_out Maximum output queue size.
+     * @param[in] context CudaContext for ModernGPU API.
+     * @param[in] stream CUDA stream.
+     * @param[in] ADVANCE_TYPE Advance kernel mode.
+     * @param[in] express Whether or not enable express mode.
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
+     */
     static cudaError_t Compute_OutputLength(
-        FrontierAttribute<SizeT> *frontier_attribute,
-        SizeT       *d_offsets,
-        VertexId    *d_indices,
-        VertexId    *d_in_key_queue,
-        util::Array1D<SizeT, SizeT>       *partitioned_scanned_edges,
-        SizeT        max_in,
-        SizeT        max_out,
+        FrontierAttribute<SizeT>       *frontier_attribute,
+        SizeT                          *d_offsets,
+        VertexId                       *d_indices,
+        SizeT                          *d_inv_offsets,
+        VertexId                       *d_inv_indices,
+        VertexId                       *d_in_key_queue,
+        util::Array1D<SizeT, SizeT>    *partitioned_scanned_edges,
+        SizeT                          max_in,
+        SizeT                          max_out,
         CudaContext                    &context,
         cudaStream_t                   stream,
         gunrock::oprtr::advance::TYPE  ADVANCE_TYPE,
-        bool                           express = false)
+        bool                           express = false,
+        bool                           in_inv = false,
+        bool                           out_inv = false)
     {
         cudaError_t retval = cudaSuccess;
         bool over_sized = false;
@@ -280,6 +376,8 @@ struct SSSPIteration : public IterationBase <
             frontier_attribute,
             d_offsets,
             d_indices,
+            d_inv_offsets,
+            d_inv_indices,
             d_in_key_queue,
             partitioned_scanned_edges->GetPointer(util::DEVICE),
             max_in,
@@ -287,10 +385,31 @@ struct SSSPIteration : public IterationBase <
             context,
             stream,
             ADVANCE_TYPE,
-            express);
+            express,
+            in_inv,
+            out_inv);
         return retval;
     }
 
+    /*
+     * @brief Make_Output function.
+     *
+     * @tparam NUM_VERTEX_ASSOCIATES
+     * @tparam NUM_VALUE__ASSOCIATES
+     *
+     * @param[in] thread_num Number of threads.
+     * @param[in] num_elements
+     * @param[in] num_gpus Number of GPUs used.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] partitioned_scanned_edges Pointer to the scanned edges.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] enactor_stats Pointer to the enactor statistics.
+     * @param[in] data_slice Pointer to the data slice we process on.
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     * @param[in] work_progress Pointer to the work progress class.
+     * @param[in] context CudaContext for ModernGPU API.
+     * @param[in] stream CUDA stream.
+     */
     template <
         int NUM_VERTEX_ASSOCIATES,
         int NUM_VALUE__ASSOCIATES>
@@ -310,7 +429,7 @@ struct SSSPIteration : public IterationBase <
         ContextPtr                     context,
         cudaStream_t                   stream)
     {
-        typedef  IterationBase<AdvanceKernelPolicy, FilterKernelPolicy, Enactor, 
+        typedef  IterationBase<AdvanceKernelPolicy, FilterKernelPolicy, Enactor,
             true, false, false, true, Enactor::Problem::MARK_PATHS> BaseEnactor;
         util::MemsetKernel<<<128, 128, 0, stream>>> (data_slice_[0]->sssp_marker.GetPointer(util::DEVICE), (int)0, graph_slice->nodes);
         BaseEnactor::template Make_Output < NUM_VERTEX_ASSOCIATES, NUM_VALUE__ASSOCIATES> (
@@ -319,6 +438,17 @@ struct SSSPIteration : public IterationBase <
             enactor_stats, data_slice_, graph_slice, work_progress, context, stream);
     }
 
+    /*
+     * @brief Check frontier queue size function.
+     *
+     * @param[in] thread_num Number of threads.
+     * @param[in] peer_ Peer GPU index.
+     * @param[in] request_length Request frontier queue length.
+     * @param[in] frontier_queue Pointer to the frontier queue.
+     * @param[in] frontier_attribute Pointer to the frontier attribute.
+     * @param[in] enactor_stats Pointer to the enactor statistics.
+     * @param[in] graph_slice Pointer to the graph slice we process on.
+     */
     static void Check_Queue_Size(
         int                            thread_num,
         int                            peer_,
@@ -328,8 +458,8 @@ struct SSSPIteration : public IterationBase <
         FrontierAttribute<SizeT>      *frontier_attribute,
         EnactorStats                  *enactor_stats,
         GraphSlice                    *graph_slice
-        )    
-    {    
+        )
+    {
         bool over_sized = false;
         int  selector   = frontier_attribute->selector;
         int  iteration  = enactor_stats -> iteration;
@@ -340,77 +470,90 @@ struct SSSPIteration : public IterationBase <
                 frontier_queue->keys[selector^1].GetSize(),
                 request_length);fflush(stdout);
 
-        if (enactor_stats->retval = 
-            Check_Size<true, SizeT, VertexId > ("queue3", request_length, &frontier_queue->keys  [selector^1], over_sized, thread_num, iteration, peer_, false)) return; 
-        if (enactor_stats->retval = 
-            Check_Size<true, SizeT, VertexId > ("queue3", graph_slice->nodes+2, &frontier_queue->keys  [selector  ], over_sized, thread_num, iteration, peer_, true )) return; 
+        if (enactor_stats->retval =
+            Check_Size<true, SizeT, VertexId > ("queue3", request_length, &frontier_queue->keys  [selector^1], over_sized, thread_num, iteration, peer_, false)) return;
+        if (enactor_stats->retval =
+            Check_Size<true, SizeT, VertexId > ("queue3", graph_slice->nodes+2, &frontier_queue->keys  [selector  ], over_sized, thread_num, iteration, peer_, true )) return;
         if (Problem::USE_DOUBLE_BUFFER)
-        {    
-            if (enactor_stats->retval = 
-                Check_Size<true, SizeT, Value> ("queue3", request_length, &frontier_queue->values[selector^1], over_sized, thread_num, iteration, peer_, false)) return; 
-            if (enactor_stats->retval = 
-                Check_Size<true, SizeT, Value> ("queue3", graph_slice->nodes+2, &frontier_queue->values[selector  ], over_sized, thread_num, iteration, peer_, true )) return; 
-        }    
+        {
+            if (enactor_stats->retval =
+                Check_Size<true, SizeT, Value> ("queue3", request_length, &frontier_queue->values[selector^1], over_sized, thread_num, iteration, peer_, false)) return;
+            if (enactor_stats->retval =
+                Check_Size<true, SizeT, Value> ("queue3", graph_slice->nodes+2, &frontier_queue->values[selector  ], over_sized, thread_num, iteration, peer_, true )) return;
+        }
     }
 };
 
-    template <
-        typename AdvanceKernelPolicy,
-        typename FilterKernelPolicy,
-        typename Enactor>
-    static CUT_THREADPROC SSSPThread(
-        void * thread_data_)
-    {
-        typedef typename Enactor::Problem    Problem;
-        typedef typename Enactor::SizeT      SizeT     ;   
-        typedef typename Enactor::VertexId   VertexId  ;
-        typedef typename Enactor::Value      Value     ;   
-        typedef typename Problem::DataSlice     DataSlice ;
-        typedef GraphSlice<SizeT, VertexId, Value>    GraphSlice;
-        typedef SSSPFunctor<VertexId, SizeT, Value, Problem> Functor;
-        ThreadSlice  *thread_data        =  (ThreadSlice*) thread_data_;
-        Problem      *problem            =  (Problem*)     thread_data->problem;
-        Enactor   *enactor            =  (Enactor*)  thread_data->enactor;
-        int           num_gpus           =   problem     -> num_gpus;
-        int           thread_num         =   thread_data -> thread_num;
-        int           gpu_idx            =   problem     -> gpu_idx            [thread_num] ;
-        DataSlice    *data_slice         =   problem     -> data_slices        [thread_num].GetPointer(util::HOST);
-        FrontierAttribute<SizeT>
-                     *frontier_attribute = &(enactor     -> frontier_attribute [thread_num * num_gpus]);
-        EnactorStats *enactor_stats      = &(enactor     -> enactor_stats      [thread_num * num_gpus]);
+/**
+ * @brief Thread controls.
+ *
+ * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
+ * @tparam FilterKernelPolicy Kernel policy for filter operator.
+ * @tparam Enactor Enactor type we process on.
+ *
+ * @thread_data_ Thread data.
+ */
+template <
+    typename AdvanceKernelPolicy,
+    typename FilterKernelPolicy,
+    typename Enactor>
+static CUT_THREADPROC SSSPThread(
+    void * thread_data_)
+{
+    typedef typename Enactor::Problem    Problem;
+    typedef typename Enactor::SizeT      SizeT     ;
+    typedef typename Enactor::VertexId   VertexId  ;
+    typedef typename Enactor::Value      Value     ;
+    typedef typename Problem::DataSlice     DataSlice ;
+    typedef GraphSlice<SizeT, VertexId, Value>    GraphSlice;
+    typedef SSSPFunctor<VertexId, SizeT, Value, Problem> Functor;
+    ThreadSlice  *thread_data        =  (ThreadSlice*) thread_data_;
+    Problem      *problem            =  (Problem*)     thread_data->problem;
+    Enactor   *enactor            =  (Enactor*)  thread_data->enactor;
+    int           num_gpus           =   problem     -> num_gpus;
+    int           thread_num         =   thread_data -> thread_num;
+    int           gpu_idx            =   problem     -> gpu_idx            [thread_num] ;
+    DataSlice    *data_slice         =   problem     -> data_slices        [thread_num].GetPointer(util::HOST);
+    FrontierAttribute<SizeT>
+                 *frontier_attribute = &(enactor     -> frontier_attribute [thread_num * num_gpus]);
+    EnactorStats *enactor_stats      = &(enactor     -> enactor_stats      [thread_num * num_gpus]);
 
-        do {
-            if (enactor_stats[0].retval = util::SetDevice(gpu_idx)) break;
-            thread_data->stats = 1;
-            while (thread_data->stats != 2) sleep(0);
-            thread_data->stats = 3;
+    do {
+        if (enactor_stats[0].retval = util::SetDevice(gpu_idx)) break;
+        thread_data->stats = 1;
+        while (thread_data->stats != 2) sleep(0);
+        thread_data->stats = 3;
 
-            for (int peer_=0;peer_<num_gpus;peer_++)
-            {
-                frontier_attribute[peer_].queue_index  = 0;        // Work queue index
-                frontier_attribute[peer_].queue_length = peer_==0?thread_data->init_size:0; 
-                frontier_attribute[peer_].selector     = 0;//frontier_attrbute[peer_].queue_length == 0 ? 0 : 1;
-                frontier_attribute[peer_].queue_reset  = true;
-                enactor_stats     [peer_].iteration    = 0;
-            }
+        for (int peer_=0;peer_<num_gpus;peer_++)
+        {
+            frontier_attribute[peer_].queue_index  = 0;        // Work queue index
+            frontier_attribute[peer_].queue_length = peer_==0?thread_data->init_size:0;
+            frontier_attribute[peer_].selector     = 0;//frontier_attrbute[peer_].queue_length == 0 ? 0 : 1;
+            frontier_attribute[peer_].queue_reset  = true;
+            enactor_stats     [peer_].iteration    = 0;
+        }
 
-            gunrock::app::Iteration_Loop
-                <Problem::MARK_PATHS? 1:0, 1, Enactor, Functor, SSSPIteration<AdvanceKernelPolicy, FilterKernelPolicy, Enactor> > (thread_data);
-            printf("SSSP_Thread finished\n");fflush(stdout);
+        gunrock::app::Iteration_Loop
+            <Problem::MARK_PATHS? 1:0, 1, Enactor, Functor, SSSPIteration<AdvanceKernelPolicy, FilterKernelPolicy, Enactor> > (thread_data);
+        //printf("SSSP_Thread finished\n");fflush(stdout);
 
-        } while(0);
+    } while(0);
 
-        thread_data->stats=4;
-        CUT_THREADEND;
-    }
+    thread_data->stats=4;
+    CUT_THREADEND;
+}
 
 /**
- * @brief SSSP problem enactor class.
+ * @brief Problem enactor class.
  *
- * @tparam INSTRUMWENT Boolean type to show whether or not to collect per-CTA clock-count statistics
+ * @tparam _Problem Problem type we process on
+ * @tparam _INSTRUMENT Whether or not to collect per-CTA clock-count stats.
+ * @tparam _DEBUG Whether or not to enable debug mode.
+ * @tparam _SIZE_CHECK Whether or not to enable size check.
  */
 template<typename _Problem, bool _INSTRUMENT, bool _DEBUG, bool _SIZE_CHECK>
-class SSSPEnactor : public EnactorBase<typename _Problem::SizeT, _DEBUG, _SIZE_CHECK>
+class SSSPEnactor :
+    public EnactorBase<typename _Problem::SizeT, _DEBUG, _SIZE_CHECK>
 {
     _Problem     *problem      ;
     ThreadSlice  *thread_slices;// = new ThreadSlice [this->num_gpus];
@@ -453,43 +596,61 @@ public:
      */
 
     /**
-     * @brief Obtain statistics about the last SSSP search enacted.
+     * @ brief Obtain statistics about the last primitive enacted.
      *
-     * @param[out] total_queued Total queued elements in SSSP kernel running.
-     * @param[out] search_depth Search depth of SSSP algorithm.
-     * @param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
+     * @ tparam VertexId Vertex identifiler type.
+     *
+     * @ param[out] total_queued Total queued elements in kernel running.
+     * @ param[out] search_depth Search depth (number of super-steps).
+     * @ param[out] avg_duty Average kernel duty (kernel time/kernel lifetime).
+     * spaces between @ and name are to eliminate doxygen warnings
      */
-    template <typename VertexId>
+    /*template <typename VertexId>
     void GetStatistics(
         long long &total_queued,
         VertexId  &search_depth,
         double    &avg_duty)
-    {   
+    {
         unsigned long long total_lifetimes=0;
-        unsigned long long total_runtimes =0; 
+        unsigned long long total_runtimes =0;
         total_queued = 0;
         search_depth = 0;
         for (int gpu=0;gpu<this->num_gpus;gpu++)
-        {   
+        {
             if (this->num_gpus!=1)
                 if (util::SetDevice(this->gpu_idx[gpu])) return;
             cudaThreadSynchronize();
 
             for (int peer=0; peer< this->num_gpus; peer++)
-            {   
+            {
                 EnactorStats *enactor_stats_ = this->enactor_stats + gpu * this->num_gpus + peer;
                 enactor_stats_ -> total_queued.Move(util::DEVICE, util::HOST);
                 total_queued += enactor_stats_ -> total_queued[0];
-                if (enactor_stats_ -> iteration > search_depth) 
+                if (enactor_stats_ -> iteration > search_depth)
                     search_depth = enactor_stats_ -> iteration;
                 total_lifetimes += enactor_stats_ -> total_lifetimes;
                 total_runtimes  += enactor_stats_ -> total_runtimes;
-            } 
-        }   
+            }
+        }
         avg_duty = (total_lifetimes >0) ?
             double(total_runtimes) / total_lifetimes : 0.0;
-    }
+    }*/
 
+    /** @} */
+
+    /**
+     * @brief Initialize the problem.
+     *
+     * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
+     * @tparam FilterKernelPolicy Kernel policy for filter operator.
+     *
+     * @param[in] context CudaContext pointer for ModernGPU API.
+     * @param[in] problem Pointer to Problem object.
+     * @param[in] max_grid_size Maximum grid size for kernel calls.
+     * @param[in] size_check Whether or not to enable size check.
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
+     */
     template<
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy>
@@ -545,58 +706,36 @@ public:
        return retval;
     }
 
+    /**
+     * @brief Reset enactor
+     *
+     * \return cudaError_t object Indicates the success of all CUDA calls.
+     */
     cudaError_t Reset()
     {
         return EnactorBase<SizeT, DEBUG, SIZE_CHECK>::Reset();
     }
- 
+
     /** @} */
 
     /**
-     * @brief SSSP Enact kernel entry.
+     * @brief Enacts a SSSP computing on the specified graph.
      *
      * @tparam AdvanceKernelPolicy Kernel policy for advance operator.
      * @tparam FilterKernelPolicy Kernel policy for filter operator.
-     * @tparam SSSPProblem SSSP Problem type.
      *
-     * @param[in] context CudaContext pointer for moderngpu APIs
-     * @param[in] problem SSSPProblem object.
-     * @param[in] src Source node for SSSP.
-     * @param[in] queue_sizing Scaling factor for frontier queue
-     * @param[in] max_grid_size Max grid size for SSSP kernel calls.
+     * @param[in] src Source node to start primitive.
      *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     template<
         typename AdvanceKernelPolicy,
         typename FilterKernelPolicy>
     cudaError_t EnactSSSP(
-        VertexId       src)
+        VertexId src)
     {
         clock_t      start_time = clock();
         cudaError_t  retval     = cudaSuccess;
-        
-        /*typedef PQFunctor<
-            VertexId,
-            SizeT,
-            SSSPProblem> PqFunctor;
-
-        typedef gunrock::priority_queue::PriorityQueue<
-            VertexId,
-            SizeT> NearFarPriorityQueue;
-
-        typedef gunrock::priority_queue::KernelPolicy<
-            SSSPProblem,                        // Problem data type
-            300,                                // CUDA_ARCH
-            INSTRUMENT,                         // INSTRUMENT
-            8,                                  // MIN_CTA_OCCUPANCY
-            10>                                 // LOG_THREADS
-            PriorityQueueKernelPolicy;
-
-        NearFarPriorityQueue *pq = new NearFarPriorityQueue;
-        util::GRError(
-            pq->Init(problem->graph_slices[0]->edges, queue_sizing),
-            "Priority Queue SSSP Initialization Failed", __FILE__, __LINE__);*/
 
         do {
             for (int gpu=0;gpu<this->num_gpus;gpu++)
@@ -618,17 +757,15 @@ public:
             }
 
             for (int gpu=0;gpu<this->num_gpus;gpu++)
-            if (this->enactor_stats[gpu].retval!=cudaSuccess) {retval=this->enactor_stats[gpu].retval;break;}
+            if (this->enactor_stats[gpu].retval!=cudaSuccess)
+            {
+                retval=this->enactor_stats[gpu].retval;break;
+            }
         } while(0);
 
-        if (this->DEBUG) printf("\nGPU SSSP Done.\n");
+        if (DEBUG) printf("\nGPU SSSP Done.\n");
         return retval;
     }
-
-    /**
-     * \addtogroup PublicInterface
-     * @{
-     */
 
     typedef gunrock::oprtr::filter::KernelPolicy<
         Problem,                            // Problem data type
@@ -680,13 +817,17 @@ public:
     LBAdvanceKernelPolicy;
 
     /**
+     * \addtogroup PublicInterface
+     * @{
+     */
+
+    /**
      * @brief SSSP Enact kernel entry.
      *
-     * @tparam SSSPProblem SSSP Problem type. @see SSSPProblem
+     * @param[in] src Source node to start primitive.
+     * @param[in] traversal_mode Load-balanced or Dynamic cooperative.
      *
-     * @param[in] src Source node for SSSP.
-     *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     //template <typename SSSPProblem>
     cudaError_t Enact(
@@ -695,10 +836,14 @@ public:
     {
         int min_sm_version = -1;
         for (int i=0;i<this->num_gpus;i++)
-            if (min_sm_version == -1 || this->cuda_props[i].device_sm_version < min_sm_version)
+        {
+            if (min_sm_version == -1 ||
+                this->cuda_props[i].device_sm_version < min_sm_version)
                 min_sm_version = this->cuda_props[i].device_sm_version;
+        }
 
-        if (min_sm_version >= 300) {
+        if (min_sm_version >= 300)
+        {
             if (traversal_mode == 0)
                 return EnactSSSP< LBAdvanceKernelPolicy, FilterKernelPolicy>(src);
             else
@@ -712,19 +857,15 @@ public:
     }
 
     /**
-     * \addtogroup PublicInterface
-     * @{
-     */
-
-    /**
      * @brief SSSP Enact kernel entry.
      *
-     * @param[in] context CudaContext pointer for moderngpu APIs
-     * @param[in] problem Pointer to SSSPProblem object.
-     * @param[in] traversal_mode Load-balanced or Dynamic cooperative
-     * @param[in] max_grid_size Max grid size for SSSP kernel calls.
+     * @param[in] context CudaContext pointer for ModernGPU API.
+     * @param[in] problem Pointer to Problem object.
+     * @param[in] max_grid_size Maximum grid size for kernel calls.
+     * @param[in] size_check Whether or not to enable size check.
+     * @param[in] traversal_mode Load-balanced or Dynamic cooperative.
      *
-     * \return cudaError_t object which indicates the success of all CUDA function calls.
+     * \return cudaError_t object Indicates the success of all CUDA calls.
      */
     cudaError_t Init(
         ContextPtr   *context,
@@ -735,10 +876,14 @@ public:
     {
         int min_sm_version = -1;
         for (int i=0;i<this->num_gpus;i++)
-            if (min_sm_version == -1 || this->cuda_props[i].device_sm_version < min_sm_version)
+        {
+            if (min_sm_version == -1 ||
+                this->cuda_props[i].device_sm_version < min_sm_version)
                 min_sm_version = this->cuda_props[i].device_sm_version;
+        }
 
-        if (min_sm_version >= 300) {
+        if (min_sm_version >= 300)
+        {
             if (traversal_mode == 0)
                 return InitSSSP< LBAdvanceKernelPolicy, FilterKernelPolicy>(
                     context, problem, max_grid_size, size_check);
@@ -748,7 +893,7 @@ public:
         }
 
         //to reduce compile time, get rid of other architecture for now
-        //TODO: add all the kernelpolicy settings for all archs
+        //TODO: add all the kernel policy settings for all archs
         printf("Not yet tuned for this architecture\n");
         return cudaErrorInvalidDeviceFunction;
     }
