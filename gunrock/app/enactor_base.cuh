@@ -781,6 +781,58 @@ protected:
 
         return max_grid_size;
     }
+
+public:
+    /**
+     * @brief Obtain statistics about the last BFS search enacted.
+     *
+     * @param[out] total_queued Total queued elements in BFS kernel running.
+     * @param[out] search_depth Search depth of BFS algorithm.
+     * @param[out] avg_duty Average kernel running duty (kernel run time/kernel lifetime).
+     */
+    template <typename Enactor>
+    void GetStatistics(
+        long long &edges_queued,
+        long long &nodes_queued,
+        long long &search_depth,
+        double    &avg_duty,
+        unsigned long long total_lifetimes,
+        unsigned long long total_runtimes)
+    {    
+        total_lifetimes =0;
+        total_runtimes  =0;
+        edges_queued    = 0;
+        nodes_queued    = 0;
+        search_depth    = 0; 
+        EnactorSlice<Enactor> *enactor_slices 
+            = (EnactorSlice<Enactor>*) this->enactor_slices;
+        for (int gpu=0; gpu<this->num_gpus; gpu++)
+        {    
+            if (this->num_gpus!=1)
+                if (util::SetDevice(this->gpu_idx[gpu])) return;
+            cudaThreadSynchronize();
+
+            for (int stream=0; stream< this->num_subq__streams + this->num_fullq_stream ; stream++)
+            {    
+                EnactorStats *enactor_stats_ = (stream < this->num_subq__streams) ?
+                    enactor_slices[gpu].subq__enactor_statses + stream :
+                    enactor_slices[gpu].fullq_enactor_stats   + stream - this->num_subq__streams;
+                edges_queued += enactor_stats_ -> edges_queued[0];
+                nodes_queued += enactor_stats_ -> nodes_queued[0];
+                enactor_stats_ -> edges_queued.Move(util::DEVICE, util::HOST);
+                enactor_stats_ -> nodes_queued.Move(util::DEVICE, util::HOST);
+                edges_queued += enactor_stats_ -> edges_queued[0];
+                nodes_queued += enactor_stats_ -> nodes_queued[0];
+                
+                if (enactor_stats_ -> iteration > search_depth) 
+                    search_depth = enactor_stats_ -> iteration;
+                total_lifetimes += enactor_stats_ -> total_lifetimes;
+                total_runtimes  += enactor_stats_ -> total_runtimes;
+            }    
+        }    
+        avg_duty = (total_lifetimes >0) ?
+            double(total_runtimes) / total_lifetimes * 100.0 : 0.0; 
+    }  
 }; // end of EnactorBase
 
 } // namespace app

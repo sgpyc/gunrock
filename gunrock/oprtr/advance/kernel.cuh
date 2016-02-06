@@ -236,7 +236,7 @@ template <typename KernelPolicy, typename ProblemData, typename Functor>
     {
         case TWC_FORWARD:
         {
-            printf("%d\t %lld\t TWC_FORWARD advance, queue_reset = %s, queue_index = %d, "
+            /*printf("%d\t %lld\t TWC_FORWARD advance, queue_reset = %s, queue_index = %d, "
                 "queue_length = %d, d_in_key = %p, stream = %p"
                 "d_out_value = %p, d_out_key = %p, d_row_offsets = %p, "
                 "d_column_indices = %p, d_row_indices = %p, data_slice = %p, "
@@ -253,7 +253,7 @@ template <typename KernelPolicy, typename ProblemData, typename Functor>
                 &enactor_stats.advance_kernel_stats, 
                 inverse_graph ? "true" : "false",
                 d_value_to_reduce, d_reduce_frontier);
-            fflush(stdout);
+            fflush(stdout);*/
 
             // Load Thread Warp CTA Forward Kernel
             gunrock::oprtr::edge_map_forward::Kernel

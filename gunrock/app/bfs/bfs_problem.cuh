@@ -57,6 +57,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
      */
     struct DataSlice : DataSliceBase<VertexId, SizeT, Value>
     {
+        util::Array1D<SizeT, VertexId      > labels        ;
         util::Array1D<SizeT, unsigned char > visited_mask  ;
         util::Array1D<SizeT, unsigned int  > temp_marker   ;
         util::Array1D<SizeT, VertexId      > original_vertex;
@@ -66,6 +67,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
          */
         DataSlice()
         {
+            labels          .SetName("labels"          );
             visited_mask    .SetName("visited_mask"    );
             temp_marker     .SetName("temp_marker"     );
             original_vertex .SetName("original_vertex" );
@@ -77,6 +79,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
         ~DataSlice()
         {
             if (util::SetDevice(this->gpu_idx)) return;
+            labels        .Release();
             visited_mask  .Release();
             temp_marker   .Release();
             original_vertex.Release();
@@ -105,17 +108,11 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
         {
             cudaError_t retval = cudaSuccess;
             if (retval = DataSliceBase<VertexId, SizeT, Value>::Init(
-                num_gpus,
-                gpu_idx,
-                num_vertex_associate,
-                num_value__associate,
-                graph,
-                num_in_nodes,
-                num_out_nodes,
-                in_sizing)) return retval;
+                gpu_idx, graph)) 
+            return retval;
 
             // Create SoA on device
-            if (retval = this->labels       .Allocate(graph->nodes,util::DEVICE)) return retval;
+            if (retval = labels       .Allocate(graph->nodes,util::DEVICE)) return retval;
 
             if (_MARK_PREDECESSORS)
             {
@@ -171,7 +168,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                 return retval;
             util::MemsetKernel<<<128, 128>>>(
                 this->labels.GetPointer(util::DEVICE), 
-                _ENABLE_IDEMPOTENCE ? -1 : (util::MaxValue<Value>()-1), nodes);
+                _ENABLE_IDEMPOTENCE ? (VertexId)-1 : (util::MaxValue<VertexId>()-1), nodes);
 
             // Allocate preds if necessary
             if (_MARK_PREDECESSORS)// && !_ENABLE_IDEMPOTENCE)
@@ -180,7 +177,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                 if (retval = this->preds.Allocate(nodes, util::DEVICE)) 
                     return retval;
                 util::MemsetKernel<<<128,128>>>(
-                    this->preds.GetPointer(util::DEVICE), -2, nodes); 
+                    this->preds.GetPointer(util::DEVICE), (VertexId)-2, nodes); 
             }
             
             original_vertex.SetPointer(
@@ -188,7 +185,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                 graph_slice -> original_vertex.GetSize(),
                 util::DEVICE);
 
-            if (TO_TRACK)
+            /*if (TO_TRACK)
             {
                 if (retval = this -> org_checkpoint.Allocate(max_queue_length, util::DEVICE))
                     return retval;
@@ -204,7 +201,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                     return retval;
                 if (retval = this -> org_thread_idx.Allocate(max_queue_length, util::DEVICE))
                     return retval;
-            }
+            }*/
             if (_ENABLE_IDEMPOTENCE) {
                 SizeT visited_mask_bytes 
                     = ((nodes * sizeof(unsigned char))+7)/8;

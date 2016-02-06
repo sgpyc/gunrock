@@ -388,7 +388,7 @@ void RunTests(Info<VertexId, Value, SizeT> *info)
             printf("Computing reference value ...\n");
             fflush(stdout);
         }
-        SimpleReferenceBfs<VertexId, SizeT, Value, 
+        ReferenceBFS<VertexId, SizeT, Value, 
             MARK_PREDECESSORS, ENABLE_IDEMPOTENCE>(
             graph,
             reference_check_label,
@@ -529,11 +529,11 @@ void RunTests(Info<VertexId, Value, SizeT> *info)
                     v_[gpu][problem->original_vertexes[gpu][v]] = v;
             }
         }
-        util::Track_Results(graph, num_gpus, 1, h_labels, reference_check_label, 
+        util::Track_Results(graph, num_gpus, (VertexId)1, h_labels, reference_check_label, 
             num_gpus > 1 ? problem->partition_tables[0] : NULL, v_);
         char file_name[512];
         sprintf(file_name, "./eval/error_dump/error_%lld_%d.txt", (long long)time(NULL), gpu_idx[0]);
-        util::Output_Errors(file_name, graph -> nodes, num_gpus, 0, h_labels, reference_check_label,
+        util::Output_Errors(file_name, graph -> nodes, num_gpus, (VertexId)0, h_labels, reference_check_label,
             num_gpus > 1 ? problem->partition_tables[0] : NULL, v_);
         if (num_gpus > 1)
         {
@@ -553,7 +553,7 @@ void RunTests(Info<VertexId, Value, SizeT> *info)
     }
 
     info->ComputeTraversalStats(  // compute running statistics
-        enactor->enactor_stats.GetPointer(), elapsed, h_labels);
+        enactor, (float)elapsed, h_labels);
 
     // Show Memory usage
     if (!quiet_mode)

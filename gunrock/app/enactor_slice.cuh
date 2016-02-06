@@ -309,10 +309,14 @@ struct EnactorSlice
             {
                 if (retval = util::GRError(cudaStreamCreate(subq__streams + stream),
                     "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
-                subq__contexts[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, subq__streams[stream]);
-                subq__scanned_edges[stream].SetName("subq__scanned_edges[]");
-                subq__work_progresses[stream].Init();
-                if (retval = subq__frontier_attributes[stream].output_length.Init(1, util::HOST | util::DEVICE, true, cudaHostAllocMapped | cudaHostAllocPortable)) return retval;
+                subq__contexts       [stream] = 
+                    mgpu::CreateCudaDeviceAttachStream(gpu_idx, subq__streams[stream]);
+                subq__scanned_edges  [stream].SetName("subq__scanned_edges[]");
+                subq__work_progresses[stream].template Init<SizeT>();
+                if (retval = subq__frontier_attributes[stream].
+                    output_length.Init(1, util::HOST | util::DEVICE, 
+                    true, cudaHostAllocMapped | cudaHostAllocPortable)) 
+                return retval;
             }
             for (int i=0; i<4; i++)
             {
@@ -361,7 +365,7 @@ struct EnactorSlice
                     "cudaStreamCreate failed", __FILE__, __LINE__)) return retval;
                 fullq_context[stream] = mgpu::CreateCudaDeviceAttachStream(gpu_idx, fullq_stream[stream]);
                 fullq_scanned_edge[stream].SetName("fullq_scanned_edge[]");
-                fullq_work_progress[stream].Init();
+                fullq_work_progress[stream].template Init<SizeT>();
                 if (retval = fullq_frontier_attribute[stream].output_length.Allocate(1, 
                     util::HOST | util::DEVICE)) return retval;
             }

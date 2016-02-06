@@ -523,7 +523,7 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                     d_bitmap_out + v);
 
                 util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                    -1,
+                    (VertexId)-1,
                     d_queue + v_id);
 
                 found_parent = true;

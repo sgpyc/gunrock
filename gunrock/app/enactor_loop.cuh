@@ -135,6 +135,8 @@ public:
 
     SizeT            *d_offsets;
     VertexId         *d_indices;
+    SizeT            *d_inv_offsets;
+    VertexId         *d_inv_indices;
     VertexId         *d_in_key_queue;
     SizeT             max_in;
     SizeT             max_out;

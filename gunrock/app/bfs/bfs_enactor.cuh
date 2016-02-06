@@ -86,7 +86,7 @@ __global__ void Expand_Incoming_BFS (
             continue;
         }
         
-        Value old_label = atomicCAS(s_handle.vertex_orgs[0] + key, -1, label);
+        VertexId old_label = atomicCAS(s_handle.vertex_orgs[0] + key, (VertexId)-1, label);
         if (old_label != -1)
         {
             old_label = atomicMin(s_handle.vertex_orgs[0] + key, label);
@@ -240,7 +240,7 @@ struct BFSIteration : public IterationBase <
         frontier_attribute -> queue_index++;
         frontier_attribute -> selector ^= 1;
         enactor_stats      -> AccumulateEdges(
-            work_progress  -> GetQueueLengthPointer<unsigned int,SizeT>(
+            work_progress  -> template GetQueueLengthPointer<unsigned int,SizeT>(
             frontier_attribute->queue_index), stream);
 
         if (TO_TRACK)
@@ -266,7 +266,7 @@ struct BFSIteration : public IterationBase <
             //    data_slice -> labels.GetPointer(util::DEVICE),
             //    enactor_stats -> iteration+1);
            
-            util::MemsetCASKernel<<<256, 256, 0, stream>>>(
+            util::MemsetCASKernel<VertexId, SizeT> <<<256, 256, 0, stream>>>(
                 frontier_queue -> keys[ frontier_attribute->selector].GetPointer(util::DEVICE),
                 -2, -1,
                 work_progress -> template GetQueueLengthPointer<unsigned int, SizeT>(
@@ -436,22 +436,25 @@ struct BFSIteration : public IterationBase <
             //    this -> max_in, this-> max_out, this->stream);
             //fflush(stdout);
 
-        retval = gunrock::oprtr::advance::ComputeOutputLength
-            <AdvanceKernelPolicy, Problem, BfsFunctor>(
-            this-> frontier_attribute,
-            this-> d_offsets,
-            this-> d_indices,
-            this-> d_keys_in,
-            this-> scanned_edge ->GetPointer(util::DEVICE),
-            this-> max_in,
-            this-> max_out,
-            this-> context[0],
-            this-> stream,
-            this-> advance_type,
-            this-> express/*
-            in_inv,
-            out_inv*/);
-        return retval;
+            retval = gunrock::oprtr::advance::ComputeOutputLength
+                <AdvanceKernelPolicy, Problem, BfsFunctor>(
+                this-> frontier_attribute,
+                this-> d_offsets,
+                this-> d_indices,
+                this-> d_inv_offsets,
+                this-> d_inv_indices,
+                this-> d_keys_in,
+                this-> scanned_edge ->GetPointer(util::DEVICE),
+                this-> max_in,
+                this-> max_out,
+                this-> context[0],
+                this-> stream,
+                this-> advance_type,
+                this-> express/*
+                in_inv,
+                out_inv*/);
+            return retval;
+        }
     }
 
     /*

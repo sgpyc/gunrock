@@ -293,7 +293,7 @@ public:
     // Sets up the progress counters for the next kernel launch (lazily
     // allocating and initializing them if necessary)
     template <typename SizeT>
-    cudaError_t Setup()
+    cudaError_t Init()
     {
         cudaError_t retval = cudaSuccess;
         do {

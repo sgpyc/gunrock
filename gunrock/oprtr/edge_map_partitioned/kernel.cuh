@@ -423,7 +423,7 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                         } else {
                             if (d_out != NULL) {
                                  util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                        -1,
+                                        (VertexId)-1,
                                         d_out + out_index);
                             }
 
@@ -502,7 +502,7 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                         } else {
                             if (d_out != NULL) {
                                 util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                        -1,
+                                        (VertexId)-1,
                                         d_out + out_index);
                             }
 
@@ -723,7 +723,7 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                     //printf("%d,%dCg\t", threadIdx.x, i);
                     if (d_out != NULL) {
                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                -1,
+                                (VertexId)-1,
                                 d_out + offset+i);
                     }
                     //printf("%d,%dCh\t", threadIdx.x, i);
@@ -808,7 +808,7 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                 else {
                     if (d_out != NULL) {
                         util::io::ModifiedStore<ProblemData::QUEUE_WRITE_MODIFIER>::St(
-                                -1,
+                                (VertexId)-1,
                                 d_out + offset+i);
                     }
 

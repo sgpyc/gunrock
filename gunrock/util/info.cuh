@@ -878,71 +878,45 @@ public:
      * @param[in] labels
      * @param[in] get_traversal_stats
      */
-    template <typename EnactorStats>
+    template <typename Enactor>
     void ComputeCommonStats(
-        EnactorStats *enactor_stats,
+        Enactor *enactor,
         float elapsed,
         const VertexId *labels = NULL,
         bool get_traversal_stats = false)
     {
-        double total_lifetimes = 0;
-        double total_runtimes = 0;
+        unsigned long long total_lifetimes = 0;
+        unsigned long long total_runtimes = 0;
 
         // traversal stats
-        int64_t edges_queued = 0;
-        int64_t nodes_queued = 0;
-        int64_t search_depth = 0;
-        int64_t nodes_visited = 0;
-        int64_t edges_visited = 0;
-        float   m_teps = 0.0f;
-        double  edges_redundance = 0.0f;
-        double  nodes_redundance = 0.0f;
+        long long edges_queued     = 0;
+        long long nodes_queued     = 0;
+        long long search_depth     = 0;
+        long long nodes_visited    = 0;
+        long long edges_visited    = 0;
+        float   m_teps           = 0.0f;
+        double  edges_redundance = 0.0;
+        double  nodes_redundance = 0.0;
+        double  avg_duty         = 0.0;
 
         json_spirit::mArray device_list = info["device_list"].get_array();
 
-        for (int gpu = 0; gpu < num_gpus; ++gpu)
-        {
-            int my_gpu_idx = device_list[gpu].get_int();
-            if (num_gpus != 1)
-            {
-                if (util::SetDevice(my_gpu_idx)) return;
-            }
-            cudaThreadSynchronize();
+        enactor -> template GetStatistics<Enactor>(
+            edges_queued,
+            nodes_queued,
+            search_depth,
+            avg_duty,
+            total_lifetimes,
+            total_runtimes);
 
-            for (int peer = 0; peer < num_gpus; ++peer)
-            {
-                EnactorStats *estats = enactor_stats + gpu * num_gpus + peer;
-                if (get_traversal_stats)
-                {
-                    edges_queued += estats->edges_queued[0];
-                    estats->edges_queued.Move(util::DEVICE, util::HOST);
-                    edges_queued += estats->edges_queued[0];
-
-                    nodes_queued += estats->nodes_queued[0];
-                    estats->nodes_queued.Move(util::DEVICE, util::HOST);
-                    nodes_queued += estats->nodes_queued[0];
-
-                    if (estats->iteration > search_depth)
-                    {
-                        search_depth = estats->iteration;
-                    }
-                }
-                total_lifetimes += estats->total_lifetimes;
-                total_runtimes  += estats->total_runtimes;
-            }
-        }
-
-        double avg_duty = (total_lifetimes > 0) ?
-            double(total_runtimes) / total_lifetimes * 100.0 : 0.0f;
-
-        info["elapsed"] = elapsed;
+        info["elapsed"     ] = elapsed;
         info["average_duty"] = avg_duty;
-        info["search_depth"] = search_depth;
+        info["search_depth"] = (int64_t)search_depth;
 
         if (get_traversal_stats)
         {
-            info["edges_queued"] = edges_queued;
-            info["nodes_queued"] = nodes_queued;
+            info["edges_queued"] = (int64_t)edges_queued;
+            info["nodes_queued"] = (int64_t)nodes_queued;
         }
 
         // TODO: compute traversal stats
@@ -984,8 +958,8 @@ public:
 
             m_teps = (double)edges_visited / (elapsed * 1000.0);
 
-            info["nodes_visited"] = nodes_visited;
-            info["edges_visited"] = edges_visited;
+            info["nodes_visited"   ] = (int64_t)nodes_visited;
+            info["edges_visited"   ] = (int64_t)edges_visited;
             info["nodes_redundance"] = nodes_redundance;
             info["edges_redundance"] = edges_redundance;
             info["m_teps"] = m_teps;
@@ -999,14 +973,14 @@ public:
      * @param[in] elapsed
      * @param[in] labels
      */
-    template <typename EnactorStats>
+    template <typename Enactor>
     void ComputeTraversalStats(
-        EnactorStats *enactor_stats,
+        Enactor *enactor,
         float elapsed,
         const VertexId *labels = NULL)
     {
         ComputeCommonStats(
-            enactor_stats,
+            enactor,
             elapsed,
             labels,
             true);
