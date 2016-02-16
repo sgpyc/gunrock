@@ -406,6 +406,7 @@ template <
     //bool     _SIZE_CHECK,
     _SizeT   _NUM_VERTEX_ASSOCIATES,
     _SizeT   _NUM_VALUE__ASSOCIATES>
+struct EnactorBase
 {
 public:
     typedef _VertexId VertexId;
@@ -428,7 +429,7 @@ public:
         PRequest;
 
     typedef typename util::CircularQueue<
-        VertexId, SizeT, Value, SIZE_CHECK>
+        VertexId, SizeT, Value/*, SIZE_CHECK*/>
         CircularQueue;
     
     typedef MakeOutHandle<
@@ -569,9 +570,9 @@ protected:
         int num_fullq_stream  = 0,
         int num_split_streams = 0)
     {
-        typedef EnactorSlice<Enactor> EnactorSlice;
+        typedef EnactorSlice<Enactor> EnactorSliceT;
         typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
-            ThreadSlice;
+            ThreadSliceT;
 
         printf("EnactorBase Init begin. #input_streams = %d, #outpu_streams = %d, #subq__streams = %d, #fullq_streams = %d, #split_streams = %d\n",
             num_input_streams, num_outpu_streams, num_subq__streams,
@@ -589,10 +590,10 @@ protected:
                     + ( (num_subq__streams > 0) ? 1 : 0)
                     + ( (num_fullq_stream  + num_split_streams > 0) ? 1: 0);
         
-        EnactorSlice *enactor_slices = new EnactorSlice[num_gpus];
+        EnactorSliceT *enactor_slices = new EnactorSliceT[num_gpus];
         this -> enactor_slices = (void*) enactor_slices;
         
-        ThreadSlice  *thread_slices  = new ThreadSlice [num_threads * num_gpus];
+        ThreadSliceT  *thread_slices  = new ThreadSliceT [num_threads * num_gpus];
         this -> thread_slices  = (void*) thread_slices;
 
         if (retval = threads      .Allocate(num_threads * num_gpus))
@@ -602,8 +603,9 @@ protected:
         for (int gpu_num=0; gpu_num<num_gpus; gpu_num++)
         {
             if (retval = util::SetDevice(gpu_idx[gpu_num])) return retval;
-            EnactorSlice *enactor_slice = enactor_slices + gpu_num;
+            EnactorSliceT *enactor_slice = enactor_slices + gpu_num;
             if (retval = enactor_slice->Init(
+                enactor,
                 num_gpus, gpu_num, gpu_idx[gpu_num],
                 num_input_streams, num_outpu_streams,
                 num_subq__streams, num_fullq_stream ,
@@ -624,19 +626,19 @@ protected:
                 enactor_stats_ -> gpu_num = gpu_num;
             }
 
-            typename ThreadSlice::Type thread_type = ThreadSlice::Type::Input;
-            while (thread_type != ThreadSlice::Type::Last)
+            typename ThreadSliceT::Type thread_type = ThreadSliceT::Type::Input;
+            while (thread_type != ThreadSliceT::Type::Last)
             {
-                if ((thread_type == ThreadSlice::Type::Input 
+                if ((thread_type == ThreadSliceT::Type::Input 
                      && num_input_streams <= 0) ||
-                    (thread_type == ThreadSlice::Type::Output 
+                    (thread_type == ThreadSliceT::Type::Output 
                      && num_outpu_streams <= 0) ||
-                    (thread_type == ThreadSlice::Type::SubQ
+                    (thread_type == ThreadSliceT::Type::SubQ
                      && num_subq__streams <= 0) ||
-                    (thread_type == ThreadSlice::Type::FullQ
+                    (thread_type == ThreadSliceT::Type::FullQ
                      && num_fullq_stream + num_split_streams <= 0))
                 {
-                    thread_type = ThreadSlice::IncreatmentType(thread_type); 
+                    thread_type = ThreadSliceT::IncreatmentType(thread_type); 
                     continue;
                 }
 
@@ -644,22 +646,22 @@ protected:
                     thread_counter, gpu_num, problem, enactor, 
                     thread_type, threads[thread_counter]))
                     return retval;
-                if (thread_type == ThreadSlice::Type::Input)
+                if (thread_type == ThreadSliceT::Type::Input)
                     enactor_slice -> input_thread_slice = thread_slices + thread_counter;
-                else if (thread_type == ThreadSlice::Type::Output)
+                else if (thread_type == ThreadSliceT::Type::Output)
                     enactor_slice -> outpu_thread_slice = thread_slices + thread_counter;
-                else if (thread_type == ThreadSlice::Type::SubQ)
+                else if (thread_type == ThreadSliceT::Type::SubQ)
                     enactor_slice -> subq__thread_slice = thread_slices + thread_counter;
-                else if (thread_type == ThreadSlice::Type::FullQ)
+                else if (thread_type == ThreadSliceT::Type::FullQ)
                     enactor_slice -> fullq_thread_slice = thread_slices + thread_counter;
                 thread_counter ++;
-                thread_type = ThreadSlice::IncreatmentType(thread_type); 
+                thread_type = ThreadSliceT::IncreatmentType(thread_type); 
             }
         }
         num_threads = thread_counter;
 
         for (int thread_num = 0; thread_num < num_threads; thread_num++)
-        while (thread_slices[thread_num].status != ThreadSlice::Status::Wait)
+        while (thread_slices[thread_num].status != ThreadSliceT::Status::Wait)
         {
             std::this_thread::sleep_for(std::chrono::microseconds(1));
         }
@@ -675,20 +677,20 @@ protected:
         typename Enactor>
     cudaError_t Release()
     {
-        typedef EnactorSlice<Enactor> EnactorSlice;
+        typedef EnactorSlice<Enactor> EnactorSliceT;
         typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
-            ThreadSlice;
+            ThreadSliceT;
         cudaError_t retval = cudaSuccess;
 
         printf("EnactorBase Release begin.\n");fflush(stdout);
-        EnactorSlice *enactor_slices
-            = (EnactorSlice*) this->enactor_slices;
-        ThreadSlice  *thread_slices
-            = (ThreadSlice*)  this->thread_slices;
+        EnactorSliceT *enactor_slices
+            = (EnactorSliceT*) this->enactor_slices;
+        ThreadSliceT  *thread_slices
+            = (ThreadSliceT*)  this->thread_slices;
 
         for (int i=0; i<num_threads; i++)
         {
-            thread_slices[i].status = ThreadSlice::Status::ToKill;
+            thread_slices[i].status = ThreadSliceT::Status::ToKill;
         }
         for (int i=0; i<num_threads; i++)
         {
@@ -698,8 +700,8 @@ protected:
         for (int gpu=0; gpu<num_gpus; gpu++)
         {
             if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
-            EnactorSlice *enactor_slice = 
-                ((EnactorSlice*) enactor_slices) + gpu;
+            EnactorSliceT *enactor_slice = 
+                ((EnactorSliceT*) enactor_slices) + gpu;
             enactor_slice -> Release();
         }
         if (retval = cuda_props        .Release()) return retval;
@@ -756,7 +758,7 @@ protected:
             if (retval = enactor_slices[gpu].Reset(
                 frontier_type,
                 problem -> graph_slices[gpu],
-                Enactor::Problem::USE_DOUBLE_BUFFER,
+                problem -> use_double_buffer,
                 problem -> graph_slices[gpu]->in_counter + 0,
                 problem -> graph_slices[gpu]->out_counter + 0,
                 subq__factor, subq__factor0, subq__factor1,

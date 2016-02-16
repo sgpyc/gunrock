@@ -328,7 +328,6 @@ void RunTests(Info<VertexId, SizeT, Value> *info)
     VertexId   *h_preds               = NULL;
     CpuTimer    cpu_timer;
 
-    CpuTimer cpu_timer;
     cpu_timer.Start();
     json_spirit::mArray device_list = info->info["device_list"].get_array();
     for (int i = 0; i < num_gpus; i++) 
@@ -714,9 +713,9 @@ template <
 int main_Value(CommandLineArgs *args)
 {
 // disabled to reduce compile time
-//    if (args -> CheckCmdLineFlag("64bit-Value"))
-//        return main_<VertexId, SizeT, long long>(args);
-//    else 
+    if (args -> CheckCmdLineFlag("64bit-Value"))
+        return main_<VertexId, SizeT, long long>(args);
+    else 
         return main_<VertexId, SizeT, int      >(args);
 }
 
@@ -725,9 +724,9 @@ template <
 int main_SizeT(CommandLineArgs *args)
 {
 // disabled to reduce compile time
-//    if (args -> CheckCmdLineFlag("64bit-SizeT"))
-//        return main_Value<VertexId, long long>(args);
-//    else
+    if (args -> CheckCmdLineFlag("64bit-SizeT"))
+        return main_Value<VertexId, long long>(args);
+    else
         return main_Value<VertexId, int      >(args);
 }
 

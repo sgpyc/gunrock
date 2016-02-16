@@ -140,13 +140,16 @@ struct BFSIteration : public IterationBase <
     BFSIteration() {}
 
     cudaError_t Init(
+        Enactor *enactor,
         int num_gpus,
         int num_streams)
 
     {
         cudaError_t retval = cudaSuccess;
-        if (retval = BaseIteration::Init(num_gpus,num_streams,
-            true, false, false, true, Enactor::Problem::MARK_PREDECESSORS))
+        if (retval = BaseIteration::Init(
+            enactor, num_gpus, num_streams,
+            true, false, false, true, 
+            Enactor::Problem::MARK_PREDECESSORS))
             return retval;
         return retval;
     }
@@ -239,7 +242,7 @@ struct BFSIteration : public IterationBase <
         frontier_attribute -> queue_index++;
         frontier_attribute -> selector ^= 1;
         enactor_stats      -> AccumulateEdges(
-            work_progress  -> GetQueueLengthPointer<unsigned int,SizeT>(
+            work_progress  -> template GetQueueLengthPointer<unsigned int,SizeT>(
                 frontier_attribute -> queue_index), stream);
 
         if (TO_TRACK)
@@ -373,8 +376,9 @@ struct BFSIteration : public IterationBase <
         //    this->num_elements, this->gpu_num, 0, this->stream_num, this->stream);
         //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("vals_in", this->h_e_handle -> vertex_ins[0],
         //    this->num_elements, this->gpu_num, 0, this->stream_num, this->stream);
-        printf("%d\t \t %d\t Expand_Incoming start, num_elements = %d\n", 
-            this->gpu_num, this->stream_num, this->num_elements);fflush(stdout);
+        printf("%d\t \t %d\t Expand_Incoming start, num_elements = %lld\n", 
+            this->gpu_num, this->stream_num, (long long)this->num_elements);
+        fflush(stdout);
         Expand_Incoming_BFS 
             <VertexId, SizeT, Value, ExpandIncomingHandle> 
             <<< this->grid_size  , this->block_size, 0, this->stream>>> 
@@ -419,7 +423,7 @@ struct BFSIteration : public IterationBase <
         cudaError_t retval = cudaSuccess;
         //printf("SIZE_CHECK = %s\n", Enactor::SIZE_CHECK ? "true" : "false");
         bool over_sized = false;
-        if (!enactor -> size_check &&
+        if (!this -> enactor -> size_check &&
             (AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_FORWARD ||
              AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_BACKWARD))
         {
@@ -484,7 +488,7 @@ struct BFSIteration : public IterationBase <
         int           selector           = frontier_attribute->selector;
         long long     iteration          = enactor_stats -> iteration;
 
-        if (enactor -> debug)
+        if (this -> enactor -> debug)
         {
             sprintf(this -> mssg, "queue_size = %lld, request_length = %lld",
                 (long long)frontier_queue -> keys[selector^1].GetSize(),
@@ -502,7 +506,7 @@ struct BFSIteration : public IterationBase <
             &frontier_queue->keys  [selector  ], over_sized, 
             gpu_num, iteration, stream_num, true )) 
             return retval;
-        if (this -> problem -> use_double_buffer)
+        if (this -> enactor -> problem -> use_double_buffer)
         {    
             if (retval = Check_Size<SizeT, Value> (
                 true, "queue3", request_length, 
@@ -538,7 +542,8 @@ struct BFSIteration : public IterationBase <
         //SizeT                          num_elements,
         //cudaStream_t                   stream)
     {
-        return ;
+        cudaError_t retval = cudaSuccess;
+        return retval;
     }
 };
 
@@ -552,10 +557,16 @@ struct BFSIteration : public IterationBase <
  */
 template <typename _Problem/*, bool _INSTRUMENT, bool _DEBUG, bool _SIZE_CHECK*/>
 class BFSEnactor :
-    public EnactorBase<typename _Problem::SizeT/*, _DEBUG, _SIZE_CHECK*/>
+    public EnactorBase<
+        typename _Problem::VertexId,
+        typename _Problem::SizeT, 
+        typename _Problem::Value,
+        _Problem::MAX_NUM_VERTEX_ASSOCIATES,
+        _Problem::MAX_NUM_VALUE__ASSOCIATES
+        /*, _DEBUG, _SIZE_CHECK*/>
 {
-    ThreadSlice  *thread_slices;
-    CUTThread    *thread_Ids   ;
+    //ThreadSlice  *thread_slices;
+    //CUTThread    *thread_Ids   ;
 
 public:
     typedef _Problem                   Problem;
@@ -563,7 +574,11 @@ public:
     typedef typename Problem::VertexId VertexId;
     typedef typename Problem::Value    Value   ;
 
-    typedef EnactorBase<SizeT>         BaseEnactor;
+    typedef EnactorBase<
+        VertexId, SizeT, Value,
+        Problem::MAX_NUM_VERTEX_ASSOCIATES, 
+        Problem::MAX_NUM_VALUE__ASSOCIATES> 
+                                       BaseEnactor;
     typedef BFSEnactor <Problem>       Enactor ;
     //static const bool INSTRUMENT = _INSTRUMENT;
     //static const bool DEBUG      = _DEBUG;
@@ -665,7 +680,7 @@ public:
             num_subq__streams,
             0,
             num_split_streams)) return retval;        
-        this->problem = (void*)problem;
+        this->problem = problem;
  
         IterationT *iteration_loops = NULL;
         for (int gpu_num = 0; gpu_num < this->num_gpus; gpu_num++)
@@ -677,7 +692,7 @@ public:
             {
                 iteration_loops = new IterationT[num_input_streams];
                 for (int stream_num=0; stream_num< num_input_streams; stream_num++)
-                if (retval = iteration_loops[stream_num].Init(
+                if (retval = iteration_loops[stream_num].Init(this,
                     this->num_gpus, num_input_streams)) return retval;
                 enactor_slice -> input_iteration_loops =
                     (void*) iteration_loops;
@@ -686,7 +701,7 @@ public:
             {
                 iteration_loops = new IterationT[num_outpu_streams];
                 for (int stream_num=0; stream_num < num_outpu_streams; stream_num++)
-                if (retval = iteration_loops[stream_num].Init(
+                if (retval = iteration_loops[stream_num].Init(this,
                     this->num_gpus, num_outpu_streams)) return retval;
                 enactor_slice -> outpu_iteration_loops =
                     (void*) iteration_loops;
@@ -695,7 +710,7 @@ public:
             {
                 iteration_loops = new IterationT[num_subq__streams];
                 for (int stream_num=0; stream_num < num_subq__streams; stream_num++)
-                if (retval = iteration_loops[stream_num].Init(
+                if (retval = iteration_loops[stream_num].Init(this,
                     this->num_gpus, num_subq__streams)) return retval;
                 enactor_slice -> subq__iteration_loops =
                     (void*) iteration_loops;
@@ -703,7 +718,7 @@ public:
             if (num_split_streams > 0 && this->num_gpus > 1)
             {
                 iteration_loops = new IterationT;
-                if (retval = iteration_loops[0].Init(
+                if (retval = iteration_loops[0].Init(this,
                     this->num_gpus, num_split_streams)) return retval;
                 iteration_loops -> direction = Enactor::MakeOutHandle::Direction::FORWARD;
                 enactor_slice -> split_iteration_loop =
@@ -815,12 +830,12 @@ public:
         VertexId    src)
     {
         typedef ThreadSlice<AdvanceKernelPolicy, FilterKernelPolicy, Enactor>
-            ThreadSlice;
+            ThreadSliceT;
         clock_t      start_time = clock();
         cudaError_t  retval     = cudaSuccess;
         EnactorSlice<Enactor> *enactor_slices 
             = (EnactorSlice<Enactor>*) this->enactor_slices; 
-        ThreadSlice* thread_slices = (ThreadSlice*) this->thread_slices;
+        ThreadSliceT* thread_slices = (ThreadSliceT*) this->thread_slices;
         this -> using_subq = true;
         this -> using_fullq = false;
         this -> num_vertex_associates = (this-> num_gpus > 1) ? 
@@ -842,7 +857,7 @@ public:
         }
 
         for (int i=0; i<this->num_threads; i++)
-            thread_slices[i].status = ThreadSlice::Status::Running;
+            thread_slices[i].status = ThreadSliceT::Status::Running;
 
         bool all_done = false;
         int  done_counter = 0;
@@ -851,7 +866,7 @@ public:
             //std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (done_counter == 20)
             {
-                all_done = All_Done<ThreadSlice>(this, -1);
+                all_done = All_Done<ThreadSliceT>(this, -1);
                 if (all_done) break;
                 done_counter = 0;
             } else done_counter ++;
@@ -859,7 +874,7 @@ public:
         }
 
         for (int i=0; i<this->num_threads; i++)
-            thread_slices[i].status = ThreadSlice::Status::Wait;
+            thread_slices[i].status = ThreadSliceT::Status::Wait;
 
         if (this -> debug) printf("GPU BFS Done.\n");
         return retval;

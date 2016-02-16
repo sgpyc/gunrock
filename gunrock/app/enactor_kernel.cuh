@@ -205,7 +205,7 @@ __global__ void Make_Out(MakeOutHandle* d_handle)
     int target_gpu = 0, host_gpu = 0;
     SizeT start_offset = 0, end_offset = 0;
     int *t_partition = NULL;
-    SizeT *t_convertion = NULL;
+    VertexId *t_convertion = NULL;
 
     while (x<sizeof(MakeOutHandle))
     {
@@ -309,7 +309,7 @@ __global__ void Check_Queue(
     const SizeT     num_nodes,
     const long long iteration,
     const VertexId* keys,
-    const Value*    labels)
+    const VertexId* labels)
 {
     const SizeT STRIDE = gridDim.x * blockDim.x;
     VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -319,7 +319,7 @@ __global__ void Check_Queue(
         if (key >= num_nodes || keys < 0)
             printf("%d\t %lld\t %s: x, key = %d, %d\n", gpu_num, iteration, __func__, x, key);
         else {
-            Value label = labels[key];
+            VertexId label = labels[key];
             if ((label != iteration+1 && label != iteration)
               || label < 0)
             {
@@ -338,13 +338,13 @@ __global__ void Check_Range(
     const long long iteration,
     const Value lower_limit,
     const Value upper_limit,
-    const Value* values)
+    const VertexId* values)
 {
-    const SizeT STRIDE = gridDim.x * blockDim.x;
-    VertexId x = blockIdx.x * blockDim.x + threadIdx.x;
+    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
+    VertexId x = (SizeT)blockIdx.x * blockDim.x + threadIdx.x;
     while (x < num_elements)
     {
-        Value value = values[x];
+        VertexId value = values[x];
         if (value > upper_limit || value < lower_limit)
         {
             printf("%d\t %lld\t %s: x = %d, %d not in (%d, %d)\n",

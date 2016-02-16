@@ -39,10 +39,10 @@ public:
     typedef typename Enactor::PRequest      PRequest;
     typedef typename std::list<PRequest*>   PRList;
     typedef typename PRList::iterator       PRIterator;
-    typedef EnactorSlice<Enactor> EnactorSlice;
+    typedef EnactorSlice<Enactor> EnactorSliceT;
     typedef typename Enactor::Problem       Problem      ;
     typedef typename Problem::DataSlice     DataSlice    ;
-    typedef typename Enactor::GraphSlice    GraphSlice   ;
+    typedef typename Enactor::GraphSlice    GraphSliceT  ;
     typedef typename Enactor::CircularQueue CircularQueue;
     typedef typename Enactor::SizeT         SizeT        ;
     typedef typename Enactor::VertexId      VertexId     ;
@@ -225,7 +225,7 @@ static void Outpu_Thread(ThreadSlice_ *thread_slice)
     Enactor      *enactor          =   thread_slice  -> enactor;
     int           gpu_num          =   thread_slice  -> gpu_num;
     int           num_gpus         =   enactor -> num_gpus;
-    EnactorSlice *enactor_slice    = ((EnactorSlice*) enactor -> enactor_slices) + gpu_num;
+    EnactorSliceT *enactor_slice    = ((EnactorSliceT*) enactor -> enactor_slices) + gpu_num;
     PRList       *request_queue    = &(enactor_slice -> outpu_request_queue);
     std::mutex   *rqueue_mutex     = &(enactor_slice -> outpu_request_mutex); 
     cudaStream_t *streams          =   enactor_slice -> outpu_streams + 0;
@@ -290,7 +290,7 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
     int            gpu_num          =   thread_slice  -> gpu_num;
     util::Array1D<SizeT, DataSlice> 
                   *data_slice       = &(problem       -> data_slices[gpu_num]);
-    EnactorSlice  *enactor_slice    = ((EnactorSlice*) enactor -> enactor_slices) + gpu_num;
+    EnactorSliceT *enactor_slice    = ((EnactorSliceT*) enactor -> enactor_slices) + gpu_num;
     CircularQueue *input_queues     =   enactor_slice -> input_queues;
     int            num_streams      =   enactor_slice -> num_input_streams;
     cudaStream_t  *streams          =   enactor_slice -> input_streams + 0;
@@ -459,9 +459,9 @@ static void Input_Thread(ThreadSlice_ *thread_slice)
                 = enactor_slice -> value__associate_orgs[i];
         e_handles->Move(util::HOST, util::DEVICE, 1, stream_selector, stream);
 
-        sprintf(mssg, "GotInput, length = %d, ",
+        sprintf(mssg, "GotInput, length = %lld, ",
             //"vertex_associates = %d, %p, %p, value_associates = %d, %p, %p",
-            length);
+            (long long)length);
             //num_vertex_associates, 
             //num_vertex_associates > 0 ? e_handle -> vertex_ins [0] : NULL, 
             //num_vertex_associates > 0 ? e_handle -> vertex_orgs[0] : NULL,
@@ -509,8 +509,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
     int            thread_num       =   thread_slice  -> thread_num;
     util::Array1D<SizeT, DataSlice> 
                   *data_slice       =   problem       -> data_slices + gpu_num;
-    GraphSlice    *graph_slice      =   problem       -> graph_slices [gpu_num];
-    EnactorSlice  *enactor_slice    = ((EnactorSlice*) 
+    GraphSliceT   *graph_slice      =   problem       -> graph_slices [gpu_num];
+    EnactorSliceT *enactor_slice    = ((EnactorSliceT*) 
                                         enactor -> enactor_slices) + gpu_num;
     CircularQueue *s_queue          = &(enactor_slice -> subq__queue);
     int            num_streams      =   enactor_slice -> num_subq__streams;
@@ -742,7 +742,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 //thread_slice -> ShowDebugInfo("Comp 2", stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> output_length.Move(
                     util::DEVICE, util::HOST, 1, 0, stream);
-                if (Enactor::SIZE_CHECK)
+                if (enactor -> size_check)
                 {
                     Set_Record(enactor_slice, 2, stream_iterations[stream_num],
                         stream_num, stages[stream_num]);
@@ -751,7 +751,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
             case 1: // SubQ Core
                 //thread_slice -> ShowDebugInfo("SubQ .", stream_num, stream_iterations[stream_num]);
-                if (Enactor::SIZE_CHECK)
+                if (enactor -> size_check)
                 {
                     if (thread_slice -> retval = Check_Record(
                         enactor_slice, 2, stream_iterations[stream_num], 
@@ -807,13 +807,14 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                     }
                     core_dones[stream_num] = true;
                     char mssg__[128];
-                    sprintf(mssg__, "SubQ done. Queue_Length = %d", frontier_attribute -> queue_length);
+                    sprintf(mssg__, "SubQ done. Queue_Length = %lld", 
+                        (long long)frontier_attribute -> queue_length);
                     thread_slice -> ShowDebugInfo(mssg__, stream_num, stream_iterations[stream_num]);
-                    if (!Enactor::SIZE_CHECK)
+                    if (!enactor -> size_check)
                     {
                         if (thread_slice -> retval = Check_Size
-                            <false, SizeT, VertexId>(
-                            "queue3", frontier_attribute -> output_length[0] + 2,
+                            <SizeT, VertexId>(
+                            false, "queue3", frontier_attribute -> output_length[0] + 2,
                             &frontier -> keys[selector^1], over_sized,
                             gpu_num, stream_iterations[stream_num], 
                             stream_num, false)) return;
@@ -835,7 +836,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
 
                 if (thread_slice -> retval = t_queue -> Push_Addr(
                     frontier_attribute -> queue_length,
-                    vertex_array, t_offset, 0, Problem::USE_DOUBLE_BUFFER?1:0,
+                    vertex_array, t_offset, 0, enactor -> problem -> use_double_buffer?1:0,
                     NULL, &value__array)) return;
 
                 if (frontier_attribute -> queue_length != 0)
@@ -849,7 +850,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         vertex_array,
                         frontier -> keys[selector].GetPointer(util::DEVICE),
                         frontier_attribute -> queue_length);
-                    if (Problem::USE_DOUBLE_BUFFER)
+                    if (enactor -> problem -> use_double_buffer)
                         util::MemsetCopyVectorKernel<<<256, 256, 0, stream>>>(
                         value__array,
                         frontier -> values[selector].GetPointer(util::DEVICE),
@@ -862,8 +863,8 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                         util::CqEvent<SizeT>::In, t_offset, frontier_attribute -> queue_length)) 
                         return;
                 }
-                sprintf(cmssg, "pushed to fullq, length = %d", 
-                    frontier_attribute -> queue_length);
+                sprintf(cmssg, "pushed to fullq, length = %lld", 
+                    (long long)frontier_attribute -> queue_length);
                 thread_slice -> ShowDebugInfo(cmssg,
                     stream_num, stream_iterations[stream_num]);
                 frontier_attribute -> queue_length = 0;
@@ -904,7 +905,7 @@ static void SubQ__Thread(ThreadSlice_ *thread_slice)
                 break;
             }
 
-            if (Enactor::DEBUG && !thread_slice -> retval)
+            if (enactor -> debug && !thread_slice -> retval)
             {
                 mssg="stage 0 @ gpu 0, stream 0 failed";
                 mssg[6]=char(pre_stage+'0');
@@ -930,8 +931,8 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
     int            thread_num       =   thread_slice  -> thread_num;
     util::Array1D<SizeT, DataSlice>
                   *data_slice       =   problem       -> data_slices + gpu_num;
-    GraphSlice    *graph_slice      =   problem       -> graph_slices [gpu_num];
-    EnactorSlice  *enactor_slice    = ((EnactorSlice*)
+    GraphSliceT   *graph_slice      =   problem       -> graph_slices [gpu_num];
+    EnactorSliceT *enactor_slice    = ((EnactorSliceT*)
                                         enactor -> enactor_slices) + gpu_num;
     CircularQueue *s_queue          = &(enactor_slice -> fullq_queue);
     int            num_streams      =   enactor_slice -> num_fullq_stream;
@@ -1042,7 +1043,7 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
         //s_queue -> ChangeInputCount(0 - s_target_count);
         //s_queue -> ResetOutputCount();
         
-        sprintf(cmssg, "Got job. length = %d", s_length);
+        sprintf(cmssg, "Got job. length = %lld", (long long)s_length);
         thread_slice -> ShowDebugInfo(cmssg);
         if (num_streams >0 && enactor -> using_fullq)
         {
@@ -1100,7 +1101,8 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
             if (frontier_attribute -> queue_length != 0)
             {
                 stages[stream_num] = 0;
-                if (Enactor::DEBUG) {
+                if (enactor -> debug) 
+                {
                     mssg = "";
                     gunrock::app::ShowDebugInfo<Enactor>(
                         gpu_num,
@@ -1116,14 +1118,14 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                 if (thread_slice -> retval = 
                     iteration_loop -> Compute_OutputLength()) return;
                 frontier_attribute -> output_length.Move(util::DEVICE, util::HOST, 1, 0, stream);
-                if (Enactor::SIZE_CHECK)
+                if (enactor -> size_check)
                 {
                     Set_Record(enactor_slice, 3, iteration, stream_num, 
                         stages[stream_num]); 
                 }
 
                 stages[stream_num] ++;
-                if (Enactor::SIZE_CHECK)
+                if (enactor -> size_check)
                 {
                     to_shows[stream_num] = false;
                     while (to_shows[stream_num] == false)
@@ -1165,17 +1167,17 @@ static void FullQ_Thread(ThreadSlice_ *thread_slice)
                         to_shows[stream_num])) return;
                 }
                 selector = frontier_attribute -> selector;
-                if (!Enactor::SIZE_CHECK)
+                if (!enactor -> size_check)
                 {
                     if (thread_slice -> retval = 
-                        Check_Size <false, SizeT, VertexId>(
-                        "queue3", frontier_attribute -> output_length[0] + 2,
+                        Check_Size <SizeT, VertexId>(
+                        false, "queue3", frontier_attribute -> output_length[0] + 2,
                         &frontier -> keys[selector^1], over_sized,
                         gpu_num, iteration, stream_num, false)) return; 
                 } 
             } // end of if (queue_length != 0)
-            sprintf(cmssg, "Fullqueue finished. Queue_Length = %d",
-                frontier_attribute->queue_length);
+            sprintf(cmssg, "Fullqueue finished. Queue_Length = %lld",
+                (long long)frontier_attribute->queue_length);
             thread_slice -> ShowDebugInfo(cmssg);
         } // end of if (has_fullq)
 

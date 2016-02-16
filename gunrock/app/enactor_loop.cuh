@@ -70,7 +70,7 @@ public:
     typedef typename Enactor::VertexId   VertexId  ;
     typedef typename Enactor::Problem    Problem   ;
     typedef typename Problem::DataSlice  DataSlice ;
-    typedef typename Enactor::GraphSlice GraphSlice;
+    typedef typename Enactor::GraphSlice GraphSliceT;
     typedef typename Enactor::FrontierT  FrontierT ;
     typedef typename Enactor::FrontierA  FrontierA ;
     typedef typename Enactor::WorkProgress WorkProgress;
@@ -79,14 +79,14 @@ public:
     typedef typename Enactor::CircularQueue CircularQueue;
     typedef typename Enactor::ExpandIncomingHandle ExpandIncomingHandle;
     typedef typename Enactor::PushRequest   PushRequest;
-    typedef EnactorSlice<Enactor> EnactorSlice;
+    typedef EnactorSlice<Enactor> EnactorSliceT;
 
     template <typename Type>
     using Array = typename Enactor::Array<Type>;
 
-    static const bool INSTRUMENT = Enactor::INSTRUMENT;
-    static const bool DEBUG      = Enactor::DEBUG;
-    static const bool SIZE_CHECK = Enactor::SIZE_CHECK;
+    //static const bool INSTRUMENT = Enactor::INSTRUMENT;
+    //static const bool DEBUG      = Enactor::DEBUG;
+    //static const bool SIZE_CHECK = Enactor::SIZE_CHECK;
 
     bool              has_subq;
     bool              has_fullq;
@@ -111,7 +111,7 @@ public:
     EnactorStats     *enactor_stats;
     util::Array1D<SizeT, DataSlice> *data_slice;
     util::Array1D<SizeT, DataSlice> *data_slices;
-    GraphSlice       *graph_slice;
+    GraphSliceT      *graph_slice;
     WorkProgress     *work_progress;
     ContextPtr        context;
     ContextPtr       *contexts;
@@ -121,7 +121,7 @@ public:
     cudaEvent_t      *events;
     cudaEvent_t       wait_event;
     int              *done_markers;
-    EnactorSlice     *enactor_slice;
+    EnactorSliceT    *enactor_slice;
     Enactor          *enactor;
 
     typename MakeOutHandle::Direction direction;
@@ -144,6 +144,9 @@ public:
     bool              express;
     bool              in_inv;
     bool              out_inv;
+    bool              instrument;
+    bool              debug;
+    bool              size_check;
 
     Array<SizeT*> *markerss;
     Array<SizeT>  *markers;
@@ -230,6 +233,7 @@ public:
     }
 
     cudaError_t Init(
+        Enactor* enactor,
         int  num_gpus, 
         int  num_streams,
         bool has_subq,
@@ -240,6 +244,10 @@ public:
     {
         cudaError_t retval = cudaSuccess;
         ShowDebugInfo("Init() begin.");
+        this-> enactor     = enactor;
+        instrument         = enactor -> instrument;
+        debug              = enactor -> debug;
+        size_check         = enactor -> size_check;
         this-> num_gpus    = num_gpus;
         this-> num_streams = num_streams;
         this-> has_subq    = has_subq;
@@ -376,22 +384,22 @@ public:
             ShowDebugInfo(mssg, iteration, stream_num); 
         }*/
 
-        if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", request_length, &frontier_queue->keys  [selector^1], 
+        if (retval = Check_Size<SizeT, VertexId > (
+            true, "queue3", request_length, &frontier_queue->keys  [selector^1], 
             over_sized, gpu_num, iteration, stream_num, false)) 
             return retval;
-        if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", request_length, &frontier_queue->keys  [selector  ],
+        if (retval = Check_Size<SizeT, VertexId > (
+            true, "queue3", request_length, &frontier_queue->keys  [selector  ],
             over_sized, gpu_num, iteration, stream_num, true )) 
             return retval;
-        if (Problem::USE_DOUBLE_BUFFER)
+        if (enactor -> problem -> use_double_buffer)
         {
-            if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", request_length, &frontier_queue->values[selector^1],
+            if (retval = Check_Size<SizeT, Value> (
+                true, "queue3", request_length, &frontier_queue->values[selector^1],
                 over_sized, gpu_num, iteration, stream_num, false)) 
                 return retval;
-            if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", request_length, &frontier_queue->values[selector  ], 
+            if (retval = Check_Size<SizeT, Value> (
+                true, "queue3", request_length, &frontier_queue->values[selector  ], 
                 over_sized, gpu_num, iteration, stream_num, true )) 
                 return retval;
         }
@@ -419,7 +427,7 @@ public:
         //cudaEvent_t event;
         PushRequest *push_request;
 
-        sprintf(mssg, "Make_Output begin. num_elements = %d", num_elements);
+        sprintf(mssg, "Make_Output begin. num_elements = %lld", (long long)num_elements);
         ShowDebugInfo(mssg); 
         //typename Enactor::Array<SizeT>  *markers  =  enactor_slice -> split_markers;
         //typename Enactor::Array<SizeT*> *markerss = &enactor_slice -> split_markerss;
@@ -439,8 +447,8 @@ public:
         over_sized = false;
         for (stream_num = 0; stream_num < num_streams; stream_num++)
         {
-            if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
-                "keys_marker", num_elements+1, markers + stream_num, 
+            if (retval = Check_Size<SizeT, SizeT> (
+                size_check, "keys_marker", num_elements+1, markers + stream_num, 
                 over_sized, gpu_num, iteration, stream_num)) return retval;
             if (over_sized) 
                 markerss[0][stream_num] = markers[stream_num].GetPointer(util::DEVICE);
@@ -552,8 +560,8 @@ public:
                         retval = cudaSuccess;
                     }
 
-                    sprintf(mssg, "out_length[%d] = %d",
-                        stream_num + start_peer, t_out_lengths[0][stream_num]);
+                    sprintf(mssg, "out_length[%d] = %lld",
+                        stream_num + start_peer, (long long)t_out_lengths[0][stream_num]);
                     ShowDebugInfo(mssg, -1, stream_num + start_peer);
                     done_markers[stream_num] = 1; stream_counter ++;
                     m_handle = m_handles[0] + stream_num;

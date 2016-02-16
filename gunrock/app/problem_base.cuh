@@ -375,6 +375,7 @@ struct DataSliceBase
         if (retval = util::SetDevice(gpu_idx)) return retval;
         if (retval = preds         .Release()) return retval;
         if (retval = temp_preds    .Release()) return retval;
+        return retval;
     } // end ~DataSliceBase()
 
     /**
@@ -386,7 +387,7 @@ struct DataSliceBase
      */
     cudaError_t Init(
         int    gpu_idx             ,
-        Csr<VertexId, Value, SizeT>
+        Csr<VertexId, SizeT, Value>
               *graph               )
     {
         cudaError_t retval         = cudaSuccess;
@@ -603,7 +604,7 @@ struct ProblemBase
     SizeT               nodes                 ; // Number of vertices in the graph
     SizeT               edges                 ; // Number of edges in the graph
     GraphSlice<VertexId, SizeT, Value>
-    **graph_slices        ; // Set of graph slices (one for each GPU)
+                      **graph_slices        ; // Set of graph slices (one for each GPU)
     Csr<VertexId, SizeT, Value> *sub_graphs     ; // Subgraphs for multi-GPU implementation
     Csr<VertexId, SizeT, Value> *org_graph      ; // Original graph
     PartitionerBase<VertexId, SizeT, Value> //, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>

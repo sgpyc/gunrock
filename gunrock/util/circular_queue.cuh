@@ -94,8 +94,8 @@ public:
 template <
     typename VertexId,
     typename SizeT,
-    typename Value   = VertexId,
-    bool AUTO_RESIZE = true>
+    typename Value   = VertexId>
+    //bool AUTO_RESIZE = true>
 struct CircularQueue
 {
     typedef CqEvent<SizeT> Event;
@@ -143,8 +143,10 @@ public:
     long long    input_iteration, input_iteration_base;
     long long    output_iteration, output_iteration_base;
     long long    iteration_jump;
+    bool         auto_resize;
  
-    CircularQueue() :
+    CircularQueue(bool _auto_resize = true) :
+        auto_resize(_auto_resize),
         name      (""  ),
         gpu_idx   (0   ),
         gpu_num   (0   ),
@@ -455,8 +457,8 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[128];
-                sprintf(mssg, "target_output_pos[%d] -> %d",
-                    output_set_flip, target_output_pos[output_set_flip]);
+                sprintf(mssg, "target_output_pos[%d] -> %lld",
+                    output_set_flip, (long long)target_output_pos[output_set_flip]);
                 ShowDebugInfo_(__func__, mssg, output_iteration);
             }
             input_count -= this->target_input_count[input_get_flip];
@@ -557,12 +559,14 @@ public:
         if (!CQ_DEBUG) return;
         else {
             char mssg[512];
-            sprintf(mssg, "%d ~ %d, %s. size_o = %d, size_s = %d,"
-                "head_a = %d, head_b = %d, tail_a = %d, tail_b = %d, "
-                "i_count = %d, o_count = %d",
-                start, end, mssg_, size_occu, size_soli,
-                head_a, head_b, tail_a, tail_b,
-                input_count, output_count);
+            sprintf(mssg, "%lld ~ %lld, %s. size_o = %lld, size_s = %lld,"
+                "head_a = %lld, head_b = %lld, tail_a = %lld, tail_b = %lld, "
+                "i_count = %lld, o_count = %lld",
+                (long long)start    , (long long)end, mssg_, 
+                (long long)size_occu, (long long)size_soli,
+                (long long)head_a   , (long long)head_b, 
+                (long long)tail_a   , (long long)tail_b,
+                (long long)input_count, (long long)output_count);
             ShowDebugInfo_(function_name, mssg, iteration, type, start, dsize);
         }
     }
@@ -678,8 +682,10 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[256];
-                sprintf(mssg, "Using temp_array, %d,%d + %d,%d -> %d",
-                    offsets[0], lengths[0], offsets[1], lengths[1], length);
+                sprintf(mssg, "Using temp_array, %lld,%lld + %lld,%lld -> %lld",
+                    (long long)offsets[0], (long long)lengths[0], 
+                    (long long)offsets[1], (long long)lengths[1], 
+                    (long long)length);
                 ShowDebugInfo_(__func__, mssg, -1, EventType::In, offsets[0], length);
             }
             if (retval = EnsureTempCapacity(length, length, length, set_gpu))
@@ -726,8 +732,10 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[256];
-                sprintf(mssg, "Using temp_array, %d,%d + %d,%d = %d",
-                    offsets[0], lengths[0], offsets[1], lengths[1], length);
+                sprintf(mssg, "Using temp_array, %lld,%lld + %lld,%lld = %lld",
+                    (long long)offsets[0], (long long)lengths[0], 
+                    (long long)offsets[1], (long long)lengths[1], 
+                    (long long)length);
                 ShowDebugInfo_(__func__, mssg, -1, EventType::Block, offsets[0], length);
             }
            
@@ -832,8 +840,8 @@ public:
         if (CQ_DEBUG)
         {
             char mssg[128];
-            sprintf(mssg, "Length = %d,%d, offset = %d", 
-                lengths[0], lengths[1], offset);
+            sprintf(mssg, "Length = %lld,%lld, offset = %lld", 
+                (long long)lengths[0], (long long)lengths[1], (long long)offset);
             ShowDebugInfo_(__func__, mssg, iteration, EventType::Out, offset, length);
         }
 
@@ -886,8 +894,10 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[256];
-                sprintf(mssg, "Using temp_array, %d,%d + %d,%d -> %d",
-                    offsets[0], lengths[0], offsets[1], lengths[1], sum);
+                sprintf(mssg, "Using temp_array, %lld,%lld + %lld,%lld -> %lld",
+                    (long long)offsets[0], (long long)lengths[0], 
+                    (long long)offsets[1], (long long)lengths[1], 
+                    (long long)sum);
                 ShowDebugInfo_(__func__, mssg, -1, EventType::Out, offsets[0], sum);
             }
             array = temp_array.GetPointer(allocated);
@@ -938,7 +948,7 @@ public:
          
         if (length + size_occu > capacity) 
         { // queue full
-            if (AUTO_RESIZE)
+            if (auto_resize)
             {
                 if (retval = EnsureCapacity(length + size_occu, true, set_gpu)) 
                     return Combined_Return(retval, in_critical);
@@ -1018,10 +1028,10 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[256];
-                sprintf(mssg, "target_input_count[%d] = %d meet, "
-                    "set target_output_pos[%d] -> %d",
-                    input_get_flip, target_input_count[input_get_flip], 
-                    output_set_flip, target_output_pos[output_set_flip]);
+                sprintf(mssg, "target_input_count[%d] = %lld meet, "
+                    "set target_output_pos[%d] -> %lld",
+                    input_get_flip,  (long long)target_input_count[input_get_flip], 
+                    output_set_flip, (long long)target_output_pos[output_set_flip]);
                 ShowDebugInfo_(__func__, mssg, iteration, EventType::In,
                     offsets[0], length);
             }
@@ -1075,7 +1085,7 @@ public:
          
         if (length + size_occu > capacity) 
         { // queue full
-            if (AUTO_RESIZE)
+            if (auto_resize)
             {
                 if (retval = EnsureCapacity(length + size_occu, true)) 
                     return Combined_Return(retval, in_critical);
@@ -1163,10 +1173,10 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[256];
-                sprintf(mssg, "target_input_count[%d] = %d meet, "
-                    "set target_output_pos[%d] -> %d",
-                    input_get_flip, target_input_count[input_get_flip], 
-                    output_set_flip, target_output_pos[output_set_flip]);
+                sprintf(mssg, "target_input_count[%d] = %lld meet, "
+                    "set target_output_pos[%d] -> %lld",
+                    input_get_flip,  (long long)target_input_count[input_get_flip], 
+                    output_set_flip, (long long)target_output_pos[output_set_flip]);
                 ShowDebugInfo_(__func__, mssg, input_iteration, 
                     EventType::Block, offsets[0], length);
             }
@@ -1261,11 +1271,12 @@ public:
         {
             char mssg[256];
             sprintf(mssg, //"input_count = %d, target_input_count[%d] = %d, "
-                "target_output_pos[%d] = %d, capacity = %d, iteration_length[%lld] = %d", 
+                "target_output_pos[%d] = %lld, capacity = %lld, iteration_length[%lld] = %lld", 
                 /*input_count, input_get_flip,
                 target_input_count[input_get_flip],*/ 
-                output_get_flip, target_output_pos [output_get_flip],
-                capacity, output_iteration_base%2, iteration_length[output_iteration_base%2]);
+                output_get_flip, (long long)target_output_pos [output_get_flip],
+                (long long)capacity, (long long)output_iteration_base%2, 
+                (long long)iteration_length[output_iteration_base%2]);
             ShowDebugInfo_(__func__, mssg, output_iteration,
                 EventType::Out, tail_a, length);
         }
@@ -1320,14 +1331,15 @@ public:
         if (CQ_DEBUG && on_target)
         {
             char mssg[512];
-            sprintf(mssg, "On target: size_soli = %d, size_occu = %d,"
-                " t_input[%d] = %d, i_count = %d, o_count = %d, tail_a = %d,"
-                " length = %d, capacity = %d, target_output_pos[%d] = %d",
-                size_soli, size_occu, input_get_flip, 
-                target_input_count[input_get_flip], 
-                input_count, output_count,tail_a, length, 
-                capacity, output_get_flip,
-                target_output_pos[output_get_flip]);
+            sprintf(mssg, "On target: size_soli = %lld, size_occu = %lld,"
+                " t_input[%d] = %lld, i_count = %lld, o_count = %lld, tail_a = %lld,"
+                " length = %lld, capacity = %lld, target_output_pos[%d] = %lld",
+                (long long)size_soli, (long long)size_occu, input_get_flip, 
+                (long long)target_input_count[input_get_flip], 
+                (long long)input_count, (long long)output_count,
+                (long long)tail_a, (long long)length, 
+                (long long)capacity, output_get_flip,
+                (long long)target_output_pos[output_get_flip]);
             ShowDebugInfo_(__func__, mssg, output_iteration,
                 EventType::Out, tail_a, length);
         }
@@ -1383,9 +1395,9 @@ public:
             {
                 char mssg[128];
                 sprintf(mssg, //"target_input_count[%d] -> %d, "
-                    "target_output_pos[%d] -> %d, output_count -> 0",
+                    "target_output_pos[%d] -> %lld, output_count -> 0",
                     //input_get_flip, target_input_count[input_get_flip],
-                    output_get_flip, target_output_pos[output_get_flip]);
+                    output_get_flip, (long long)target_output_pos[output_get_flip]);
                 output_iteration += iteration_jump;
                 output_iteration_base += 1;
                 ShowDebugInfo_(__func__, mssg, output_iteration, 
@@ -1414,7 +1426,7 @@ public:
              vertex_capacity * num_vertex_associates > temp_vertex_associates.GetSize() || 
              value__capacity * num_value__associates > temp_value__associates.GetSize())
         {
-            if (!AUTO_RESIZE)
+            if (!auto_resize)
             {
                 retval = util::GRError(cudaErrorLaunchOutOfResources, 
                     (name + " remp_array oversize ").c_str(), __FILE__, __LINE__);
@@ -1431,8 +1443,8 @@ public:
                 if (CQ_DEBUG)
                 {
                     char mssg[128];
-                    sprintf(mssg, "TempCapacity -> %d, allocated = %d", 
-                        temp_capacity, allocated);
+                    sprintf(mssg, "TempCapacity -> %lld, allocated = %lld", 
+                        (long long)temp_capacity, (long long)allocated);
                     ShowDebugInfo_(__func__, mssg);
                 }
                 if (retval = temp_array            .EnsureSize(
@@ -1474,7 +1486,8 @@ public:
         if (CQ_DEBUG)
         {
             char mssg[128];
-            sprintf(mssg, "Capacity (%d) -> %d", capacity, capacity_);
+            sprintf(mssg, "Capacity (%lld) -> %lld", 
+                (long long)capacity, (long long)capacity_);
             ShowDebugInfo_(__func__, mssg);
         }
         
@@ -1596,16 +1609,19 @@ public:
                     if (CQ_DEBUG)
                     {
                         char mssg[128];
-                        sprintf(mssg, "target_output_pos[%d] (%d) -> %d",
-                            output_get_flip, target_output_pos[output_get_flip], t_o_pos);
+                        sprintf(mssg, "target_output_pos[%d] (%lld) -> %lld",
+                            output_get_flip, 
+                            (long long)target_output_pos[output_get_flip], 
+                            (long long)t_o_pos);
                         ShowDebugInfo_(__func__, mssg);
                     }
                     target_output_pos[output_get_flip] = t_o_pos;
                 } else if (CQ_DEBUG)
                 {
                     char mssg[128];
-                    sprintf(mssg, "target_output_pos[%d] (%d)",
-                        output_get_flip, target_output_pos[output_get_flip]);
+                    sprintf(mssg, "target_output_pos[%d] (%lld)",
+                        output_get_flip, 
+                        (long long)target_output_pos[output_get_flip]);
                     ShowDebugInfo_(__func__, mssg);
                 }
             }
@@ -1617,8 +1633,8 @@ public:
             if (CQ_DEBUG)
             {
                 char mssg[128];
-                sprintf(mssg, "Capacity -> %d, head_a -> %d",
-                    capacity, head_a);
+                sprintf(mssg, "Capacity -> %lld, head_a -> %lld",
+                    (long long)capacity, (long long)head_a);
                 ShowDebugInfo_(__func__, mssg);
             }
             wait_resize = 0;
@@ -1744,8 +1760,9 @@ public:
                 if (CQ_DEBUG)
                 {
                     char mssg[256];
-                    sprintf(mssg, "Copy from temp, %d -> %d,%d + %d,%d",
-                        sum, offsets[0], lengths[0], offsets[1], lengths[1]);
+                    sprintf(mssg, "Copy from temp, %lld -> %lld,%lld + %lld,%lld",
+                        (long long)sum, (long long)offsets[0], (long long)lengths[0], 
+                        (long long)offsets[1], (long long)lengths[1]);
                     ShowDebugInfo_(__func__, mssg, -1, type, offset, length);
                 }
             }
@@ -2097,9 +2114,10 @@ public:
                     if (CQ_DEBUG)
                     {
                         char mssg[256];
-                        sprintf(mssg, "Cleared, head_b -> %d, tail_b -> %d, "
-                            "size_occu -> %d, size_soli -> %d",
-                            head_b, tail_b, size_occu, size_soli);
+                        sprintf(mssg, "Cleared, head_b -> %lld, tail_b -> %lld, "
+                            "size_occu -> %lld, size_soli -> %lld",
+                            (long long)head_b, (long long)tail_b, 
+                            (long long)size_occu, (long long)size_soli);
                         ShowDebugInfo_(__func__, mssg, -1,
                             (*it).type, (*it).offset, (*it).length);
                     }

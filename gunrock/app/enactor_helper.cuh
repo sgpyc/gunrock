@@ -96,10 +96,11 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
                     || pre_i != stream_num 
                     || pre_size != frontier_attribute -> queue_length)
                 {
-                    printf("%d\t \t %d\t Not done, subq__length = %d, "
-                        "last_repeat = %d\n",
-                        gpu_num, stream_num, frontier_attribute -> queue_length,
-                        last_repeat);
+                    printf("%d\t \t %d\t Not done, subq__length = %lld, "
+                        "last_repeat = %lld\n",
+                        gpu_num, stream_num, 
+                        (long long)frontier_attribute -> queue_length,
+                        (long long)last_repeat);
                     fflush(stdout);
                     pre_gpu_num = gpu_num;
                     pre_k = 2;
@@ -155,10 +156,11 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
                 if (pre_gpu_num != gpu_num || pre_k != 5 || pre_i != stream_num
                     || pre_size != frontier_attribute -> queue_length)
                 {
-                    printf("%d\t \t %d\t Not done, fullq_length = %d, "
-                        "last_repeat = %d\n",
-                        gpu_num, stream_num, frontier_attribute -> queue_length,
-                        last_repeat);   
+                    printf("%d\t \t %d\t Not done, fullq_length = %lld, "
+                        "last_repeat = %lld\n",
+                        gpu_num, stream_num, 
+                        (long long)frontier_attribute -> queue_length,
+                        (long long)last_repeat);   
                     fflush(stdout);
                     pre_gpu_num = gpu_num;
                     pre_k = 5;
@@ -229,10 +231,11 @@ bool All_Done(typename ThreadSlice::Enactor *enactor,
  * \return cudaError_t object Indicates the success of all CUDA calls.
  */
 template <
-    bool     SIZE_CHECK,
+    //bool     SIZE_CHECK,
     typename SizeT,
     typename Type>
 cudaError_t Check_Size(
+    bool        size_check,
     const char *name,
     SizeT       target_length,
     util::Array1D<SizeT, Type> 
@@ -247,12 +250,12 @@ cudaError_t Check_Size(
 
     if (target_length > array->GetSize())
     {
-        printf("%d\t %lld\t %d\t %s \t oversize :\t %d ->\t %d\n",
+        printf("%d\t %lld\t %d\t %s \t oversize :\t %lld ->\t %lld\n",
             gpu_num, iteration, stream_num, name,
-            array->GetSize(), target_length);
+            (long long)array->GetSize(), (long long)target_length);
         fflush(stdout);
         oversized=true;
-        if (SIZE_CHECK)
+        if (size_check)
         {
             if (array->GetSize() != 0) retval = array->EnsureSize(target_length, keep_content);
             else retval = array->Allocate(target_length, util::DEVICE);
@@ -326,11 +329,11 @@ cudaError_t PushNeibor(
     cudaStream_t   t_stream              =   t_enactor_slice -> input_streams[0];
     cudaEvent_t    event2;
  
-    printf("%d\t %lld\t %d\t PushNeibor\t To, length = %d\n",
-        request -> gpu_num, iteration, request -> peer, length);
+    printf("%d\t %lld\t %d\t PushNeibor\t To, length = %lld\n",
+        request -> gpu_num, iteration, request -> peer, (long long)length);
     fflush(stdout);
-    printf("%d\t %lld\t %d\t PushNeibor\t From, length = %d\n",
-        request -> peer, iteration+1, request -> gpu_num, length);
+    printf("%d\t %lld\t %d\t PushNeibor\t From, length = %lld\n",
+        request -> peer, iteration+1, request -> gpu_num, (long long)length);
     fflush(stdout);
 
     if (length > 0)
@@ -440,9 +443,10 @@ void ShowDebugInfo(
     }
     //else if (enactor_stats->retval = util::GRError(work_progress->GetQueueLength(frontier_attribute->queue_index, queue_length, false, stream), "work_progress failed", __FILE__, __LINE__)) return;
     //util::cpu_mt::PrintCPUArray<SizeT, SizeT>((check_name+" Queue_Length").c_str(), &(queue_length), 1, thread_num, enactor_stats->iteration);
-    printf("%d\t %lld\t %d\t stage%d\t %s\t Queue_Length = %d\n", 
+    printf("%d\t %lld\t %d\t stage%d\t %s\t Queue_Length = %lld\n", 
         gpu_num, iteration, stream_num, 
-        stage, check_name.c_str(), queue_length);fflush(stdout);
+        stage, check_name.c_str(), (long long)queue_length);
+    fflush(stdout);
     //printf("%d \t %d\t \t peer_ = %d, selector = %d, length = %d, p = %p\n",thread_num, enactor_stats->iteration, peer_, frontier_attribute->selector,queue_length,graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE));fflush(stdout);
     //util::cpu_mt::PrintGPUArray<SizeT, VertexId>((check_name+" keys").c_str(), data_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE), queue_length, thread_num, enactor_stats->iteration,peer_, stream);
     //if (graph_slice->frontier_queues.values[frontier_attribute->selector].GetPointer(util::DEVICE)!=NULL)

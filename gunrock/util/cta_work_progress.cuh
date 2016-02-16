@@ -382,7 +382,9 @@ public:
              }
         } while (0);
 
-        if (CTA_DEBUG) printf("CPUGetQueueLength: iteration = %d, queue_length = %d\n", iteration, queue_length);
+        if (CTA_DEBUG) 
+            printf("CPUGetQueueLength: iteration = %lld, queue_length = %lld\n", 
+                (long long)iteration, (long long)queue_length);
         return retval;
     }
 

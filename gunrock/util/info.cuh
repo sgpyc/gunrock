@@ -130,7 +130,7 @@ public:
         info["beta"]               = 6.0f;   // default beta for DOBFS
         info["top_nodes"]          = 0;      // default number of nodes for top-k primitive
         info["normalized"]         = false;  // default normalized for PageRank
-	info["multi_graphs"]       = false;  // default only one input graph
+        info["multi_graphs"]       = false;  // default only one input graph
         info["node_value"]         = false;  // default don't load labels
         info["label"]              = "";     // label file name used in test
         // info["gpuinfo"]
@@ -878,9 +878,9 @@ public:
      * @param[in] labels
      * @param[in] get_traversal_stats
      */
-    template <typename EnactorStats, typename T>
+    template <typename Enactor, typename T>
     void ComputeCommonStats(
-        EnactorStats *enactor_stats,
+        Enactor *enactor,
         double elapsed,
         const T *labels = NULL,
         bool get_traversal_stats = false)
@@ -973,7 +973,7 @@ public:
      * @param[in] elapsed
      * @param[in] labels
      */
-    template <typename EnactorStats, typename T>
+    template <typename Enactor, typename T>
     void ComputeTraversalStats(
         Enactor *enactor,
         float elapsed,

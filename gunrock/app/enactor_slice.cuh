@@ -46,6 +46,7 @@ struct EnactorSlice
     int num_fullq_stream ;
     int num_split_streams;
     int num_events;
+    Enactor *enactor;
     
     Array<VertexId*   >   vertex_associate_orgs   ; // Device pointers to original VertexId type associate values
     Array<Value*      >   value__associate_orgs   ; // Device pointers to original Value type associate values
@@ -127,6 +128,7 @@ struct EnactorSlice
     char                  mssg[512];
 
     EnactorSlice() :
+        enactor            (NULL),
         num_gpus           (0   ),
         gpu_num            (0   ),
         gpu_idx            (0   ),
@@ -146,8 +148,8 @@ struct EnactorSlice
         vertex_associate_orgs .SetName("vertex_associate_orgs");
         value__associate_orgs .SetName("value__associate_orgs");
         input_streams         .SetName("input_streams"        );
-        input_queues[0]       .SetName("i_queues[0]"      );
-        input_queues[1]       .SetName("i_queues[1]"      );
+        input_queues[0]       .SetName("i_queues[0]"          );
+        input_queues[1]       .SetName("i_queues[1]"          );
         input_e_handles       .SetName("input_e_handles"      );
         outpu_streams         .SetName("outpu_streams"        );
         outpu_queue           .SetName("outpu_queue"          );
@@ -204,7 +206,7 @@ struct EnactorSlice
         int stream_num = -1,
         long long iteration = -1)
     {
-        if (!Enactor::DEBUG) return;
+        if (!enactor -> debug) return;
         else {
             char str[527];
             strcpy(str, "EnactorSlice\t ");
@@ -214,6 +216,7 @@ struct EnactorSlice
     }
 
     cudaError_t Init(
+        Enactor *enactor,
         int num_gpus          = 1,
         int gpu_num           = 0,
         int gpu_idx           = 0,
@@ -231,6 +234,11 @@ struct EnactorSlice
             num_subq__streams, num_fullq_streams,
             num_split_streams);
         ShowDebugInfo(mssg);
+        input_queues[0].auto_resize = enactor -> size_check;
+        input_queues[1].auto_resize = enactor -> size_check;
+        outpu_queue    .auto_resize = enactor -> size_check;
+        subq__queue    .auto_resize = enactor -> size_check;
+        fullq_queue    .auto_resize = enactor -> size_check;
 
         this->num_gpus = num_gpus;
         this->gpu_num  = gpu_num;
@@ -569,7 +577,7 @@ struct EnactorSlice
 
     cudaError_t Reset(
         FrontierType frontier_type,
-        GraphSlice<SizeT, VertexId, Value>
+        GraphSlice<VertexId, SizeT, Value>
                     *graph_slice,
         bool   use_double_buffer = false,
         SizeT *num_in_nodes  = NULL,
@@ -676,8 +684,8 @@ struct EnactorSlice
                 }
                 for (int stream=0; stream<num_subq__streams; stream++)
                 {
-                    sprintf(mssg, "frontier_sizes[%d] = %d", 
-                        i, frontier_sizes[i]);
+                    sprintf(mssg, "frontier_sizes[%d] = %lld", 
+                        i, (long long)frontier_sizes[i]);
                     ShowDebugInfo(mssg);
                     if (retval = subq__frontiers[stream].keys[i].Allocate(
                         frontier_sizes[i], util::DEVICE)) return retval;

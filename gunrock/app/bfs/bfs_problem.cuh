@@ -55,8 +55,8 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
     static const int  MAX_NUM_VALUE__ASSOCIATES = 0;
     typedef ProblemBase  <VertexId, SizeT, Value, 
         MARK_PREDECESSORS, ENABLE_IDEMPOTENCE> BaseProblem; 
-    typedef DataSliceBase<VertexId, SizeT, Value,
-        MAX_NUM_VERTEX_ASSOCIATES, MAX_NUM_VALUE__ASSOCIATES> BaseDataSlice;
+    typedef DataSliceBase<VertexId, SizeT, Value/*,
+        MAX_NUM_VERTEX_ASSOCIATES, MAX_NUM_VALUE__ASSOCIATES*/> BaseDataSlice;
     /**
      * @brief Data slice structure which contains BFS problem specific data.
      */
@@ -109,7 +109,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
         cudaError_t Init(
             int   num_gpus,
             int   gpu_idx,
-            Csr<VertexId, Value, SizeT> *graph)
+            Csr<VertexId, SizeT, Value> *graph)
         {
             cudaError_t retval = cudaSuccess;
             if (retval = BaseDataSlice::Init(
@@ -352,8 +352,8 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
      */
     cudaError_t Init(
         bool        stream_from_host,       // Only meaningful for single-GPU
-        Csr<VertexId, Value, SizeT> *graph,
-        Csr<VertexId, Value, SizeT> *inversegraph = NULL,
+        Csr<VertexId, SizeT, Value> *graph,
+        Csr<VertexId, SizeT, Value> *inversegraph = NULL,
         int         num_gpus         = 1,
         int*        gpu_idx          = NULL,
         std::string partition_method ="random",

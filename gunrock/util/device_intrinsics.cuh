@@ -126,14 +126,6 @@ struct AtomicInt<T, 8>
     }
 };
 
-__device__ __forceinline__ long long atomicCAS(long long *addr, long long compare, long long val)
-{
-    return (long long) atomicCAS(
-        (unsigned long long*)addr,
-        (unsigned long long )compare,
-        (unsigned long long )val);
-}
-
 } // namespace util
 } // namespace gunrock
 
