@@ -87,7 +87,7 @@ struct GraphSlice
     VertexId        nodes   ; // Number of nodes in slice
     SizeT           edges   ; // Number of edges in slice
 
-    Csr<VertexId, Value, SizeT   > *graph             ; // Pointer to CSR format subgraph
+    Csr<VertexId, SizeT, Value   > *graph             ; // Pointer to CSR format subgraph
     util::Array1D<SizeT, SizeT   > row_offsets        ; // CSR format row offset
     util::Array1D<SizeT, VertexId> column_indices     ; // CSR format column indices
     util::Array1D<SizeT, SizeT   > out_degrees        ;
@@ -180,8 +180,8 @@ struct GraphSlice
     cudaError_t Init(
         bool                       stream_from_host,
         int                        num_gpus,
-        Csr<VertexId, Value, SizeT>* graph,
-        Csr<VertexId, Value, SizeT>* inverstgraph,
+        Csr<VertexId, SizeT, Value>* graph,
+        Csr<VertexId, SizeT, Value>* inverstgraph,
         int*                       partition_table,
         VertexId*                  convertion_table,
         VertexId*                  original_vertex,
@@ -348,7 +348,6 @@ struct DataSliceBase
     SizeT                            nodes                   ; // Number of vertices
     util::Array1D<SizeT, VertexId>   preds                   ; // predecessors of vertices
     util::Array1D<SizeT, VertexId>   temp_preds              ; // temporary storages for predecessors
-
     /**
      * @brief DataSliceBase default constructor
      */
@@ -403,10 +402,10 @@ struct DataSliceBase
      *
      * \return cudaError_t object which indicates the success of all CUDA function calls.
      */
-     cudaError_t Reset()
-     {
-        cudaError_t retval = cudaSuccess;
-        return retval;
+    cudaError_t Reset()
+    {
+       cudaError_t retval = cudaSuccess;
+       return retval;
     } // end Reset(...)
 
 }; // end DataSliceBase
@@ -569,11 +568,11 @@ template <
     typename    _SizeT,
     typename    _Value,
     bool        _MARK_PREDECESSORS,
-    bool        _ENABLE_IDEMPOTENCE,
-    bool        _USE_DOUBLE_BUFFER,
-    bool        _ENABLE_BACKWARD = false,
-    bool        _KEEP_ORDER      = false,
-    bool        _KEEP_NODE_NUM   = false >
+    bool        _ENABLE_IDEMPOTENCE> //,
+    //bool        _USE_DOUBLE_BUFFER,
+    //bool        _ENABLE_BACKWARD = false,
+    //bool        _KEEP_ORDER      = false,
+    //bool        _KEEP_NODE_NUM   = false >
 struct ProblemBase
 {
     typedef _VertexId           VertexId;
@@ -581,8 +580,12 @@ struct ProblemBase
     typedef _Value              Value;
     static const bool           MARK_PREDECESSORS  = _MARK_PREDECESSORS ;
     static const bool           ENABLE_IDEMPOTENCE = _ENABLE_IDEMPOTENCE;
-    static const bool           USE_DOUBLE_BUFFER  = _USE_DOUBLE_BUFFER ;
-    static const bool           ENABLE_BACKWARD    = _ENABLE_BACKWARD   ;
+    //static const bool           USE_DOUBLE_BUFFER  = _USE_DOUBLE_BUFFER ;
+    //static const bool           ENABLE_BACKWARD    = _ENABLE_BACKWARD   ;
+    bool use_double_buffer;
+    bool enable_backward;
+    bool keep_order;
+    bool keep_node_num;
 
     /**
      * Load instruction cache-modifier const defines.
@@ -599,11 +602,11 @@ struct ProblemBase
     int                 *gpu_idx              ; // GPU indices
     SizeT               nodes                 ; // Number of vertices in the graph
     SizeT               edges                 ; // Number of edges in the graph
-    GraphSlice<SizeT, VertexId, Value>
+    GraphSlice<VertexId, SizeT, Value>
     **graph_slices        ; // Set of graph slices (one for each GPU)
-    Csr<VertexId, Value, SizeT> *sub_graphs     ; // Subgraphs for multi-GPU implementation
-    Csr<VertexId, Value, SizeT> *org_graph      ; // Original graph
-    PartitionerBase<VertexId, SizeT, Value, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
+    Csr<VertexId, SizeT, Value> *sub_graphs     ; // Subgraphs for multi-GPU implementation
+    Csr<VertexId, SizeT, Value> *org_graph      ; // Original graph
+    PartitionerBase<VertexId, SizeT, Value> //, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
     *partitioner          ; // Partitioner
     int                 **partition_tables    ; // Partition tables indicating which GPU the vertices are hosted
     VertexId            **convertion_tables   ; // Conversions tables indicating vertex IDs on local / remote GPUs
@@ -620,7 +623,11 @@ struct ProblemBase
     /**
      * @brief ProblemBase default constructor
      */
-    ProblemBase() :
+    ProblemBase(
+        bool _use_double_buffer,
+        bool _enable_backward,
+        bool _keep_order,
+        bool _keep_node_num) :
         num_gpus            (0   ),
         gpu_idx             (NULL),
         nodes               (0   ),
@@ -637,7 +644,11 @@ struct ProblemBase
         out_counter         (NULL),
         backward_offsets    (NULL),
         backward_partitions (NULL),
-        backward_convertions(NULL)
+        backward_convertions(NULL),
+        use_double_buffer   (_use_double_buffer),
+        enable_backward     (_enable_backward  ),
+        keep_order          (_keep_order       ),
+        keep_node_num       (_keep_node_num    )
     {
     } // end ProblemBase()
 
@@ -666,7 +677,7 @@ struct ProblemBase
      * @param[in] vertex Vertex Id to search
      * \return Index of the GPU that owns the neighbor list of the specified vertex
      */
-    template <typename VertexId>
+    //template <typename VertexId>
     int GpuIndex(VertexId vertex)
     {
         if (num_gpus <= 1)
@@ -690,7 +701,7 @@ struct ProblemBase
      * \return Row offset of the specified vertex. If a single GPU is used,
      * this will be the same as the vertex id.
      */
-    template <typename VertexId>
+    //template <typename VertexId>
     VertexId GraphSliceRow(VertexId vertex)
     {
         if (num_gpus <= 1)
@@ -720,8 +731,8 @@ struct ProblemBase
      */
     cudaError_t Init(
         bool        stream_from_host,
-        Csr<VertexId, Value, SizeT> *graph,
-        Csr<VertexId, Value, SizeT> *inverse_graph = NULL,
+        Csr<VertexId, SizeT, Value> *graph,
+        Csr<VertexId, SizeT, Value> *inverse_graph = NULL,
         int         num_gpus          = 1,
         int         *gpu_idx          = NULL,
         std::string partition_method  = "random",
@@ -748,7 +759,7 @@ struct ProblemBase
                     this->gpu_idx[gpu] = gpu_idx[gpu];
             }
 
-            graph_slices = new GraphSlice<SizeT, VertexId, Value>*[num_gpus];
+            graph_slices = new GraphSlice<VertexId, SizeT, Value>*[num_gpus];
 
             if (num_gpus > 1)
             {
@@ -757,38 +768,33 @@ struct ProblemBase
                 //printf("partition_method = %s\n", partition_method.c_str());
                 if      (partition_method == "random")
                 {
-                    partitioner = new rp::RandomPartitioner <
-                        VertexId, SizeT, Value, 
-                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        (*graph,num_gpus);
-                } 
-                else if (partition_method == "metis" )
+                    partitioner = new rp::RandomPartitioner     <VertexId, SizeT, Value
+                        /*, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM*/>
+                        (*graph, num_gpus);
+                }
+                else if (partition_method == "metis")
                 {
-                    partitioner = new metisp::MetisPartitioner <
-                        VertexId, SizeT, Value, 
-                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        (*graph,num_gpus);
+                    partitioner = new metisp::MetisPartitioner  <VertexId, SizeT, Value
+                        /*, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM*/>
+                        (*graph, num_gpus);
                 }
                 else if (partition_method == "static")
                 {
-                    partitioner = new sp::StaticPartitioner <
-                        VertexId, SizeT, Value, 
-                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        (*graph,num_gpus);
+                    partitioner = new sp::StaticPartitioner     <VertexId, SizeT, Value
+                        /*, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM*/>
+                        (*graph, num_gpus);
                 }
                 else if (partition_method == "cluster")
                 {
-                    partitioner = new cp::ClusterPartitioner <
-                        VertexId, SizeT, Value, 
-                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        (*graph,num_gpus);
+                   partitioner = new cp::ClusterPartitioner     <VertexId, SizeT, Value
+                        /*, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM*/>
+                        (*graph, num_gpus);
                 }
                 else if (partition_method == "biasrandom")
                 {
-                    partitioner = new brp::BiasRandomPartitioner <
-                        VertexId, SizeT, Value, 
-                        _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
-                        (*graph,num_gpus);
+                    partitioner = new brp::BiasRandomPartitioner<VertexId, SizeT, Value
+                        /*, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM*/>
+                        (*graph, num_gpus);
                 }
                 else 
                 {
@@ -796,18 +802,18 @@ struct ProblemBase
                 }
                 cpu_timer.Start();
                 retval = partitioner->Partition(
-                     sub_graphs,
-                     partition_tables,
-                     convertion_tables,
-                     original_vertexes,
-                     in_counter,
-                     out_offsets,
-                     out_counter,
-                     backward_offsets,
-                     backward_partitions,
-                     backward_convertions,
-                     partition_factor,
-                     partition_seed);
+                    sub_graphs,
+                    partition_tables,
+                    convertion_tables,
+                    original_vertexes,
+                    in_counter,
+                    out_offsets,
+                    out_counter,
+                    backward_offsets,
+                    backward_partitions,
+                    backward_convertions,
+                    partition_factor,
+                    partition_seed);
                 cpu_timer.Stop();
                 printf("partition end. (%f ms)\n", cpu_timer.ElapsedMillis());fflush(stdout);
                 
@@ -898,10 +904,10 @@ struct ProblemBase
 
             for (int gpu = 0; gpu < num_gpus; gpu++)
             {
-                graph_slices[gpu] = new GraphSlice<SizeT, VertexId, Value>(this->gpu_idx[gpu]);
+                graph_slices[gpu] = new GraphSlice<VertexId, SizeT, Value>(this->gpu_idx[gpu]);
                 if (num_gpus > 1)
                 {
-                    if (_ENABLE_BACKWARD)
+                    if (enable_backward)
                     {
                         retval = graph_slices[gpu]->Init(
                             stream_from_host,

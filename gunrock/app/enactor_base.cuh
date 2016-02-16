@@ -402,11 +402,10 @@ template <
     typename _VertexId,
     typename _SizeT,
     typename _Value,
-    bool     _DEBUG,  // if DEBUG is set, print details to stdout
-    bool     _SIZE_CHECK,
+    //bool     _DEBUG,  // if DEBUG is set, print details to stdout
+    //bool     _SIZE_CHECK,
     _SizeT   _NUM_VERTEX_ASSOCIATES,
     _SizeT   _NUM_VALUE__ASSOCIATES>
-class EnactorBase
 {
 public:
     typedef _VertexId VertexId;
@@ -414,8 +413,8 @@ public:
     typedef _Value    Value   ;
     //typedef ThreadSlice ThreadSlice;
     typedef EnactorStats EnactorStats;
-    static const bool DEBUG      = _DEBUG;
-    static const bool SIZE_CHECK = _SIZE_CHECK;
+    //static const bool DEBUG      = _DEBUG;
+    //static const bool SIZE_CHECK = _SIZE_CHECK;
     static const int  NUM_STAGES = 4;
     static const SizeT NUM_VERTEX_ASSOCIATES = _NUM_VERTEX_ASSOCIATES;
     static const SizeT NUM_VALUE__ASSOCIATES = _NUM_VALUE__ASSOCIATES;
@@ -471,6 +470,10 @@ public:
     void         *thread_slices       ;
     Array<std::thread>  threads       ;
  
+    bool          instrument;
+    bool          debug     ;
+    bool          size_check;
+
     //Device properties
     Array<util::CudaProperties>   cuda_props   ;
 
@@ -490,10 +493,16 @@ protected:
     EnactorBase(
         FrontierType   _frontier_type, 
         int            _num_gpus, 
-        int           *_gpu_idx) :
+        int           *_gpu_idx,
+        bool          _instrument,
+        bool          _debug,
+        bool          _size_check) :
         num_gpus      (_num_gpus),
         gpu_idx       (_gpu_idx ),
         frontier_type (_frontier_type),
+        instrument    (_instrument   ),
+        debug         (_debug        ),
+        size_check    (_size_check   ),
         num_vertex_associates(0 ),
         num_value__associates(0 ),
         num_stages           (3 ),

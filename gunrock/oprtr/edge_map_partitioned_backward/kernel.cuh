@@ -203,9 +203,9 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                                 gunrock::oprtr::advance::TYPE &ADVANCE_TYPE,
                                 bool &inverse_graph)
     {
-        if (KernelPolicy::INSTRUMENT && (threadIdx.x == 0 && blockIdx.x == 0)) {
-            kernel_stats.MarkStart();
-        }
+        //if (KernelPolicy::INSTRUMENT && (threadIdx.x == 0 && blockIdx.x == 0)) {
+        //    kernel_stats.MarkStart();
+        //}
 
         // Reset work progress
         //if (queue_reset)
@@ -378,10 +378,10 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
             e_offset = 0;
         }
 
-        if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
-            kernel_stats.MarkStop();
-            kernel_stats.Flush();
-        }
+        //if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
+        //    kernel_stats.MarkStop();
+        //    kernel_stats.Flush();
+        //}
     }
 
     static __device__ __forceinline__ void RelaxLightEdges(
@@ -406,9 +406,9 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
                                 gunrock::oprtr::advance::TYPE &ADVANCE_TYPE,
                                 bool inverse_graph)
     {
-        if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
-            kernel_stats.MarkStart();
-        }
+        //if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
+        //    kernel_stats.MarkStart();
+        //}
 
         // Reset work progress
         //if (queue_reset)
@@ -530,10 +530,10 @@ struct Dispatch<KernelPolicy, ProblemData, Functor, true>
             }
         }
 
-        if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
-            kernel_stats.MarkStop();
-            kernel_stats.Flush();
-        }
+        //if (KernelPolicy::INSTRUMENT && (blockIdx.x == 0 && threadIdx.x == 0)) {
+        //    kernel_stats.MarkStop();
+        //    kernel_stats.Flush();
+        //}
     }
 
 };

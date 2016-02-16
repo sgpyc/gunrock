@@ -142,6 +142,8 @@ public:
     SizeT             max_out;
     gunrock::oprtr::advance::TYPE advance_type;
     bool              express;
+    bool              in_inv;
+    bool              out_inv;
 
     Array<SizeT*> *markerss;
     Array<SizeT>  *markers;

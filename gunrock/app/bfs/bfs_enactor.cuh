@@ -19,6 +19,7 @@
 #include <gunrock/util/multithread_utils.cuh>
 #include <gunrock/util/kernel_runtime_stats.cuh>
 #include <gunrock/util/test_utils.cuh>
+#include <gunrock/util/device_intrinsics.cuh>
 
 #include <gunrock/oprtr/advance/kernel.cuh>
 #include <gunrock/oprtr/advance/kernel_policy.cuh>
@@ -35,8 +36,6 @@ namespace gunrock {
 namespace app {
 namespace bfs {
 
-template <typename Problem, bool INSTRUMENT, bool DEBUG, bool SIZE_CHECK> class Enactor;
- 
 /*
  * @brief Expand incoming function.
  *
@@ -132,7 +131,7 @@ struct BFSIteration : public IterationBase <
     typedef typename Enactor::Problem    Problem   ;
     typedef typename Problem::DataSlice  DataSlice ;
     typedef typename Enactor::GraphSlice GraphSlice;
-    typedef BFSFunctor<VertexId, SizeT, Value, Problem> BfsFunctor;
+    typedef BFSFunctor<VertexId, SizeT, Value, Problem> Functor;
     typedef typename Enactor::ExpandIncomingHandle ExpandIncomingHandle;
     typedef typename Enactor::FrontierT  FrontierT;
     typedef typename Enactor::FrontierA  FrontierA;
@@ -207,7 +206,7 @@ struct BFSIteration : public IterationBase <
         // Edge Map
         //this->ShowDebugInfo("Advance begin", enactor_stats->iteration);
         gunrock::oprtr::advance::LaunchKernel
-            <AdvanceKernelPolicy, Problem, BfsFunctor>(
+            <AdvanceKernelPolicy, Problem, Functor>(
             enactor_stats[0],
             frontier_attribute[0],
             d_data_slice,
@@ -218,7 +217,7 @@ struct BFSIteration : public IterationBase <
             /*enactor_stats -> iteration != 267 ?*/ this->d_keys_in,
             //frontier_queue-> keys  [frontier_attribute->selector  ].GetPointer(util::DEVICE),
             frontier_queue-> keys  [frontier_attribute->selector^1].GetPointer(util::DEVICE),
-            (VertexId*)NULL,
+            (Value*   )NULL,
             frontier_queue-> values[frontier_attribute->selector^1].GetPointer(util::DEVICE),
             graph_slice->row_offsets   .GetPointer(util::DEVICE),
             graph_slice->column_indices.GetPointer(util::DEVICE),
@@ -240,8 +239,8 @@ struct BFSIteration : public IterationBase <
         frontier_attribute -> queue_index++;
         frontier_attribute -> selector ^= 1;
         enactor_stats      -> AccumulateEdges(
-            work_progress  -> template GetQueueLengthPointer<unsigned int,SizeT>(
-            frontier_attribute->queue_index), stream);
+            work_progress  -> GetQueueLengthPointer<unsigned int,SizeT>(
+                frontier_attribute -> queue_index), stream);
 
         if (TO_TRACK)
         {
@@ -276,10 +275,10 @@ struct BFSIteration : public IterationBase <
         // Filter
         //this-> ShowDebugInfo("Filter begin", enactor_stats->iteration);
         gunrock::oprtr::filter::LaunchKernel
-            <FilterKernelPolicy, Problem, BfsFunctor>(
+            <FilterKernelPolicy, Problem, Functor>(
             enactor_stats->filter_grid_size, 
             FilterKernelPolicy::THREADS, 
-            0, 
+            (size_t)0, 
             stream,
             enactor_stats -> iteration+1,
             frontier_attribute -> queue_reset,
@@ -294,7 +293,7 @@ struct BFSIteration : public IterationBase <
             frontier_queue     -> keys  [frontier_attribute->selector  ].GetSize(),
             frontier_queue     -> keys  [frontier_attribute->selector^1].GetSize(),
             enactor_stats-> filter_kernel_stats);
-        //if (Enactor::DEBUG && (enactor_stats->retval = util::GRError("filter_forward::Kernel failed", __FILE__, __LINE__))) return;
+        //if (enactor -> debug && (enactor_stats->retval = util::GRError("filter_forward::Kernel failed", __FILE__, __LINE__))) return;
         //this-> ShowDebugInfo("Filter end", enactor_stats->iteration);
         frontier_attribute->queue_index++;
         frontier_attribute->selector ^= 1;
@@ -404,6 +403,8 @@ struct BFSIteration : public IterationBase <
         /*FrontierAttribute<SizeT> *frontier_attribute,
         SizeT       *d_offsets,
         VertexId    *d_indices,
+        SizeT                          *d_inv_offsets,
+        VertexId                       *d_inv_indices,
         VertexId    *d_in_key_queue,
         util::Array1D<SizeT, SizeT>       *partitioned_scanned_edges,
         SizeT        max_in,
@@ -418,15 +419,16 @@ struct BFSIteration : public IterationBase <
         cudaError_t retval = cudaSuccess;
         //printf("SIZE_CHECK = %s\n", Enactor::SIZE_CHECK ? "true" : "false");
         bool over_sized = false;
-        if (!Enactor::SIZE_CHECK &&
+        if (!enactor -> size_check &&
             (AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_FORWARD ||
              AdvanceKernelPolicy::ADVANCE_MODE == oprtr::advance::TWC_BACKWARD))
         {
             return retval;
 
         } else {
-            if (retval = Check_Size<Enactor::SIZE_CHECK, SizeT, SizeT> (
-                "scanned_edges", this->frontier_attribute->queue_length, 
+            if (retval = Check_Size<SizeT, SizeT> (
+                this -> enactor -> size_check, "scanned_edges", 
+                this->frontier_attribute->queue_length, 
                 this-> scanned_edge, over_sized, -1, -1, -1, false)) 
                 return retval;
             //printf("frontier_attribute = %p, d_offsets = %p, d_indices = %p, "
@@ -437,7 +439,7 @@ struct BFSIteration : public IterationBase <
             //fflush(stdout);
 
             retval = gunrock::oprtr::advance::ComputeOutputLength
-                <AdvanceKernelPolicy, Problem, BfsFunctor>(
+                <AdvanceKernelPolicy, Problem, Functor>(
                 this-> frontier_attribute,
                 this-> d_offsets,
                 this-> d_indices,
@@ -450,9 +452,9 @@ struct BFSIteration : public IterationBase <
                 this-> context[0],
                 this-> stream,
                 this-> advance_type,
-                this-> express/*
-                in_inv,
-                out_inv*/);
+                this-> express,
+                this-> in_inv,
+                this-> out_inv);
             return retval;
         }
     }
@@ -482,7 +484,7 @@ struct BFSIteration : public IterationBase <
         int           selector           = frontier_attribute->selector;
         long long     iteration          = enactor_stats -> iteration;
 
-        if (Enactor::DEBUG)
+        if (enactor -> debug)
         {
             sprintf(this -> mssg, "queue_size = %lld, request_length = %lld",
                 (long long)frontier_queue -> keys[selector^1].GetSize(),
@@ -490,25 +492,25 @@ struct BFSIteration : public IterationBase <
             this -> ShowDebugInfo(this -> mssg, iteration, stream_num);
         }
 
-        if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", request_length, 
+        if (retval = Check_Size<SizeT, VertexId > (
+            true, "queue3", request_length, 
             &frontier_queue->keys  [selector^1], over_sized, 
             gpu_num, iteration, stream_num, false)) 
             return retval;
-        if (retval = Check_Size<true, SizeT, VertexId > (
-            "queue3", graph_slice->nodes+2, 
+        if (retval = Check_Size<SizeT, VertexId > (
+            true, "queue3", graph_slice->nodes+2, 
             &frontier_queue->keys  [selector  ], over_sized, 
             gpu_num, iteration, stream_num, true )) 
             return retval;
-        if (Problem::USE_DOUBLE_BUFFER)
+        if (this -> problem -> use_double_buffer)
         {    
-            if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", request_length, 
+            if (retval = Check_Size<SizeT, Value> (
+                true, "queue3", request_length, 
                 &frontier_queue->values[selector^1], over_sized, 
                 gpu_num, iteration, stream_num, false)) 
                 return retval;
-            if (retval = Check_Size<true, SizeT, Value> (
-                "queue3", graph_slice->nodes+2, 
+            if (retval = Check_Size<SizeT, Value> (
+                true, "queue3", graph_slice->nodes+2, 
                 &frontier_queue->values[selector  ], over_sized, 
                 gpu_num, iteration, this->stream_num, true )) 
                 return retval;
@@ -526,15 +528,15 @@ struct BFSIteration : public IterationBase <
      * @param[in] num_elements Number of elements.
      * @param[in] stream CUDA stream.
      */
-    static void Iteration_Update_Preds(
-        GraphSlice                    *graph_slice,
-        DataSlice                     *data_slice,
-        FrontierAttribute<SizeT>
-                                      *frontier_attribute,
-        util::DoubleBuffer<SizeT, VertexId, Value>
-                                      *frontier_queue,
-        SizeT                          num_elements,
-        cudaStream_t                   stream)
+    cudaError_t Iteration_Update_Preds()
+        //Enactor                       *enactor,
+        //GraphSlice                    *graph_slice,
+        //DataSlice                     *data_slice,
+        //FrontierAttribute<SizeT>
+        //                              *frontier_attribute,
+        //Frontier                      *frontier_queue,
+        //SizeT                          num_elements,
+        //cudaStream_t                   stream)
     {
         return ;
     }
@@ -548,42 +550,41 @@ struct BFSIteration : public IterationBase <
  * @tparam _DEBUG Whether or not to enable debug mode.
  * @tparam _SIZE_CHECK Whether or not to enable size check.
  */
-template <
-    typename _Problem, 
-    bool     _INSTRUMENT, 
-    bool     _DEBUG, 
-    bool     _SIZE_CHECK>
-class BFSEnactor : public EnactorBase<
-    typename _Problem::VertexId,
-    typename _Problem::SizeT, 
-    typename _Problem::Value,
-    _DEBUG, 
-    _SIZE_CHECK,
-    (_Problem::MARK_PREDECESSORS && !_Problem::ENABLE_IDEMPOTENCE)? 2 : 1, // NUM_VERTEX_ASSOCIATES
-    0> // NUM_VALUE__ASSOCIATES
-{   
+template <typename _Problem/*, bool _INSTRUMENT, bool _DEBUG, bool _SIZE_CHECK*/>
+class BFSEnactor :
+    public EnactorBase<typename _Problem::SizeT/*, _DEBUG, _SIZE_CHECK*/>
+{
+    ThreadSlice  *thread_slices;
+    CUTThread    *thread_Ids   ;
+
 public:
     typedef _Problem                   Problem;
     typedef typename Problem::SizeT    SizeT   ;
     typedef typename Problem::VertexId VertexId;
     typedef typename Problem::Value    Value   ;
-    static const bool INSTRUMENT = _INSTRUMENT;
-    static const bool DEBUG      = _DEBUG;
-    static const bool SIZE_CHECK = _SIZE_CHECK;
-    typedef EnactorBase<VertexId, SizeT, Value, DEBUG, SIZE_CHECK,
-        (Problem::MARK_PREDECESSORS && !_Problem::ENABLE_IDEMPOTENCE) ? 2: 1,
-        0> BaseEnactor;
-    typedef BFSEnactor<Problem, INSTRUMENT, DEBUG, SIZE_CHECK>
-        Enactor;
 
-    int traversal_mode;
+    typedef EnactorBase<SizeT>         BaseEnactor;
+    typedef BFSEnactor <Problem>       Enactor ;
+    //static const bool INSTRUMENT = _INSTRUMENT;
+    //static const bool DEBUG      = _DEBUG;
+    //static const bool SIZE_CHECK = _SIZE_CHECK;
+    int traversal_mode        ;
+    Problem     *problem      ;
     // Methods
 
     /**
      * @brief BFSEnactor constructor
      */
-    BFSEnactor(int num_gpus = 1, int* gpu_idx = NULL) :
-        BaseEnactor(VERTEX_FRONTIERS, num_gpus, gpu_idx)//,
+    BFSEnactor(
+        int   num_gpus   = 1, 
+        int  *gpu_idx    = NULL,
+        bool  instrument = false,
+        bool  debug      = false,
+        bool  size_check = true) :
+        BaseEnactor(
+            VERTEX_FRONTIERS, num_gpus, gpu_idx, 
+            instrument, debug, size_check),
+        problem(NULL)
     {
         printf("BFSEnactor() begin.\n");fflush(stdout);
         printf("BFSEnactor() end.\n"); fflush(stdout);
@@ -840,29 +841,27 @@ public:
             }
         }
 
-        do {
-            for (int i=0; i<this->num_threads; i++)
-                thread_slices[i].status = ThreadSlice::Status::Running;
+        for (int i=0; i<this->num_threads; i++)
+            thread_slices[i].status = ThreadSlice::Status::Running;
 
-            bool all_done = false;
-            int  done_counter = 0;
-            while (!all_done)
+        bool all_done = false;
+        int  done_counter = 0;
+        while (!all_done)
+        {
+            //std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (done_counter == 20)
             {
-                //std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                if (done_counter == 20)
-                {
-                    all_done = All_Done<ThreadSlice>(this, -1);
-                    if (all_done) break;
-                    done_counter = 0;
-                } else done_counter ++;
-                std::this_thread::yield();
-            }
+                all_done = All_Done<ThreadSlice>(this, -1);
+                if (all_done) break;
+                done_counter = 0;
+            } else done_counter ++;
+            std::this_thread::yield();
+        }
 
-            for (int i=0; i<this->num_threads; i++)
-                thread_slices[i].status = ThreadSlice::Status::Wait;
-        } while(0);
+        for (int i=0; i<this->num_threads; i++)
+            thread_slices[i].status = ThreadSlice::Status::Wait;
 
-        if (this->DEBUG) printf("GPU BFS Done.\n");
+        if (this -> debug) printf("GPU BFS Done.\n");
         return retval;
     }
 
@@ -874,7 +873,7 @@ public:
     typedef gunrock::oprtr::filter::KernelPolicy<
         Problem,                            // Problem data type
         300,                                // CUDA_ARCH
-        INSTRUMENT,                         // INSTRUMENT
+        //INSTRUMENT,                         // INSTRUMENT
         0,                                  // SATURATION QUIT
         true,                               // DEQUEUE_PROBLEM_SIZE
         8,                                  // MIN_CTA_OCCUPANCY
@@ -889,7 +888,7 @@ public:
     typedef gunrock::oprtr::advance::KernelPolicy<
         Problem,                            // Problem data type
         300,                                // CUDA_ARCH
-        INSTRUMENT,                         // INSTRUMENT
+        //INSTRUMENT,                         // INSTRUMENT
         8,                                  // MIN_CTA_OCCUPANCY
         7,                                  // LOG_THREADS
         8,                                  // LOG_BLOCKS
@@ -906,7 +905,7 @@ public:
     typedef gunrock::oprtr::advance::KernelPolicy<
         Problem,                            // Problem data type
         300,                                // CUDA_ARCH
-        INSTRUMENT,                         // INSTRUMENT
+        //INSTRUMENT,                         // INSTRUMENT
         1,                                  // MIN_CTA_OCCUPANCY
         7,                                  // LOG_THREADS
         8,                                  // LOG_BLOCKS
@@ -923,7 +922,7 @@ public:
     typedef gunrock::oprtr::advance::KernelPolicy<
         Problem,                            // Problem data type
         300,                                // CUDA_ARCH
-        INSTRUMENT,                         // INSTRUMENT
+        //INSTRUMENT,                         // INSTRUMENT
         8,                                  // MIN_CTA_OCCUPANCY
         10,                                 // LOG_THREADS
         8,                                  // LOG_BLOCKS
@@ -940,7 +939,7 @@ public:
     typedef gunrock::oprtr::advance::KernelPolicy<
         Problem,                            // Problem data type
         300,                                // CUDA_ARCH
-        INSTRUMENT,                         // INSTRUMENT
+        //INSTRUMENT,                         // INSTRUMENT
         1,                                  // MIN_CTA_OCCUPANCY
         10,                                 // LOG_THREADS
         8,                                  // LOG_BLOCKS
@@ -1073,7 +1072,8 @@ public:
         double split_factor  = 1.0,
         double temp_factor   = 0.1) // Size scaling factor for work queue allocation (e.g., 1.0 creates n-element and m-element vertex and edge frontiers, respectively). 0.0 is unspecified.
     {
-         if (Problem::ENABLE_IDEMPOTENCE) {
+        if (Problem::ENABLE_IDEMPOTENCE) 
+        {
             if (traversal_mode == 0)
                 return ResetBFS<     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>(
                         src, frontier_type, 
@@ -1109,7 +1109,8 @@ public:
 
     cudaError_t Release()
     {
-         if (Problem::ENABLE_IDEMPOTENCE) {
+        if (Problem::ENABLE_IDEMPOTENCE)
+        {
             if (traversal_mode == 0)
                 return ReleaseBFS
                     <     LBAdvanceKernelPolicy_IDEM, FilterKernelPolicy>();
