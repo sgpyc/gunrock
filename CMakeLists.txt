@@ -38,6 +38,7 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/FindBoostHeaders.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/FindBoost.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/FindOpenMP.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/FindMPI.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/FindMetis.cmake)
 # end /* Include Boost, OpenMP & Metis */
 
