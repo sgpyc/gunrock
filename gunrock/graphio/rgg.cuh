@@ -83,56 +83,66 @@ bool PureTwoFactor(T x)
  * @brief Build random geometry graph (RGG).
  *
  * @tparam WITH_VALUES Whether or not associate with per edge weight values.
- * @tparam VertexId Vertex identifier.
- * @tparam Value Value type.
+ * @tparam VertexT Vertex identifier.
+ * @tparam ValueT ValueT type.
  * @tparam SizeT Graph size type.
  *
  * @param[in] nodes
  * @param[in] graph
  * @param[in] threshould
  * @param[in] undirected
- * @param[in] value_multipiler
  * @param[in] value_min
+ * @param[in] value_multipiler
  * @param[in] seed
  */
-template <bool WITH_VALUES, typename VertexId, typename SizeT, typename Value>
-int BuildRggGraph(
-    SizeT nodes,
-    Csr<VertexId, SizeT, Value> &graph,
-    double threshold  = -1,
-    bool   undirected = true,
-    double value_multipiler = 1,
+template <bool HAS_EDGE_VALUES, bool HAS_NODE_VALUES, typename CooT>
+cudaError_t Build(
+    typename CooT::SizeT nodes,
+    CooT &coo,
+    double threshold        = -1,
+    bool   undirected       = false,
     double value_min        = 1,
+    double value_multipiler = 1,
     int    seed             = -1,
-    bool   quiet = false)
+    bool   quiet            = false)
 {
-    typedef Coo<VertexId, Value> EdgeTupleType;
+    typedef typename CooT::VertexT  VertexT;
+    typedef typename CooT::SizeT    SizeT;
+    typedef typename CooT::ValueT   ValueT;
+    typedef typename CooT::EdgeT    EdgeT;
+    cudaError_t retval = cudaSuccess;
 
     if (nodes < 0)
     {
-        fprintf(stderr, "Invalid graph size: nodes = %lld\n", (long long)nodes);
-        return -1;
+        char error_msg[512];
+        sprintf(error_msg, "Invalid graph size: nodes = %lld\n", (long long)nodes);
+        return util::GRError(error_msg, __FILE__, __LINE__);
+    }
+    if (seed == -1) seed = time(NULL);
+    if (!quiet) {
+        printf("Generating RGG (Random Geometry Graph), threshold = %.3lf, vmin  = %.3lf, vmultipiler = %.3lf, seed = %lld ...",
+            threshold, value_min, value_multipiler, (long long)seed);
     }
 
     int       reserved_size = 50;
     RggPoint *points        = new RggPoint[nodes+1];
-    SizeT    *row_offsets   = new SizeT[nodes+1];
-    VertexId *col_index_    = new VertexId[reserved_size * nodes];
-    Value    *values_       = WITH_VALUES ? new Value[reserved_size * nodes] : NULL;
+    SizeT    *row_offsets   = new SizeT   [nodes+1];
+    VertexT  *col_index_    = new VertexT[reserved_size * nodes];
+    ValueT    *values_      = HAS_NODE_VALUES ? new ValueT[reserved_size * nodes] : NULL;
     SizeT    *offsets       = NULL;
     if (threshold < 0)
               threshold     = 0.55 * sqrt(log(nodes)/nodes);
     SizeT     edges         = 0;
     long long row_length    = 1.0 / threshold + 1;
-    VertexId **blocks       = new VertexId* [row_length * row_length + 1];
-    SizeT    *block_size    = new SizeT     [row_length * row_length + 1];
-    SizeT    *block_length  = new SizeT     [row_length * row_length + 1];
-    EdgeTupleType *coo      = NULL;
+    VertexT **blocks        = new VertexT* [row_length * row_length + 1];
+    SizeT    *block_size    = new SizeT    [row_length * row_length + 1];
+    SizeT    *block_length  = new SizeT    [row_length * row_length + 1];
     long long reserved_factor2 = 8;
     long long initial_length   = reserved_factor2 * nodes / row_length / row_length;
 
-    if (seed == -1) seed = time(NULL);
-    if (!quiet) { printf("rgg seed = %lld\n", (long long)seed); }
+    util::CpuTimer cpu_timer;
+    cpu_timer.Start();
+
     if (initial_length <4) initial_length = 4;
     for (SizeT i=0; i< row_length * row_length +1; i++)
     {
@@ -148,8 +158,8 @@ int BuildRggGraph(
         SizeT     node_start  = (long long)(nodes) * thread_num / num_threads;
         SizeT     node_end    = (long long)(nodes) * (thread_num + 1) / num_threads;
         SizeT     counter     = 0;
-        VertexId *col_index   = col_index_ + reserved_size * node_start;
-        Value    *values      = WITH_VALUES ? values_ + reserved_size * node_start : NULL;
+        VertexT *col_index    = col_index_ + reserved_size * node_start;
+        ValueT    *values     = HAS_EDGE_VALUES ? values_ + reserved_size * node_start : NULL;
         unsigned int seed_    = seed + 805 * thread_num;
         Engine    engine(seed_);
         Distribution distribution(0.0, 1.0);
@@ -157,7 +167,7 @@ int BuildRggGraph(
         #pragma omp single
             offsets           = new SizeT[num_threads+1];
 
-        for (VertexId node = node_start; node < node_end; node++)
+        for (VertexT node = node_start; node < node_end; node++)
         {
             points[node].x = distribution(engine);
             points[node].y = distribution(engine);
@@ -170,7 +180,7 @@ int BuildRggGraph(
             std::stable_sort(points, points+nodes, XFirstPointCompare<RggPoint>);
         }
 
-        for (VertexId node = node_start; node < node_end; node++)
+        for (VertexT node = node_start; node < node_end; node++)
         {
             SizeT x_index = points[node].x / threshold;
             SizeT y_index = points[node].y / threshold;
@@ -184,10 +194,10 @@ int BuildRggGraph(
         {
             for (SizeT i=0; i<row_length * row_length; i++)
             if (block_size[i] != 0)
-                blocks[i] = new VertexId[block_size[i]];
+                blocks[i] = new VertexT[block_size[i]];
         }
 
-        for (VertexId node = node_start; node < node_end; node++)
+        for (VertexT node = node_start; node < node_end; node++)
         {
             double co_x0 = points[node].x; //co_x[node];
             double co_y0 = points[node].y; //co_y[node];
@@ -200,14 +210,14 @@ int BuildRggGraph(
             #pragma omp atomic capture
             {
                 pos = block_length[block_index];
-                block_length[block_index] += 1;
+                block_length[block_index] ++;
             }
             blocks[block_index][pos] = node;
         }
 
         #pragma omp barrier
 
-        for (VertexId node = node_start; node < node_end; node++)
+        for (VertexT node = node_start; node < node_end; node++)
         {
             row_offsets[node] = counter;
             double co_x0 = points[node].x;
@@ -222,10 +232,10 @@ int BuildRggGraph(
                     continue;
 
                 SizeT block_index = x1*row_length + y1;
-                VertexId *block = blocks[block_index];
+                VertexT *block = blocks[block_index];
                 for (SizeT i = 0; i< block_length[block_index]; i++)
                 {
-                    VertexId peer = block[i];
+                    VertexT peer = block[i];
                     if (node >= peer) continue;
                     double   co_x1 = points[peer].x;//co_x[peer];
                     double   co_y1 = points[peer].y;//co_y[peer];
@@ -236,7 +246,7 @@ int BuildRggGraph(
                     if (dis > threshold) continue;
 
                     col_index[counter] = peer;
-                    if (WITH_VALUES)
+                    if (HAS_EDGE_VALUES)
                     {
                         values[counter] = distribution(engine) * value_multipiler + value_min;
                     }
@@ -253,37 +263,51 @@ int BuildRggGraph(
             for (int i=0; i<num_threads; i++)
                 offsets[i+1] += offsets[i];
             edges = offsets[num_threads] * (undirected ? 2 : 1);
-            coo = (EdgeTupleType*) malloc (sizeof(EdgeTupleType) * edges);
+            //coo = (EdgeTupleType*) malloc (sizeof(EdgeTupleType) * edges);
+            retval = coo.FromScratch(nodes, edges, HAS_NODE_VALUES);
         }
 
-        SizeT offset = offsets[thread_num] * (undirected ? 2 : 1);
-        for (VertexId node = node_start; node < node_end; node++)
+        if (!retval)
         {
-            SizeT end_edge = (node != node_end-1 ? row_offsets[node+1] : counter );
-            for (SizeT edge = row_offsets[node]; edge < end_edge; edge++)
+            SizeT offset = offsets[thread_num] * (undirected ? 2 : 1);
+            for (VertexT node = node_start; node < node_end; node++)
             {
-                VertexId peer = col_index[edge];
-                if (undirected)
+                SizeT end_edge = (node != node_end-1 ? row_offsets[node+1] : counter );
+                for (SizeT edge = row_offsets[node]; edge < end_edge; edge++)
                 {
-                    EdgeTupleType *coo_p = coo + offset + edge*2;
-                    coo_p -> row = node;
-                    coo_p -> col = peer;
-                    coo_p -> val = WITH_VALUES ? values[edge] : 1;
-                    coo_p = coo_p + 1;
-                    coo_p -> row = peer;
-                    coo_p -> col = node;
-                    coo_p -> val = WITH_VALUES ? values[edge] : 1;
-                } else {
-                    EdgeTupleType *coo_p = coo + offset + edge;
-                    coo_p -> row = node;
-                    coo_p -> col = peer;
-                    coo_p -> val = WITH_VALUES ? values[edge] : 1;
+                    VertexT peer = col_index[edge];
+                    EdgeT &coo_p = coo.coo_edges[offset + edge * ((undirected) ? 2 : 1)];
+                    coo_p. row = node;
+                    coo_p. col = peer;
+                    coo_p. SetVal(values[edge]);
+
+                    if (undirected)
+                    {
+                        EdgeT &coo_r = coo.coo_edges[offset + edge * 2 + 1];
+                        coo_r. row = peer;
+                        coo_r. col = node;
+                        coo_r.SetVal(values[edge]);
+                    }
                 }
+            }
+
+            if (HAS_NODE_VALUES)
+            for (VertexT v = node_start; v < node_end; v++)
+            {
+                coo.node_values[v] = distribution(engine) * value_multipiler + value_min;
             }
         }
 
         col_index = NULL;
         values    = NULL;
+    }
+    if (retval) return retval;
+
+    cpu_timer.Stop();
+    float elapsed = cpu_timer.ElapsedMillis();
+    if (!quiet)
+    {
+        printf("Done (%.3f ms).\n", elapsed);
     }
 
     SizeT counter = 0;
@@ -294,10 +318,6 @@ int BuildRggGraph(
         if (blocks[i] != NULL) delete[] blocks[i]; blocks[i] = NULL;
     }
 
-    char *out_file = NULL;
-    graph.template FromCoo<WITH_VALUES, EdgeTupleType>(
-        out_file, coo, nodes, edges, false, undirected, false, quiet);
-
     delete[] row_offsets; row_offsets = NULL;
     delete[] offsets    ; offsets     = NULL;
     delete[] points     ; points      = NULL;
@@ -305,10 +325,101 @@ int BuildRggGraph(
     delete[] block_size ; block_size  = NULL;
     delete[] block_length; block_length = NULL;
     delete[] col_index_ ; col_index_  = NULL;
-    if (WITH_VALUES) { delete[] values_; values_ = NULL; }
-    free(coo); coo=NULL;
+    if (HAS_EDGE_VALUES) { delete[] values_; values_ = NULL; }
 
-    return 0;
+    return retval;
+}
+
+template <typename InfoT>
+struct StoreInfo
+{
+    template <typename SizeT>
+    static void StoreI(
+        InfoT *info,
+        SizeT  nodes,
+        SizeT  scale,
+        double thfactor,
+        double threshold,
+        double vmin,
+        double vmultipiler,
+        int    seed)
+    {
+        // put everything into mObject info
+        info->info["rgg_seed"]        = seed;
+        info->info["rgg_scale"]       = (int64_t)scale;
+        info->info["rgg_nodes"]       = (int64_t)nodes;
+        info->info["rgg_thfactor"]    = thfactor;
+        info->info["rgg_threshold"]   = threshold;
+        info->info["rgg_vmin"]        = vmin;
+        info->info["rgg_vmultipiler"] = vmultipiler;
+    }
+};
+
+template <>
+struct StoreInfo<util::NullType>
+{
+    template <typename SizeT>
+    static void StoreI(
+        util::NullType *info,
+        SizeT  nodes,
+        SizeT  scale,
+        double thfactor,
+        double threshold,
+        double vmin,
+        double vmultipiler,
+        int    seed)
+    {
+
+    }
+};
+
+template <
+    bool HAS_EDGE_VALUES,
+    bool HAS_NODE_VALUES,
+    typename CooT,
+    typename InfoT>
+cudaError_t Generate(
+    util::CommandLineArgs &args,
+    CooT &coo,
+    InfoT *info)
+{
+    typedef typename CooT::VertexT  VertexT;
+    typedef typename CooT::SizeT    SizeT;
+    typedef typename CooT::ValueT   ValueT;
+    typedef typename CooT::EdgeT    EdgeT;
+    cudaError_t retval = cudaSuccess;
+
+    SizeT  nodes        = 1 << 10;
+    SizeT  scale        = 10;
+    double thfactor     = 0.55;
+    double threshold =
+        thfactor * sqrt(log(nodes) / nodes);
+    double vmin         = 1;
+    double vmultipiler  = 1;
+    int    seed         = -1;
+    bool   quiet        = args.CheckCmdLineFlag("quiet");
+    bool   undirected   = args.CheckCmdLineFlag("undirected");
+
+    args.GetCmdLineArgument("rgg_scale",    scale);
+    nodes = 1 << scale;
+    args.GetCmdLineArgument("rgg_nodes",    nodes);
+    args.GetCmdLineArgument("rgg_thfactor", thfactor);
+    threshold = thfactor * sqrt(log(nodes) / nodes);
+    args.GetCmdLineArgument("rgg_threshold", threshold);
+    args.GetCmdLineArgument("rgg_vmin", vmin);
+    args.GetCmdLineArgument("rgg_vmultipiler", vmultipiler);
+    args.GetCmdLineArgument("rgg_seed", seed);
+
+    StoreInfo<InfoT>::StoreI(info,
+        nodes, scale, thfactor, threshold,
+        vmin, vmultipiler, seed);
+
+    if (retval = Build<HAS_EDGE_VALUES, HAS_NODE_VALUES, CooT>
+        (nodes, coo, threshold, undirected,
+        vmin, vmultipiler, seed, quiet))
+        return retval;
+
+    return retval;
 }
 
 } // namespace rgg

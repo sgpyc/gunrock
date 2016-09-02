@@ -72,11 +72,32 @@ __device__ static long long atomicAdd(long long *addr, long long val)
 template <typename T>
 __device__ __forceinline__ T _ldg(T* addr)
 {
-#if __GR_CUDA_ARCH__ >= 350
+#if __CUDA_ARCH__ >= 350
     return __ldg(addr);
 #else 
     return *addr;
 #endif
+}
+
+template <>
+__device__ __forceinline__ uint1 _ldg(uint1* addr)
+{
+    return {_ldg<unsigned int>(reinterpret_cast<unsigned int*>(addr))};
+}
+
+template <>
+__device__ __forceinline__ ulonglong1 _ldg(ulonglong1* addr)
+{
+    return {_ldg<unsigned long long int>(reinterpret_cast<unsigned long long int*>(addr))};
+}
+
+template <>
+__device__ __forceinline__ ulonglong4 _ldg(ulonglong4* addr)
+{
+    ulonglong2 a, b;
+    a = _ldg<ulonglong2>(reinterpret_cast<ulonglong2*>(addr));
+    b = _ldg<ulonglong2>(reinterpret_cast<ulonglong2*>(addr)+1);
+    return {a.x, a.y, b.x, b.y};
 }
 
 namespace gunrock {
@@ -160,20 +181,20 @@ __device__ int BinarySearch(KeyType i, ArrayType *queue)
     int mid = ((NT >> 1) - 1);
 
     if (NT > 512)
-        mid = queue[mid] > i ? mid - 256 : mid + 256;
+        mid += (queue[mid] > i) ? - 256 : 256;
     if (NT > 256)
-        mid = queue[mid] > i ? mid - 128 : mid + 128;
+        mid += (queue[mid] > i) ? - 128 : 128;
     if (NT > 128)
-        mid = queue[mid] > i ? mid - 64 : mid + 64;
+        mid += (queue[mid] > i) ? - 64  : 64;
     if (NT > 64)
-        mid = queue[mid] > i ? mid - 32 : mid + 32;
+        mid += (queue[mid] > i) ? - 32 : 32;
     if (NT > 32)
-        mid = queue[mid] > i ? mid - 16 : mid + 16;
-    mid = queue[mid] > i ? mid - 8 : mid + 8;
-    mid = queue[mid] > i ? mid - 4 : mid + 4;
-    mid = queue[mid] > i ? mid - 2 : mid + 2;
-    mid = queue[mid] > i ? mid - 1 : mid + 1;
-    mid = queue[mid] > i ? mid     : mid + 1;
+        mid += (queue[mid] > i) ? - 16 : 16;
+    mid += (queue[mid] > i) ? - 8 : 8;
+    mid += (queue[mid] > i) ? - 4 : 4;
+    mid += (queue[mid] > i) ? - 2 : 2;
+    mid += (queue[mid] > i) ? - 1 : 1;
+    mid += (queue[mid] > i) ? 0 : 1;
 
     return mid;
 }

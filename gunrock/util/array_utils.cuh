@@ -624,7 +624,7 @@ public:
         if (ARRAY_DEBUG)
         {
             if (h_pointer==NULL) GRError(name+" not defined on HOST",__FILE__, __LINE__);
-            if (idx >= size) GRError(name+" access out of bound", __FILE__, __LINE__);
+            if (idx >= (std::size_t)size) GRError(name+" access out of bound", __FILE__, __LINE__);
             //printf("%s @ %p [%ld]ed1\n", name.c_str(), h_pointer,idx);fflush(stdout);
         }
         return h_pointer[idx];
@@ -639,7 +639,7 @@ public:
         if (ARRAY_DEBUG)
         {
             if (h_pointer==NULL) GRError(name+" not defined on HOST", __FILE__, __LINE__);
-            if (idx >= size) GRError(name+" access out of bound", __FILE__, __LINE__);
+            if (idx >= (std::size_t)size) GRError(name+" access out of bound", __FILE__, __LINE__);
             //printf("%s [%ld]ed2\n", name.c_str(), idx);fflush(stdout);
         }
         return const_cast<Value&>(h_pointer[idx]);

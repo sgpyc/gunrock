@@ -221,7 +221,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                             (VertexId*)(this -> visited_mask.GetPointer(util::DEVICE)),
                             (graph -> nodes / (sizeof(MaskT)*8) + 1) * sizeof(MaskT) / sizeof(VertexId) + 1,
                             util::DEVICE);
-                        this -> keys_outs[gpu] = (VertexId*)(this -> visited_mask.GetPointer(util::DEVICE)); 
+                        this -> keys_outs[gpu] = (VertexId*)(this -> visited_mask.GetPointer(util::DEVICE));
                     }
                     this -> keys_outs.Move(util::HOST, util::DEVICE);
                 }
@@ -416,7 +416,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                     if (retval = this->preds.Allocate(nodes, util::DEVICE))
                         return retval;
                 util::MemsetKernel<<<128,128>>>(
-                    this->preds.GetPointer(util::DEVICE), util::InvalidValue<VertexId>()/*(VertexId)-2*/, nodes); 
+                    this->preds.GetPointer(util::DEVICE), util::InvalidValue<VertexId>()/*(VertexId)-2*/, nodes);
             }
             //util::MemsetKernel<<<256, 256>>>(
             //    vertex_markers[0].GetPointer(util::DEVICE),
@@ -476,7 +476,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
         direction_optimized,                                  // skip_makeout_selection
         true,                                   // unified_receive
         direction_optimized,                   // use_inv_graph
-        undirected), 
+        undirected),
         data_slices(NULL)
     {
     }
@@ -600,7 +600,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
     cudaError_t Init(
         bool        stream_from_host,       // Only meaningful for single-GPU
         Csr<VertexId, SizeT, Value> *graph,
-        Csr<VertexId, SizeT, Value> *inversegraph = NULL,
+        Csc<VertexId, SizeT, Value> *inversegraph = NULL,
         int         num_gpus         = 1,
         int*        gpu_idx          = NULL,
         std::string partition_method ="random",
@@ -754,7 +754,7 @@ struct BFSProblem : ProblemBase<VertexId, SizeT, Value,
                 sizeof(MaskT),
                 cudaMemcpyHostToDevice),
                 "BFSProblem cudaMemcpy visited_mask failed", __FILE__, __LINE__))
-                return retval; 
+                return retval;
         }
 
        return retval;

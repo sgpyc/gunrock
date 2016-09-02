@@ -16,17 +16,16 @@
 
 #include <time.h>
 #include <stdio.h>
-#include <string>
-#include <vector>
+//#include <string>
+//#include <vector>
 #include <fstream>
 #include <iostream>
-#include <algorithm>
-#include <iterator>
+//#include <algorithm>
 #include <omp.h>
 
 #include <gunrock/util/test_utils.cuh>
 #include <gunrock/util/error_utils.cuh>
-#include <gunrock/util/multithread_utils.cuh>
+#include <gunrock/util/pinned_memory.cuh>
 #include <gunrock/util/sort_omp.cuh>
 #include <gunrock/coo.cuh>
 
@@ -37,28 +36,32 @@ namespace gunrock {
  * format to store a graph. It is a compressed way to present
  * the graph as a sparse matrix.
  *
- * @tparam VertexId Vertex identifier.
- * @tparam Value Associated value type.
+ * @tparam VertexT Vertex identifier.
+ * @tparam ValueTAssociated value type.
  * @tparam SizeT Graph size type.
  */
-template<typename VertexId, typename SizeT, typename Value>
+template <typename _VertexT, typename _SizeT, typename _ValueT>
 struct Csr
 {
+    typedef _VertexT  VertexT;
+    typedef _SizeT    SizeT;
+    typedef _ValueT   ValueT;
+
+    typedef Csr<VertexT, SizeT, ValueT> CsrT;
     SizeT nodes;            // Number of nodes in the graph
     SizeT edges;            // Number of edges in the graph
     SizeT out_nodes;        // Number of nodes which have outgoing edges
     SizeT average_degree;   // Average vertex degrees
 
-    VertexId *column_indices; // Column indices corresponding to all the
+    VertexT *column_indices; // Column indices corresponding to all the
     // non-zero values in the sparse matrix
     SizeT    *row_offsets;    // List of indices where each row of the
     // sparse matrix starts
-    Value    *edge_values;    // List of values attached to edges in the graph
-    Value    *node_values;    // List of values attached to nodes in the graph
+    ValueT    *edge_values;    // List of values attached to edges in the graph
+    ValueT    *node_values;    // List of values attached to nodes in the graph
 
-    Value average_edge_value;
-    Value average_node_value;
-
+    ValueT average_edge_value;
+    ValueT average_node_value;
     bool  pinned;  // Whether to use pinned memory
 
     /**
@@ -67,88 +70,84 @@ struct Csr
      * @param[in] pinned Use pinned memory for CSR data structure
      * (default: do not use pinned memory)
      */
-    Csr(bool pinned = false)
+    Csr(bool _pinned = false) :
+        nodes              (0),
+        edges              (0),
+        average_degree     (0),
+        average_edge_value (0),
+        average_node_value (0),
+        out_nodes          (-1),
+        row_offsets        ((SizeT  *)NULL),
+        column_indices     ((VertexT*)NULL),
+        edge_values        ((ValueT *)NULL),
+        node_values        ((ValueT *)NULL),
+        pinned             (_pinned)
     {
-        nodes = 0;
-        edges = 0;
-        average_degree = 0;
-        average_edge_value = 0;
-        average_node_value = 0;
-        out_nodes = -1;
-        row_offsets = NULL;
-        column_indices = NULL;
-        edge_values = NULL;
-        node_values = NULL;
-        this->pinned = pinned;
     }
 
-    void FromCsr(Csr<VertexId, SizeT, Value> &source)
+    template <bool HAS_EDGE_VALUES = false, bool HAS_NODE_VALUES = false>
+    cudaError_t FromCsr(CsrT &source)
     {
-        nodes = source.nodes;
-        edges = source.edges;
-        average_degree = source.average_degree;
+        cudaError_t retval = cudaSuccess;
+        if (retval = Release()) return retval;
+
+        nodes              = source.nodes;
+        edges              = source.edges;
+        average_degree     = source.average_degree;
         average_edge_value = source.average_edge_value;
         average_node_value = source.average_node_value;
-        out_nodes = source.out_nodes;
-        if (source.row_offsets == NULL)
-        {
-            row_offsets = NULL;
-        } else {
-            row_offsets = (SizeT*) malloc(sizeof(SizeT) * (source.nodes + 1));
-            memcpy(row_offsets, source.row_offsets, sizeof(SizeT) * (source.nodes + 1));
-        }
-        if (source.column_indices == NULL)
-        {
-            column_indices = NULL;
-        } else {
-            column_indices = (VertexId*) malloc(sizeof(VertexId) * source.edges); 
-            memcpy(column_indices, source.column_indices, sizeof(VertexId) * source.edges);
-        }
-        if (source.edge_values == NULL)
-        {
-            edge_values = NULL;
-        } else {
-            edge_values = (Value*) malloc(sizeof(Value) * source.edges);
-            memcpy(edge_values, source.edge_values, sizeof(Value) * source.edges);
-        }
-        if (source.node_values == NULL)
-        {
-            node_values = NULL;
-        } else {
-            node_values = (Value*) malloc(sizeof(Value) * source.nodes);
-            memcpy(node_values, source.node_values, sizeof(Value) * source.nodes);
-        } 
+        out_nodes          = source.out_nodes;
+        pinned             = source.pinned;
+
+        if (retval = util::MemcpyPinned(
+            row_offsets   , source.row_offsets, nodes+1, pinned))
+            return retval;
+
+        if (retval = util::MemcpyPinned(
+            column_indices, source.column_indices, edges, pinned))
+            return retval;
+
+        if (HAS_EDGE_VALUES)
+        if (retval = util::MemcpyPinned(
+            edge_values   , source.edge_values   , edges, pinned))
+            return retval;
+
+        if (HAS_NODE_VALUES)
+        if (retval = util::MemcpyPinned(
+            node_values   , source.node_values   , nodes, pinned))
+            return retval;
+
+        return retval;
     }
 
-    
-    template <typename Tuple>
-    void CsrToCsc(Csr<VertexId, SizeT, Value> &target, 
-            Csr<VertexId, SizeT, Value> &source)
+    template <bool HAS_EDGE_VALUES, bool HAS_NODE_VALUES, typename CscT>
+    cudaError_t FromCsc(CscT &source)
+        //Csr<VertexT, SizeT, Value> &source)
     {
-        target.nodes = source.nodes;
-        target.edges = source.edges;
-        target.average_degree = source.average_degree;
-        target.average_edge_value = source.average_edge_value;
-        target.average_node_value = source.average_node_value;
-        target.out_nodes = source.out_nodes;
+        cudaError_t retval = cudaSuccess;
+
+        Coo<VertexT, SizeT, ValueT, HAS_EDGE_VALUES> coo;
+        average_degree     = source.average_degree;
+        average_edge_value = source.average_edge_value;
+        average_node_value = source.average_node_value;
+        out_nodes          = source.out_nodes;
+        pinned             = source.pinned;
+
+        if (retval = coo.FromCsc(source))
+            return retval;
+
+        if (retval = FromCoo(coo))
+            return retval;
+
+        if (HAS_NODE_VALUES && source.node_values == NULL)
         {
-            Tuple *coo = (Tuple*)malloc(sizeof(Tuple) * source.edges);
-            int idx = 0;
-            for (int i = 0; i < source.nodes; ++i)
-            {
-                for (int j = source.row_offsets[i]; j < source.row_offsets[i+1]; ++j)
-                {
-                    coo[idx].row = source.column_indices[j];
-                    coo[idx].col = i;
-                    coo[idx++].val = (source.edge_values == NULL) ? 0 : source.edge_values[j];
-                }
-            }
-            if (source.edge_values == NULL)
-                target.template FromCoo<false>(NULL, coo, nodes, edges);
-            else
-                target.template FromCoo<true>(NULL, coo, nodes, edges);
-            free(coo);
+            if (retval = util::MallocPinned(node_values, source.nodes, pinned))
+                return retval;
+            for (VertexT v = 0; v<source.nodes; v++)
+                node_values[v] = 0;
         }
+
+        return retval;
     }
 
     /**
@@ -161,319 +160,31 @@ struct Csr
      * @param[in] edges Number of edges in COO-format graph
      */
     template <bool LOAD_EDGE_VALUES, bool LOAD_NODE_VALUES>
-    void FromScratch(SizeT nodes, SizeT edges)
+    cudaError_t FromScratch(
+        SizeT nodes,
+        SizeT edges)
     {
+        cudaError_t retval = cudaSuccess;
+        if (retval = Release()) return retval;
+
         this->nodes = nodes;
         this->edges = edges;
 
-        if (pinned)
-        {
-            // Put our graph in pinned memory
-            int flags = cudaHostAllocMapped;
-            if (gunrock::util::GRError(
-                        cudaHostAlloc((void **)&row_offsets,
-                                      sizeof(SizeT) * (nodes + 1), flags),
-                        "Csr cudaHostAlloc row_offsets failed", __FILE__, __LINE__))
-                exit(1);
-            if (gunrock::util::GRError(
-                        cudaHostAlloc((void **)&column_indices,
-                                      sizeof(VertexId) * edges, flags),
-                        "Csr cudaHostAlloc column_indices failed",
-                        __FILE__, __LINE__))
-                exit(1);
+        if (retval = util::MallocPinned(row_offsets, nodes +1, pinned))
+            return retval;
 
-            if (LOAD_NODE_VALUES)
-            {
-                if (gunrock::util::GRError(
-                            cudaHostAlloc((void **)&node_values,
-                                          sizeof(Value) * nodes, flags),
-                            "Csr cudaHostAlloc node_values failed",
-                            __FILE__, __LINE__))
-                    exit(1);
-            }
+        if (retval = util::MallocPinned(column_indices, edges, pinned))
+            return retval;
 
-            if (LOAD_EDGE_VALUES)
-            {
-                if (gunrock::util::GRError(
-                            cudaHostAlloc((void **)&edge_values,
-                                          sizeof(Value) * edges, flags),
-                            "Csr cudaHostAlloc edge_values failed",
-                            __FILE__, __LINE__))
-                    exit(1);
-            }
-
-        }
-        else
-        {
-            // Put our graph in regular memory
-            row_offsets = (SizeT*) malloc(sizeof(SizeT) * (nodes + 1));
-            column_indices = (VertexId*) malloc(sizeof(VertexId) * edges);
-            node_values = (LOAD_NODE_VALUES) ?
-                          (Value*) malloc(sizeof(Value) * nodes) : NULL;
-            edge_values = (LOAD_EDGE_VALUES) ?
-                          (Value*) malloc(sizeof(Value) * edges) : NULL;
-        }
-    }
-
-    void WriteBinary_SM(
-	char *file_name,
-	SizeT v,
-	Value *labels)
-    {
-	std::ofstream fout(file_name);
-	if(fout.is_open())
-	{
-	    fout.write(reinterpret_cast<const char*>(labels), v*sizeof(Value));
-	    fout.close();
-	}
-    }
-    /**
-     *
-     * @brief Store graph information into a file.
-     *
-     * @param[in] file_name Original graph file path and name.
-     * @param[in] v Number of vertices in input graph.
-     * @param[in] e Number of edges in input graph.
-     * @param[in] row Row-offsets array store row pointers.
-     * @param[in] col Column-indices array store destinations.
-     * @param[in] edge_values Per edge weight values associated.
-     *
-     */
-    void WriteBinary(
-        char  *file_name,
-        SizeT v,
-        SizeT e,
-        SizeT *row,
-        VertexId *col,
-        Value *edge_values = NULL)
-    {
-        std::ofstream fout(file_name);
-        if (fout.is_open())
-        {
-            fout.write(reinterpret_cast<const char*>(&v), sizeof(SizeT));
-            fout.write(reinterpret_cast<const char*>(&e), sizeof(SizeT));
-            fout.write(reinterpret_cast<const char*>(row), (v + 1)*sizeof(SizeT));
-            fout.write(reinterpret_cast<const char*>(col), e * sizeof(VertexId));
-            if (edge_values != NULL)
-            {
-                fout.write(reinterpret_cast<const char*>(edge_values),
-                           e * sizeof(Value));
-            }
-            fout.close();
-        }
-    }
-
-    /*
-     * @brief Write human-readable CSR arrays into 3 files.
-     * Can be easily used for python interface.
-     *
-     * @param[in] file_name Original graph file path and name.
-     * @param[in] v Number of vertices in input graph.
-     * @param[in] e Number of edges in input graph.
-     * @param[in] row_offsets Row-offsets array store row pointers.
-     * @param[in] col_indices Column-indices array store destinations.
-     * @param[in] edge_values Per edge weight values associated.
-     */
-    void WriteCSR(
-        char *file_name,
-        SizeT v, SizeT e,
-        SizeT    *row_offsets,
-        VertexId *col_indices,
-        Value    *edge_values = NULL)
-    {
-        std::cout << file_name << std::endl;
-        char rows[256], cols[256], vals[256];
-
-        sprintf(rows, "%s.rows", file_name);
-        sprintf(cols, "%s.cols", file_name);
-        sprintf(vals, "%s.vals", file_name);
-
-        std::ofstream rows_output(rows);
-        if (rows_output.is_open())
-        {
-            std::copy(row_offsets, row_offsets + v + 1,
-                      std::ostream_iterator<SizeT>(rows_output, "\n"));
-            rows_output.close();
-        }
-
-        std::ofstream cols_output(cols);
-        if (cols_output.is_open())
-        {
-            std::copy(col_indices, col_indices + e,
-                      std::ostream_iterator<VertexId>(cols_output, "\n"));
-            cols_output.close();
-        }
-
-        if (edge_values != NULL)
-        {
-            std::ofstream vals_output(vals);
-            if (vals_output.is_open())
-            {
-                std::copy(edge_values, edge_values + e,
-                          std::ostream_iterator<Value>(vals_output, "\n"));
-                vals_output.close();
-            }
-        }
-    }
-
-    /*
-     * @brief Write Ligra input CSR arrays into .adj file.
-     * Can be easily used for python interface.
-     *
-     * @param[in] file_name Original graph file path and name.
-     * @param[in] v Number of vertices in input graph.
-     * @param[in] e Number of edges in input graph.
-     * @param[in] row Row-offsets array store row pointers.
-     * @param[in] col Column-indices array store destinations.
-     * @param[in] edge_values Per edge weight values associated.
-     * @param[in] quiet Don't print out anything.
-     */
-    void WriteToLigraFile(
-        char  *file_name,
-        SizeT v, SizeT e,
-        SizeT *row,
-        VertexId *col,
-        Value *edge_values = NULL,
-        bool quiet = false)
-    {
-        char adj_name[256];
-        sprintf(adj_name, "%s.adj", file_name);
-        if (!quiet)
-        {
-            printf("writing to ligra .adj file.\n");
-        }
-
-        std::ofstream fout3(adj_name);
-        if (fout3.is_open())
-        {
-            fout3 << v << " " << v << " " << e << std::endl;
-            for (int i = 0; i < v; ++i)
-                fout3 << row[i] << std::endl;
-            for (int i = 0; i < e; ++i)
-                fout3 << col[i] << std::endl;
-            if (edge_values != NULL)
-            {
-                for (int i = 0; i < e; ++i)
-                    fout3 << edge_values[i] << std::endl;
-            }
-            fout3.close();
-        }
-    }
-
-    /**
-     * @brief Read from stored row_offsets, column_indices arrays.
-     *
-     * @tparam LOAD_EDGE_VALUES Whether or not to load edge values.
-     *
-     * @param[in] f_in Input file name.
-     * @param[in] quiet Don't print out anything.
-     */
-    template <bool LOAD_EDGE_VALUES>
-    void FromCsr(char *f_in, bool quiet = false)
-    {
-        if (!quiet)
-        {
-            printf("  Reading directly from stored binary CSR arrays ...\n");
-        }
-        time_t mark1 = time(NULL);
-
-        std::ifstream input(f_in);
-        SizeT v, e;
-        input.read(reinterpret_cast<char*>(&v), sizeof(SizeT));
-        input.read(reinterpret_cast<char*>(&e), sizeof(SizeT));
-
-        FromScratch<LOAD_EDGE_VALUES, false>(v, e);
-
-        input.read(reinterpret_cast<char*>(row_offsets), (v + 1)*sizeof(SizeT));
-        input.read(reinterpret_cast<char*>(column_indices), e * sizeof(VertexId));
-        if (LOAD_EDGE_VALUES)
-        {
-            input.read(reinterpret_cast<char*>(edge_values), e * sizeof(Value));
-        }
-
-        time_t mark2 = time(NULL);
-        if (!quiet)
-        {
-            printf("Done reading (%ds).\n", (int) (mark2 - mark1));
-        }
-
-        // compute out_nodes
-        SizeT out_node = 0;
-        for (SizeT node = 0; node < nodes; node++)
-        {
-            if (row_offsets[node + 1] - row_offsets[node] > 0)
-            {
-                ++out_node;
-            }
-        }
-        out_nodes = out_node;
-    }
-
-    /**
-     * @brief (Specific for SM) Read from stored row_offsets, column_indices arrays.
-     *
-     * @tparam LOAD_NODE_VALUES Whether or not to load node values.
-     *
-     * @param[in] f_in Input graph file name.
-     * @param[in] f_label Input label file name.
-     * @param[in] quiet Don't print out anything.
-     */
-    template <bool LOAD_NODE_VALUES>
-    void FromCsr_SM(char *f_in, char *f_label, bool quiet = false)
-    {
-        if (!quiet)
-        {
-            printf("  Reading directly from stored binary CSR arrays ...\n");
-	    if(LOAD_NODE_VALUES)
-                printf("  Reading directly from stored binary label arrays ...\n");
-        }
-        time_t mark1 = time(NULL);
-
-        std::ifstream input(f_in);
-        std::ifstream input_label(f_label);
-
-        SizeT v, e;
-        input.read(reinterpret_cast<char*>(&v), sizeof(SizeT));
-        input.read(reinterpret_cast<char*>(&e), sizeof(SizeT));
-
-        FromScratch<false, LOAD_NODE_VALUES>(v, e);
-
-        input.read(reinterpret_cast<char*>(row_offsets), (v + 1)*sizeof(SizeT));
-        input.read(reinterpret_cast<char*>(column_indices), e * sizeof(VertexId));
         if (LOAD_NODE_VALUES)
-        {
-            input_label.read(reinterpret_cast<char*>(node_values), v * sizeof(Value));
-        }
-	    for(int i=0; i<v; i++) printf("%lld ", (long long)node_values[i]); printf("\n");
+            if (retval = util::MallocPinned(node_values, nodes, pinned))
+                return retval;
 
-        time_t mark2 = time(NULL);
-        if (!quiet)
-        {
-            printf("Done reading (%ds).\n", (int) (mark2 - mark1));
-        }
+        if (LOAD_EDGE_VALUES)
+            if (retval = util::MallocPinned(edge_values, edges, pinned))
+                return retval;
 
-        // compute out_nodes
-        SizeT out_node = 0;
-        for (SizeT node = 0; node < nodes; node++)
-        {
-            if (row_offsets[node + 1] - row_offsets[node] > 0)
-            {
-                ++out_node;
-            }
-        }
-        out_nodes = out_node;
-    }
-
-    template<bool LOAD_NODE_VALUES>
-    void FromLabels(
-	char *output_file,
-	Value *labels,
-	SizeT nodes,
-	bool quiet = false)
-    {
-	    if(!quiet) printf("  Converting the labels of %lld vertices to binary format...\n", 
-				(long long)nodes);
-	    if(LOAD_NODE_VALUES) WriteBinary_SM(output_file, nodes, labels);
+        return retval;
     }
 
     /**
@@ -490,34 +201,42 @@ struct Csr
      *
      * Default: Assume rows are not sorted.
      */
-    template <bool LOAD_EDGE_VALUES, typename Tuple>
-    void FromCoo(
-        char  *output_file,
-        Tuple *coo,
-        SizeT coo_nodes,
-        SizeT coo_edges,
+    template <bool HAS_EDGE_VALUES, bool HAS_NODE_VALUES, typename CooT>
+    cudaError_t FromCoo(
+        //char  *output_file,
+        //Tuple *coo,
+        //SizeT coo_nodes,
+        //SizeT coo_edges,
+        CooT  &coo,
+        //bool  load_edge_values = false,
         bool  ordered_rows = false,
-        bool  undirected = false,
-        bool  reversed = false,
+        //bool  undirected = false,
+        //bool  reversed = false,
         bool  quiet = false)
     {
+        typedef typename CooT::EdgeT EdgeT;
+        cudaError_t retval = cudaSuccess;
+
         if (!quiet)
         {
-            printf("  Converting %lld vertices, %lld directed edges (%s tuples) "
-                   "to CSR format...\n", 
-                    (long long)coo_nodes, (long long)coo_edges,
-                   ordered_rows ? "ordered" : "unordered");
+            printf("  Converting %lld vertices, %lld directed edges (%s) "
+                "from COO to CSR format...",
+                (long long)coo.nodes, (long long)coo.edges,
+                ordered_rows ? "ordered" : "unordered");
+            fflush(stdout);
         }
-
         time_t mark1 = time(NULL);
-        fflush(stdout);
 
-        FromScratch<LOAD_EDGE_VALUES, false>(coo_nodes, coo_edges);
+        if (retval = Release())
+            return retval;
+        if (retval = FromScratch<HAS_EDGE_VALUES, HAS_NODE_VALUES>(
+                coo.nodes, coo.edges))
+            return retval;
 
         // Sort COO by row
         if (!ordered_rows)
         {
-            util::omp_sort(coo, coo_edges, RowFirstTupleCompare<Tuple>);
+            util::omp_sort(coo.coo_edges, coo.edges, RowFirstTupleCompare<EdgeT>);
         }
 
         SizeT edge_offsets[129];
@@ -526,27 +245,25 @@ struct Csr
         {
             int num_threads  = omp_get_num_threads();
             int thread_num   = omp_get_thread_num();
-            SizeT edge_start = (long long)(coo_edges) * thread_num / num_threads;
-            SizeT edge_end   = (long long)(coo_edges) * (thread_num + 1) / num_threads;
-            SizeT node_start = (long long)(coo_nodes) * thread_num / num_threads;
-            SizeT node_end   = (long long)(coo_nodes) * (thread_num + 1) / num_threads;
-            Tuple *new_coo   = (Tuple*) malloc (sizeof(Tuple) * (edge_end - edge_start));
+            SizeT edge_start = (long long)(coo.edges) * thread_num / num_threads;
+            SizeT edge_end   = (long long)(coo.edges) * (thread_num + 1) / num_threads;
+            SizeT node_start = (long long)(coo.nodes) * thread_num / num_threads;
+            SizeT node_end   = (long long)(coo.nodes) * (thread_num + 1) / num_threads;
+            EdgeT *new_coo   = (EdgeT*) malloc (sizeof(EdgeT) * (edge_end - edge_start));
             SizeT edge       = edge_start;
             SizeT new_edge   = 0;
             for (edge = edge_start; edge < edge_end; edge++)
             {
-                VertexId col = coo[edge].col;
-                VertexId row = coo[edge].row;
-                if ((col != row) && (edge == 0 || col != coo[edge - 1].col || row != coo[edge - 1].row))
+                if ((coo.coo_edges[edge].col != coo.coo_edges[edge].row) &&
+                    ((edge == 0) ||
+                     (coo.coo_edges[edge] != coo.coo_edges[edge-1])))
                 {
-                    new_coo[new_edge].col = col;
-                    new_coo[new_edge].row = row;
-                    new_coo[new_edge].val = coo[edge].val;
-                    new_edge++;
+                    new_coo[new_edge] = coo.coo_edges[edge];
+                    new_edge ++;
                 }
             }
             edge_counts[thread_num] = new_edge;
-            for (VertexId node = node_start; node < node_end; node++)
+            for (VertexT node = node_start; node < node_end; node++)
                 row_offsets[node] = -1;
 
             #pragma omp barrier
@@ -555,52 +272,50 @@ struct Csr
                 edge_offsets[0] = 0;
                 for (int i = 0; i < num_threads; i++)
                     edge_offsets[i + 1] = edge_offsets[i] + edge_counts[i];
-                //util::cpu_mt::PrintCPUArray("edge_offsets", edge_offsets, num_threads+1);
                 row_offsets[0] = 0;
             }
 
             SizeT edge_offset = edge_offsets[thread_num];
-            VertexId first_row = new_edge > 0 ? new_coo[0].row : -1;
-            //VertexId last_row = new_edge > 0? new_coo[new_edge-1].row : -1;
+            VertexT first_row = new_edge > 0 ? new_coo[0].row : -1;
             SizeT pointer = -1;
             for (edge = 0; edge < new_edge; edge++)
             {
                 SizeT edge_  = edge + edge_offset;
-                VertexId row = new_coo[edge].row;
+                VertexT row = new_coo[edge].row;
                 row_offsets[row + 1] = edge_ + 1;
                 if (row == first_row) pointer = edge_ + 1;
                 // Fill in rows up to and including the current row
-                //for (VertexId row = prev_row + 1; row <= current_row; row++) {
+                //for (VertexT row = prev_row + 1; row <= current_row; row++) {
                 //    row_offsets[row] = edge;
                 //}
                 //prev_row = current_row;
 
                 column_indices[edge + edge_offset] = new_coo[edge].col;
-                if (LOAD_EDGE_VALUES)
+                if (HAS_EDGE_VALUES)
                 {
                     //new_coo[edge].Val(edge_values[edge]);
-                    edge_values[edge + edge_offset] = new_coo[edge].val;
+                    edge_values[edge + edge_offset] = new_coo[edge]. template GetVal<ValueT>();
                 }
             }
             #pragma omp barrier
             //if (first_row != last_row)
-            if (edge_start > 0 && coo[edge_start].row == coo[edge_start - 1].row) // same row as previous thread
-                if (edge_end == coo_edges || coo[edge_end].row != coo[edge_start].row) // first row ends at this thread
+            if (edge_start > 0 && coo.coo_edges[edge_start].row == coo.coo_edges[edge_start - 1].row) // same row as previous thread
+                if (edge_end == coo.edges || coo.coo_edges[edge_end].row != coo.coo_edges[edge_start].row) // first row ends at this thread
                 {
                     row_offsets[first_row + 1] = pointer;
                 }
             #pragma omp barrier
             // Fill out any trailing edgeless nodes (and the end-of-list element)
-            //for (VertexId row = prev_row + 1; row <= nodes; row++) {
+            //for (VertexT row = prev_row + 1; row <= nodes; row++) {
             //    row_offsets[row] = real_edge;
             //}
             if (row_offsets[node_start] == -1)
             {
-                VertexId i = node_start;
+                VertexT i = node_start;
                 while (row_offsets[i] == -1) i--;
                 row_offsets[node_start] = row_offsets[i];
             }
-            for (VertexId node = node_start + 1; node < node_end; node++)
+            for (VertexT node = node_start + 1; node < node_end; node++)
                 if (row_offsets[node] == -1)
                 {
                     row_offsets[node] = row_offsets[node - 1];
@@ -615,11 +330,24 @@ struct Csr
         time_t mark2 = time(NULL);
         if (!quiet)
         {
-            printf("Done converting (%ds).\n", (int)(mark2 - mark1));
+            printf("Done (%ds).\n", (int)(mark2 - mark1));
+        }
+
+        if (HAS_NODE_VALUES)
+        {
+            if (coo.node_values == NULL)
+            {
+                for (SizeT node = 0; node < nodes; node++)
+                {
+                    node_values[node] = 0;
+                }
+            } else {
+                memcpy(node_values, coo.node_values, sizeof(ValueT) * nodes);
+            }
         }
 
         // Write offsets, indices, node, edges etc. into file
-        if (LOAD_EDGE_VALUES)
+        /*if (LOAD_EDGE_VALUES)
         {
             WriteBinary(output_file, nodes, edges,
                         row_offsets, column_indices, edge_values);
@@ -632,18 +360,12 @@ struct Csr
         {
             WriteBinary(output_file, nodes, edges,
                         row_offsets, column_indices);
-        }
+        }*/
 
         // Compute out_nodes
-        SizeT out_node = 0;
-        for (SizeT node = 0; node < nodes; node++)
-        {
-            if (row_offsets[node + 1] - row_offsets[node] > 0)
-            {
-                ++out_node;
-            }
-        }
-        out_nodes = out_node;
+        GetOutNodes();
+
+        return retval;
     }
 
     /**
@@ -667,7 +389,7 @@ struct Csr
 
         // Scan
         SizeT max_log_length = -1;
-        for (VertexId i = 0; i < nodes; i++)
+        for (VertexT i = 0; i < nodes; i++)
         {
 
             SizeT length = row_offsets[i + 1] - row_offsets[i];
@@ -687,12 +409,12 @@ struct Csr
         }
         printf("\nDegree Histogram (%lld vertices, %lld edges):\n",
                (long long) nodes, (long long) edges);
-        printf("    Degree   0: %lld (%.2f%%)\n", 
+        printf("    Degree   0: %lld (%.2f%%)\n",
                (long long) log_counts[0],
                (float) log_counts[0] * 100.0 / nodes);
         for (int i = 0; i < max_log_length + 1; i++)
         {
-            printf("    Degree 2^%i: %lld (%.2f%%)\n", 
+            printf("    Degree 2^%i: %lld (%.2f%%)\n",
                 i, (long long)log_counts[i + 1],
                 (float) log_counts[i + 1] * 100.0 / nodes);
         }
@@ -826,7 +548,7 @@ struct Csr
      *
      * @param[in] node Vertex ID to display.
      */
-    void DisplayNeighborList(VertexId node)
+    void DisplayNeighborList(VertexT node)
     {
         if (node < 0 || node >= nodes) return;
         for (SizeT edge = row_offsets[node];
@@ -859,21 +581,21 @@ struct Csr
 
     /**
      * @brief Get the degrees of all the nodes in graph
-     * 
+     *
      * @param[in] node_degrees node degrees to fill in
      */
     void GetNodeDegree(SizeT *node_degrees)
     {
-	for(SizeT node=0; node < nodes; ++node)
-	{
-		node_degrees[node] = row_offsets[node+1]-row_offsets[node];
-	}
+	    for(SizeT node=0; node < nodes; ++node)
+	    {
+		    node_degrees[node] = row_offsets[node+1]-row_offsets[node];
+	    }
     }
 
     /**
      * @brief Get the average node value in graph
      */
-    Value GetAverageNodeValue()
+    ValueT GetAverageNodeValue()
     {
         if (abs(average_node_value - 0) < 0.001 && node_values != NULL)
         {
@@ -886,7 +608,7 @@ struct Csr
                     mean += (node_values[node] - mean) / count;
                 }
             }
-            average_node_value = static_cast<Value>(mean);
+            average_node_value = static_cast<ValueT>(mean);
         }
         return average_node_value;
     }
@@ -894,7 +616,7 @@ struct Csr
     /**
      * @brief Get the average edge value in graph
      */
-    Value GetAverageEdgeValue()
+    ValueT GetAverageEdgeValue()
     {
         if (abs(average_edge_value - 0) < 0.001 && edge_values != NULL)
         {
@@ -907,9 +629,24 @@ struct Csr
                     mean += (edge_values[edge] - mean) / count;
                 }
             }
-            average_edge_value = static_cast<Value>(mean);
+            average_edge_value = static_cast<ValueT>(mean);
         }
         return average_edge_value;
+    }
+
+    SizeT GetOutNodes()
+    {
+        // compute out_nodes
+        SizeT out_node = 0;
+        for (SizeT node = 0; node < nodes; node++)
+        {
+            if (row_offsets[node + 1] - row_offsets[node] > 0)
+            {
+                ++out_node;
+            }
+        }
+        out_nodes = out_node;
+        return out_node;
     }
 
     /**@}*/
@@ -917,49 +654,25 @@ struct Csr
     /**
      * @brief Deallocates CSR graph
      */
-    void Free()
+    cudaError_t Release()
     {
-        if (row_offsets)
-        {
-            if (pinned)
-            {
-                gunrock::util::GRError(
-                    cudaFreeHost(row_offsets),
-                    "Csr cudaFreeHost row_offsets failed",
-                    __FILE__, __LINE__);
-            }
-            else
-            {
-                free(row_offsets);
-            }
-            row_offsets = NULL;
-        }
-        if (column_indices)
-        {
-            if (pinned)
-            {
-                gunrock::util::GRError(
-                    cudaFreeHost(column_indices),
-                    "Csr cudaFreeHost column_indices failed",
-                    __FILE__, __LINE__);
-            }
-            else
-            {
-                free(column_indices);
-            }
-            column_indices = NULL;
-        }
-        if (edge_values)
-        {
-            free (edge_values); edge_values = NULL;
-        }
-        if (node_values)
-        {
-            free (node_values); node_values = NULL;
-        }
+        cudaError_t retval = cudaSuccess;
+
+        if (retval = util::FreePinned(row_offsets, pinned))
+            return retval;
+
+        if (retval = util::FreePinned(column_indices, pinned))
+            return retval;
+
+        if (retval = util::FreePinned(node_values, pinned))
+            return retval;
+
+        if (retval = util::FreePinned(edge_values, pinned))
+            return retval;
 
         nodes = 0;
         edges = 0;
+        return retval;
     }
 
     /**
@@ -967,7 +680,7 @@ struct Csr
      */
     ~Csr()
     {
-        Free();
+        Release();
     }
 };
 

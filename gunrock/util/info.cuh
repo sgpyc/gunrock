@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <gunrock/graphio/graphio.cuh>
+
 namespace gunrock {
 namespace util {
 
@@ -29,11 +31,16 @@ namespace util {
 template<typename VertexId, typename SizeT, typename Value>
 struct Info
 {
+    typedef Csr<VertexId, SizeT, Value> CsrT;
+    typedef Csc<VertexId, SizeT, Value> CscT;
+    typedef Coo<VertexId, SizeT, Value> CooT;
+
 private:
     int            num_iters;  // Number of times invoke primitive test
     int            max_iters;  // Maximum number of super-steps allowed
     int            grid_size;  // Maximum grid size (0: up to the enactor)
     std::string traversal_mode;  // Load-balanced or Dynamic cooperative
+    std::string   graph_type;  // Graph type
     int             num_gpus;  // Number of GPUs used
     double          q_sizing;  // Maximum size scaling factor for work queues
     double         q_sizing1;  // Value of max_queue_sizing1
@@ -55,10 +62,10 @@ private:
 
 public:
     json_spirit::mObject info;  // test parameters and running statistics
-    Csr<VertexId, SizeT, Value> *csr_ptr;  // pointer to CSR input graph
-    Csr<VertexId, SizeT, Value> *csc_ptr;  // pointer to CSC input graph
-    Csr<VertexId, SizeT, Value> *csr_query_ptr; // pointer to CSR input query graph
-    Csr<VertexId, SizeT, Value> *csr_data_ptr; // pointer to CSR input data graph
+    CsrT *csr_ptr;  // pointer to CSR input graph
+    CscT *csc_ptr;  // pointer to CSC input graph
+    CsrT *csr_query_ptr; // pointer to CSR input query graph
+    CsrT *csr_data_ptr; // pointer to CSR input data graph
     // TODO: following two already moved into Enactor in branch mgpu-cq
 
     void         *context;  // pointer to context array used by MordernGPU
@@ -182,7 +189,8 @@ public:
         time_t now = time(NULL); info["time"] = ctime(&now);
         info["gunrock_version"] = XSTR(GUNROCKVERSION);
         info["git_commit_sha1"] = g_GIT_SHA1;
-        info["graph_type"] = args.GetCmdLineArgvGraphType();
+        args.GetCmdLineArgument("graph-type", graph_type);
+        info["graph_type"] = graph_type;
 
         // get configuration parameters from command line arguments
         info["algorithm"]  =  algorithm_name;  // set algorithm name
@@ -250,7 +258,7 @@ public:
                     args.GetCmdLineArgument("src-seed", src_seed);
                 info["source_seed"]   = src_seed;
             } else if (source_type.compare("list") == 0)
-            { 
+            {
                 if (!args.CheckCmdLineFlag("quiet"))
                     printf("Using user specified source vertex for each run\n");
                 info["source_type"] = "list";
@@ -259,7 +267,7 @@ public:
                 args.GetCmdLineArgument("src", source);
                 info["source_type"] = "user-defined";
             }
-            info["source_list"] = GetSourceList(args); 
+            info["source_list"] = GetSourceList(args);
             info["source_vertex"] = (int64_t)source;
             if (!args.CheckCmdLineFlag("quiet"))
             {
@@ -476,16 +484,18 @@ public:
     void Init(
         std::string algorithm_name,
         util::CommandLineArgs &args,
-        Csr<VertexId, SizeT, Value> &csr_ref)
+        CsrT &csr_ref)
     {
         // load or generate input graph
         if (info["edge_value"].get_bool() && !info["random_edge_value"].get_bool())
         {
-            LoadGraph<true, false>(args, csr_ref);  // load graph with weighs
+            graphio::LoadGraph<true, false, CooT, CsrT, CscT>
+                (args, NULL, &csr_ref, NULL, this);  // load graph with weighs
         }
         else
         {
-            LoadGraph<false, false>(args, csr_ref);  // load without weights
+            graphio::LoadGraph<false, false, CooT, CsrT, CscT>
+                (args, NULL, &csr_ref, NULL, NULL, this);  // load without weights
             if (info["random_edge_value"].get_bool())
             {
                 if (csr_ref.edge_values != NULL) free(csr_ref.edge_values);
@@ -512,39 +522,41 @@ public:
     void Init(
         std::string algorithm_name,
         util::CommandLineArgs &args,
-        Csr<VertexId, SizeT, Value> &csr_ref,
-        Csr<VertexId, SizeT, Value> &csc_ref)
+        CsrT &csr_ref,
+        CscT &csc_ref)
     {
-        typedef Coo<VertexId, Value> EdgeTupleType;
+        typedef CooEdge<VertexId, Value> EdgeTupleType;
 	    // Special initialization for SM problem
-        if(algorithm_name == "SM") return Init_SM(args,csr_ref,csc_ref);
+        //if(algorithm_name == "SM") return Init_SM(args,csr_ref,csc_ref);
 
          // load or generate input graph
         if (info["edge_value"].get_bool())
         {
-            if (info["undirected"].get_bool())
-            {
-                LoadGraph<true, false>(args, csr_ref);  // with weigh values
-                csc_ref.FromCsr(csr_ref);
-            }
-            else
-            {
-                LoadGraph<true, false>(args, csr_ref);  // load CSR input
-                csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
-            }
+            //if (info["undirected"].get_bool())
+            //{
+                graphio::LoadGraph<true, false, CooT, CsrT, CscT>
+                    (args, NULL, &csr_ref, &csc_ref,  this);  // with weigh values
+            //}
+            //else
+            //{
+            //    graphio::LoadGraph<true, false, CsrT, CscT, CooT>
+            //        (args, &csr_ref, &csc_ref, NULL, this);  // load CSR input
+                //csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
+            //}
         }
         else  // does not need weight values
         {
-            if (info["undirected"].get_bool())
-            {
-                LoadGraph<false, false>(args, csr_ref);  // without weights
-                csc_ref.FromCsr(csr_ref);
-            }
-            else
-            {
-                LoadGraph<false, false>(args, csr_ref);  // without weights
-                csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
-            }
+            //if (info["undirected"].get_bool())
+            //{
+                graphio::LoadGraph<false, false, CooT, CsrT, CscT>
+                    (args, NULL, &csr_ref, &csc_ref, this);  // without weights
+                //csc_ref.FromCsr(csr_ref);
+            //}
+            //else
+            //{
+            //    LoadGraph<false, false>(args, csr_ref);  // without weights
+            //    csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
+            //}
         }
         csr_ptr = &csr_ref;  // set CSR pointer
         csc_ptr = &csc_ref;  // set CSC pointer
@@ -721,7 +733,7 @@ public:
             {
                 VertexId new_v = org_nodes * gpu + 1 + org_v;
                 SizeT new_row_offset = num_gpus + org_edges * gpu + org_row_offset;
-                if (undirected) 
+                if (undirected)
                 {
                     new_row_offset += gpu;
                     if (org_v > org_src) new_row_offset ++;
@@ -753,443 +765,6 @@ public:
 
         return 0;
     }
-
-    /**
-     * @brief Utility function to load input graph.
-     *
-     * @tparam EDGE_VALUE
-     * @tparam INVERSE_GRAPH
-     *
-     * @param[in] args Command line arguments.
-     * @param[in] csr_ref Reference to the CSR graph.
-     *
-     * \return int whether successfully loaded the graph (0 success, 1 error).
-     */
-    template<bool EDGE_VALUE, bool INVERSE_GRAPH>
-    int LoadGraph(
-        util::CommandLineArgs &args,
-        Csr<VertexId, SizeT, Value> &csr_ref)
-    {
-        std::string graph_type = args.GetCmdLineArgvGraphType();
-
-
-        if (graph_type == "market")  // Matrix-market graph
-        {
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Loading Matrix-market coordinate-formatted graph ...\n");
-            }
-
-            char *market_filename = args.GetCmdLineArgvDataset();
-
-            std::ifstream fp(market_filename);
-            if (market_filename == NULL||!fp.is_open())
-            {
-                fprintf(stderr, "Input graph file %s does not exist.\n",market_filename);
-                exit (EXIT_FAILURE);
-            }
-            boost::filesystem::path market_filename_path(market_filename);
-            file_stem = market_filename_path.stem().string();
-            info["dataset"] = file_stem;
-            if (graphio::BuildMarketGraph<EDGE_VALUE>(
-                        market_filename,
-                        csr_ref,
-                        info["undirected"].get_bool(),
-                        INVERSE_GRAPH,
-                        args.CheckCmdLineFlag("quiet")) != 0)
-            {
-                return 1;
-            }
-        }
-        else if (graph_type == "rmat" || graph_type == "grmat" || graph_type == "metarmat")  // R-MAT graph
-        {
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Generating R-MAT graph ...\n");
-            }
-            // parse R-MAT parameters
-            SizeT rmat_nodes = 1 << 10;
-            SizeT rmat_edges = 1 << 10;
-            SizeT rmat_scale = 10;
-            SizeT rmat_edgefactor = 48;
-            double rmat_a = 0.57;
-            double rmat_b = 0.19;
-            double rmat_c = 0.19;
-            double rmat_d = 1 - (rmat_a + rmat_b + rmat_c);
-            double rmat_vmin = 1;
-            double rmat_vmultipiler = 64;
-            int rmat_seed = -1;
-
-            args.GetCmdLineArgument("rmat_scale", rmat_scale);
-            rmat_nodes = 1 << rmat_scale;
-            args.GetCmdLineArgument("rmat_nodes", rmat_nodes);
-            args.GetCmdLineArgument("rmat_edgefactor", rmat_edgefactor);
-            rmat_edges = rmat_nodes * rmat_edgefactor;
-            args.GetCmdLineArgument("rmat_edges", rmat_edges);
-            args.GetCmdLineArgument("rmat_a", rmat_a);
-            args.GetCmdLineArgument("rmat_b", rmat_b);
-            args.GetCmdLineArgument("rmat_c", rmat_c);
-            rmat_d = 1 - (rmat_a + rmat_b + rmat_c);
-            args.GetCmdLineArgument("rmat_d", rmat_d);
-            args.GetCmdLineArgument("rmat_seed", rmat_seed);
-            args.GetCmdLineArgument("rmat_vmin", rmat_vmin);
-            args.GetCmdLineArgument("rmat_vmultipiler", rmat_vmultipiler);
-
-            std::vector<int> temp_devices;
-            if (args.CheckCmdLineFlag("device"))  // parse device list
-            {
-                args.GetCmdLineArguments<int>("device", temp_devices);
-                num_gpus = temp_devices.size();
-            }
-            else  // use single device with index 0
-            {
-                num_gpus = 1;
-                int gpu_idx;
-                util::GRError(cudaGetDevice(&gpu_idx),
-                    "cudaGetDevice failed", __FILE__, __LINE__);
-                temp_devices.push_back(gpu_idx);
-            }
-            int *gpu_idx = new int[temp_devices.size()];
-            for (int i=0; i<temp_devices.size(); i++)
-                gpu_idx[i] = temp_devices[i];
-
-            // put everything into mObject info
-            info["rmat_a"] = rmat_a;
-            info["rmat_b"] = rmat_b;
-            info["rmat_c"] = rmat_c;
-            info["rmat_d"] = rmat_d;
-            info["rmat_seed"] = rmat_seed;
-            info["rmat_scale"] = (int64_t)rmat_scale;
-            info["rmat_nodes"] = (int64_t)rmat_nodes;
-            info["rmat_edges"] = (int64_t)rmat_edges;
-            info["rmat_edgefactor"] = (int64_t)rmat_edgefactor;
-            info["rmat_vmin"] = rmat_vmin;
-            info["rmat_vmultipiler"] = rmat_vmultipiler;
-
-            util::CpuTimer cpu_timer;
-            cpu_timer.Start();
-
-            // generate R-MAT graph
-            if (graph_type == "rmat")
-            {
-                if (graphio::rmat::BuildRmatGraph<EDGE_VALUE>(
-                    rmat_nodes,
-                    rmat_edges,
-                    csr_ref,
-                    info["undirected"].get_bool(),
-                    rmat_a,
-                    rmat_b,
-                    rmat_c,
-                    rmat_d,
-                    rmat_vmultipiler,
-                    rmat_vmin,
-                    rmat_seed,
-                    args.CheckCmdLineFlag("quiet")) != 0)
-                {
-                    return 1;
-                }
-            } else if (graph_type == "grmat")
-            {
-                if (graphio::grmat::BuildRmatGraph<EDGE_VALUE>(
-                    rmat_nodes,
-                    rmat_edges,
-                    csr_ref,
-                    info["undirected"].get_bool(),
-                    rmat_a,
-                    rmat_b,
-                    rmat_c,
-                    rmat_d,
-                    rmat_vmultipiler,
-                    rmat_vmin,
-                    rmat_seed,
-                    args.CheckCmdLineFlag("quiet"),
-                    temp_devices.size(),
-                    gpu_idx) != 0)
-                {
-                    return 1;
-                }
-            } else // must be metarmat
-            {
-                if (graphio::grmat::BuildMetaRmatGraph<EDGE_VALUE>(
-                    rmat_nodes,
-                    rmat_edges,
-                    csr_ref,
-                    info["undirected"].get_bool(),
-                    rmat_a,
-                    rmat_b,
-                    rmat_c,
-                    rmat_d,
-                    rmat_vmultipiler,
-                    rmat_vmin,
-                    rmat_seed,
-                    args.CheckCmdLineFlag("quiet"),
-                    temp_devices.size(),
-                    gpu_idx) != 0)
-                {
-                    return 1;
-                }
-            }
-
-            cpu_timer.Stop();
-            float elapsed = cpu_timer.ElapsedMillis();
-            delete[] gpu_idx; gpu_idx = NULL;
-
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("R-MAT graph generated in %.3f ms, "
-                       "a = %.3f, b = %.3f, c = %.3f, d = %.3f\n",
-                       elapsed, rmat_a, rmat_b, rmat_c, rmat_d);
-            }
-        }
-        else if (graph_type == "rgg")
-        {
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Generating RGG (Random Geometry Graph) ...\n");
-            }
-
-            SizeT rgg_nodes = 1 << 10;
-            SizeT rgg_scale = 10;
-            double rgg_thfactor  = 0.55;
-            double rgg_threshold =
-                rgg_thfactor * sqrt(log(rgg_nodes) / rgg_nodes);
-            double rgg_vmultipiler = 1;
-            int rgg_seed = -1;
-
-            args.GetCmdLineArgument("rgg_scale", rgg_scale);
-            rgg_nodes = 1 << rgg_scale;
-            args.GetCmdLineArgument("rgg_nodes", rgg_nodes);
-            args.GetCmdLineArgument("rgg_thfactor", rgg_thfactor);
-            rgg_threshold = rgg_thfactor * sqrt(log(rgg_nodes) / rgg_nodes);
-            args.GetCmdLineArgument("rgg_threshold", rgg_threshold);
-            args.GetCmdLineArgument("rgg_vmultipiler", rgg_vmultipiler);
-            args.GetCmdLineArgument("rgg_seed", rgg_seed);
-
-            // put everything into mObject info
-            info["rgg_seed"]        = rgg_seed;
-            info["rgg_scale"]       = (int64_t)rgg_scale;
-            info["rgg_nodes"]       = (int64_t)rgg_nodes;
-            info["rgg_thfactor"]    = rgg_thfactor;
-            info["rgg_threshold"]   = rgg_threshold;
-            info["rgg_vmultipiler"] = rgg_vmultipiler;
-
-            util::CpuTimer cpu_timer;
-            cpu_timer.Start();
-
-            // generate random geometry graph
-            if (graphio::rgg::BuildRggGraph<EDGE_VALUE>(
-                        rgg_nodes,
-                        csr_ref,
-                        rgg_threshold,
-                        info["undirected"].get_bool(),
-                        rgg_vmultipiler,
-                        1,
-                        rgg_seed,
-                        args.CheckCmdLineFlag("quiet")) != 0)
-            {
-                return 1;
-            }
-
-            cpu_timer.Stop();
-            float elapsed = cpu_timer.ElapsedMillis();
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("RGG generated in %.3f ms, "
-                       "threshold = %.3lf, vmultipiler = %.3lf\n",
-                       elapsed, rgg_threshold, rgg_vmultipiler);
-            }
-        }
-        else if (graph_type == "smallworld")
-        {
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Generating Small World Graph ...\n");
-            }
-
-            SizeT  sw_nodes = 1 << 10;
-            SizeT  sw_scale = 10;
-            double sw_p     = 0.0;
-            SizeT  sw_k     = 6;
-            int    sw_seed  = -1;
-            double sw_vmultipiler = 1.00;
-            double sw_vmin        = 1.00;
-
-            args.GetCmdLineArgument("sw_scale", sw_scale);
-            sw_nodes = 1 << sw_scale;
-            args.GetCmdLineArgument("sw_nodes", sw_nodes);
-            args.GetCmdLineArgument("sw_k"    , sw_k    );
-            args.GetCmdLineArgument("sw_p"    , sw_p    );
-            args.GetCmdLineArgument("sw_seed" , sw_seed );
-            args.GetCmdLineArgument("sw_vmultipiler", sw_vmultipiler);
-            args.GetCmdLineArgument("sw_vmin"       , sw_vmin);
-
-            info["sw_seed"       ] = sw_seed       ;
-            info["sw_scale"      ] = (int64_t)sw_scale      ;
-            info["sw_nodes"      ] = (int64_t)sw_nodes      ;
-            info["sw_p"          ] = sw_p          ;
-            info["sw_k"          ] = (int64_t)sw_k          ;
-            info["sw_vmultipiler"] = sw_vmultipiler;
-            info["sw_vmin"       ] = sw_vmin       ;
-
-            util::CpuTimer cpu_timer;
-            cpu_timer.Start();
-            if (graphio::small_world::BuildSWGraph<EDGE_VALUE>(
-                sw_nodes,
-                csr_ref,
-                sw_k,
-                sw_p,
-                info["undirected"].get_bool(),
-                sw_vmultipiler,
-                sw_vmin,
-                sw_seed,
-                args.CheckCmdLineFlag("quiet")) != cudaSuccess)
-            {
-                return 1;
-            }
-            cpu_timer.Stop();
-            float elapsed = cpu_timer.ElapsedMillis();
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Small World Graph generated in %.3lf ms, "
-                    "k = %lld, p = %.3lf\n",
-                    elapsed, (long long)sw_k, sw_p);
-            }
-        }
-        else
-        {
-            fprintf(stderr, "Unspecified graph type.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        if (!args.CheckCmdLineFlag("quiet"))
-        {
-            csr_ref.GetAverageDegree();
-            csr_ref.PrintHistogram();
-            if (info["algorithm"].get_str().compare("SSSP") == 0)
-            {
-                csr_ref.GetAverageEdgeValue();
-                int max_degree;
-                csr_ref.GetNodeWithHighestDegree(max_degree);
-                printf("Maximum degree: %d\n", max_degree);
-            }
-        }
-        return 0;
-    }
-
- /**
-     * @brief SM Utility function to load input graph.
-     *
-     * @tparam NODE_VALUE
-     *
-     * @param[in] args Command line arguments.
-     * @param[in] csr_ref Reference to the CSR graph.
-     *
-     * \return int whether successfully loaded the graph (0 success, 1 error).
-     */
-    template<bool NODE_VALUE>
-    int LoadGraph_SM(
-        util::CommandLineArgs &args,
-        Csr<VertexId, SizeT, Value> &csr_ref,
-        std::string type)
-    {
-        std::string graph_type = args.GetCmdLineArgvGraphType();
-        if (graph_type == "market")  // Matrix-market graph
-        {
-            if (!args.CheckCmdLineFlag("quiet"))
-            {
-                printf("Loading Matrix-market coordinate-formatted graph ...\n");
-            }
-            char *market_filename = NULL;
-            char *label_filename = NULL;
-
-            if(type=="query"){
-                market_filename = args.GetCmdLineArgvQueryDataset();
-                if(NODE_VALUE)
-                    label_filename = args.GetCmdLineArgvQueryLabel();
-            }
-            else
-            {
-                market_filename = args.GetCmdLineArgvDataDataset();
-                if(NODE_VALUE)
-                    label_filename = args.GetCmdLineArgvDataLabel();
-            }
-
-            if (market_filename == NULL)
-            {
-                printf("Log.");
-                fprintf(stderr, "Input graph does not exist.\n");
-                return 1;
-            }
-
-            if (NODE_VALUE && label_filename == NULL)
-            {
-                printf("Log.");
-                fprintf(stderr, "Input graph labels does not exist.\n");
-                return 1;
-            }
-
-            boost::filesystem::path market_filename_path(market_filename);
-            file_stem = market_filename_path.stem().string();
-            info["dataset"] = file_stem;
-            if (graphio::BuildMarketGraph_SM<NODE_VALUE>(
-                        market_filename,
-                        label_filename,
-                        csr_ref,
-			 info["undirected"].get_bool(),
-                        false,
-                        args.CheckCmdLineFlag("quiet")) != 0)
-            {
-                return 1;
-            }
-        }
-        else
-        {
-            fprintf(stderr, "Unspecified graph type.\n");
-            return 1;
-        }
-
-        if (!args.CheckCmdLineFlag("quiet"))
-        {
-            csr_ref.GetAverageDegree();
-            csr_ref.PrintHistogram();
-            if (info["algorithm"].get_str().compare("SSSP") == 0)
-            {
-                csr_ref.GetAverageEdgeValue();
-                int max_degree;
-                csr_ref.GetNodeWithHighestDegree(max_degree);
-                printf("Maximum degree: %d\n", max_degree);
-            }
-        }
-        return 0;
-    }
-
-     /**
-     * @brief SM Initialization process for Info.
-     *
-     * @param[in] algorithm_name Algorithm name.
-     * @param[in] args Command line arguments.
-     * @param[in] csr_query_ref Reference to the CSR structure.
-     * @param[in] csr_data_ref Reference to the CSR structure.
-     */
-    void Init_SM(
-        util::CommandLineArgs &args,
-        Csr<VertexId, SizeT, Value> &csr_query_ref,
-        Csr<VertexId, SizeT, Value> &csr_data_ref)
-    {
-        if(info["node_value"].get_bool()){
-            LoadGraph_SM<true>(args,csr_query_ref, "query");
-            LoadGraph_SM<true>(args,csr_data_ref, "data");
-        }
-        else{
-        LoadGraph_SM<false>(args,csr_query_ref, "query");
-        LoadGraph_SM<false>(args,csr_data_ref, "data");
-        }
-        csr_query_ptr = &csr_query_ref;
-        csr_data_ptr = &csr_data_ref;
-
-        InitBase("SM", args);
-    }
-
 
     /**
      * @brief Compute statistics common to all primitives.

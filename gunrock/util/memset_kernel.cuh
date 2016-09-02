@@ -16,7 +16,6 @@
 /******************************************************************************
  * Simple Memset Kernel
  ******************************************************************************/
-#include <gunrock/coo.cuh>
 #pragma once
 
 namespace gunrock {
@@ -51,8 +50,11 @@ __global__ void MemsetKernel(T *d_out, T value, SizeT length)
     }
 }
 
-template <typename VertexId, typename SizeT, typename Value>
-__global__ void MemsetAddEdgeValKernel(Coo<VertexId, Value> *d_out, VertexId value, SizeT length)
+template <typename CooEdgeT, typename SizeT, typename Value>
+__global__ void MemsetAddEdgeValKernel(
+    CooEdgeT *d_out,
+    typename CooEdgeT::VertexT value,
+    SizeT length)
 {
    const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
     for (SizeT idx = ((SizeT)blockIdx.x * blockDim.x) + threadIdx.x;
@@ -60,7 +62,7 @@ __global__ void MemsetAddEdgeValKernel(Coo<VertexId, Value> *d_out, VertexId val
     {
         d_out[idx].row += value;
         d_out[idx].col += value;
-    } 
+    }
 }
 
 /**
@@ -231,8 +233,8 @@ template <typename T, typename SizeT>
 __global__ void MemsetCASKernel(T *d_dst, T compare, T val, SizeT length)
 {
     const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
-    for (SizeT idx = ((SizeT)blockIdx.x * blockDim.x) + threadIdx.x; 
-        idx < length; idx += STRIDE) 
+    for (SizeT idx = ((SizeT)blockIdx.x * blockDim.x) + threadIdx.x;
+        idx < length; idx += STRIDE)
     {
         if (d_dst[idx] == compare) d_dst[idx] = val;
     }
@@ -242,8 +244,8 @@ template <typename T, typename SizeT>
 __global__ void MemsetCASKernel(T *d_dst, T compare, T val, SizeT *length)
 {
     const SizeT STRIDE = (SizeT)gridDim.x * blockDim.x;
-    for (SizeT idx = ((SizeT)blockIdx.x * blockDim.x) + threadIdx.x; 
-        idx < length[0]; idx += STRIDE) 
+    for (SizeT idx = ((SizeT)blockIdx.x * blockDim.x) + threadIdx.x;
+        idx < length[0]; idx += STRIDE)
     {
         if (d_dst[idx] == compare) d_dst[idx] = val;
     }

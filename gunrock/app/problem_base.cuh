@@ -18,11 +18,7 @@
 #include <string>
 
 // Graph construction utilities
-#include <gunrock/graphio/market.cuh>
-#include <gunrock/graphio/rmat.cuh>
-#include <gunrock/graphio/grmat.cuh>
-#include <gunrock/graphio/rgg.cuh>
-#include <gunrock/graphio/small_world.cuh>
+#include <gunrock/graphio/graphio.cuh>
 
 // Information stats utilities
 #include <boost/filesystem.hpp>
@@ -193,7 +189,7 @@ struct GraphSlice
         bool                       stream_from_host,
         int                        num_gpus,
         Csr<VertexId, SizeT, Value>* graph,
-        Csr<VertexId, SizeT, Value>* inverstgraph,
+        Csc<VertexId, SizeT, Value>* inverstgraph,
         int*                       partition_table,
         VertexId*                  convertion_table,
         VertexId*                  original_vertex,
@@ -224,8 +220,8 @@ struct GraphSlice
         this->column_indices     .SetPointer(graph->column_indices, edges     );
         if (inverstgraph != NULL)
         {
-            this->column_offsets .SetPointer(inverstgraph->row_offsets, nodes + 1);
-            this->row_indices    .SetPointer(inverstgraph->column_indices   , inverstgraph -> edges  );
+            this->column_offsets .SetPointer(inverstgraph->column_offsets, nodes + 1);
+            this->row_indices    .SetPointer(inverstgraph->row_indices   , inverstgraph -> edges  );
         }
 
         // Set device using slice index
@@ -1452,7 +1448,7 @@ struct ProblemBase
     GraphSlice<VertexId, SizeT, Value>
     **graph_slices        ; // Set of graph slices (one for each GPU)
     Csr<VertexId, SizeT, Value> *sub_graphs     ; // Subgraphs for multi-GPU implementation
-    Csr<VertexId, SizeT, Value> *inv_subgraphs  ; // inverse subgraphs
+    Csc<VertexId, SizeT, Value> *inv_subgraphs  ; // inverse subgraphs
     Csr<VertexId, SizeT, Value> *org_graph      ; // Original graph
     PartitionerBase<VertexId, SizeT, Value> //, _ENABLE_BACKWARD, _KEEP_ORDER, _KEEP_NODE_NUM>
     *partitioner          ; // Partitioner
@@ -1603,7 +1599,7 @@ struct ProblemBase
     cudaError_t Init(
         bool        stream_from_host,
         Csr<VertexId, SizeT, Value> *graph,
-        Csr<VertexId, SizeT, Value> *inverse_graph = NULL,
+        Csc<VertexId, SizeT, Value> *inverse_graph = NULL,
         int         num_gpus          = 1,
         int         *gpu_idx          = NULL,
         std::string partition_method  = "random",
@@ -1698,44 +1694,44 @@ struct ProblemBase
 
             if (inverse_graph != NULL && keep_node_num && num_gpus > 1 && use_inv_graph && !undirected)
             {
-                inv_subgraphs = new Csr<VertexId, SizeT, Value>[num_gpus];
+                inv_subgraphs = new Csc<VertexId, SizeT, Value>[num_gpus];
                 SizeT *inv_edge_counters = new SizeT[num_gpus];
                 for (int gpu = 0; gpu < num_gpus; gpu++)
                     inv_edge_counters[gpu] = 0;
 
                 for (VertexId v = 0; v < graph -> nodes; v++)
-                    inv_edge_counters[partition_tables[0][v]] += 
-                        inverse_graph -> row_offsets[v+1] - inverse_graph -> row_offsets[v];
+                    inv_edge_counters[partition_tables[0][v]] +=
+                        inverse_graph -> column_offsets[v+1] - inverse_graph -> column_offsets[v];
 
                 for (int gpu = 0; gpu < num_gpus; gpu++)
                 {
-                    Csr<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
+                    Csc<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
                     //Csr<VertexId, SizeT, Value> *sub_graph = sub_graphs + gpu;
                     inv_subgraph -> template FromScratch<false, false>(graph->nodes, inv_edge_counters[gpu]);
                     for (VertexId v = 0; v< graph -> nodes +1; v++)
-                        inv_subgraph -> row_offsets[v] = 0;
+                        inv_subgraph -> column_offsets[v] = 0;
                 }
 
                 for (VertexId v = 0; v < graph -> nodes; v++)
                 {
-                    inv_subgraphs[partition_tables[0][v]].row_offsets[v+1] =
-                        inverse_graph -> row_offsets[v+1] - inverse_graph -> row_offsets[v];
+                    inv_subgraphs[partition_tables[0][v]].column_offsets[v+1] =
+                        inverse_graph -> column_offsets[v+1] - inverse_graph -> column_offsets[v];
                 }
 
                 for (int gpu = 0; gpu < num_gpus; gpu ++)
                 {
-                    Csr<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
+                    Csc<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
                     for (VertexId v = 0; v < graph -> nodes; v++)
                     {
-                        SizeT offset = inv_subgraph -> row_offsets[v];
-                        SizeT in_degree = inv_subgraph -> row_offsets[v+1];
+                        SizeT offset = inv_subgraph -> column_offsets[v];
+                        SizeT in_degree = inv_subgraph -> column_offsets[v+1];
                         if (in_degree > 0)
                         {
-                            memcpy(inv_subgraph -> column_indices + offset,
-                                inverse_graph -> column_indices + inverse_graph -> row_offsets[v],
+                            memcpy(inv_subgraph -> row_indices + offset,
+                                inverse_graph -> row_indices + inverse_graph -> column_offsets[v],
                                 sizeof(VertexId) * in_degree);
                         }
-                        inv_subgraph -> row_offsets[v+1] += offset;
+                        inv_subgraph -> column_offsets[v+1] += offset;
                     }
 
                     //printf("GPU %d\n", gpu);

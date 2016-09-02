@@ -18,6 +18,7 @@
 //#include <boost/chrono/chrono.hpp>
 //#include <boost/detail/lightweight_main.hpp>
 #include <stdarg.h>
+#include <gunrock/util/basic_utils.h>
 #include <gunrock/util/test_utils.h>
 #include <gunrock/util/error_utils.cuh>
 
@@ -166,7 +167,7 @@ int CompareDeviceResults(
     return retval;
 }
 
-inline int CompareDeviceResults(
+int CompareDeviceResults(
     util::NullType *h_reference,
     util::NullType *d_data,
     size_t num_elements,

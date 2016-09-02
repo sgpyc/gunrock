@@ -18,24 +18,37 @@
 namespace gunrock {
 namespace util {
 
-template <typename T, int _CUDA_ARCH, int _LOG_THREADS>
+template <typename T, int _CUDA_ARCH = 0, int _LOG_THREADS = 10>
 struct Block_Scan
 {
     enum {
-        CUDA_ARCH         = _CUDA_ARCH,
-        LOG_THREADS       = _LOG_THREADS,
-        THREADS           = 1 << LOG_THREADS,
+        //CUDA_ARCH         = _CUDA_ARCH,
+        //LOG_THREADS       = _LOG_THREADS,
+        //THREADS           = 1 << LOG_THREADS,
         LOG_WARP_THREADS  = 5, //GR_LOG_WARP_THREADS(CUDA_ARCH),
         WARP_THREADS      = 1 << LOG_WARP_THREADS,
         WARP_THREADS_MASK = WARP_THREADS - 1,
-        LOG_BLOCK_WARPS   = _LOG_THREADS - LOG_WARP_THREADS,
-        BLOCK_WARPS       = 1 << LOG_BLOCK_WARPS,
+        //LOG_BLOCK_WARPS   = _LOG_THREADS - LOG_WARP_THREADS,
+        //BLOCK_WARPS       = 1 << LOG_BLOCK_WARPS,
     };
 
     struct Temp_Space
     {
-        T warp_counter_offset[BLOCK_WARPS];
+        //T warp_counter_offset[BLOCK_WARPS];
+        T warp_counter_offset[WARP_THREADS];
         T block_sum;
+
+        Temp_Space()
+        {
+            //Init();
+        }
+
+        __device__ __forceinline__
+        void Init()
+        {
+            if (threadIdx.x < WARP_THREADS)
+                warp_counter_offset[threadIdx.x] = 0;
+        }
     };
 
     static __device__ __forceinline__ void Warp_Scan(T thread_in, T &thread_out, T &sum)
@@ -213,10 +226,12 @@ struct Block_Scan
 
         if ((warp_id) == 0)
         {
-            warp_sum = threadIdx.x < BLOCK_WARPS ?
-                temp_space. warp_counter_offset[threadIdx.x] : 0;
+            warp_sum = //threadIdx.x < BLOCK_WARPS ?
+            //warp_sum = (threadIdx.x < (blockDim.x >> LOG_WARP_THREADS)) ?
+                temp_space. warp_counter_offset[threadIdx.x];// : 0;
             Warp_Scan(warp_sum, warp_sum);
-            if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < (blockDim.x >> LOG_WARP_THREADS))
                 temp_space. warp_counter_offset[threadIdx.x] = warp_sum;
         }
         __syncthreads();
@@ -241,10 +256,12 @@ struct Block_Scan
 
         if ((warp_id) == 0)
         {
-            warp_sum = threadIdx.x < BLOCK_WARPS ?
-                temp_space. warp_counter_offset[threadIdx.x] : 0;
+            //warp_sum = threadIdx.x < BLOCK_WARPS ?
+            warp_sum = //(threadIdx.x < (blockDim.x >> LOG_WARP_THREADS)) ?
+                temp_space. warp_counter_offset[threadIdx.x];// : 0;
             Warp_Scan(warp_sum, warp_sum, block_sum);
-            if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < (blockDim.x >> LOG_WARP_THREADS))
                 temp_space. warp_counter_offset[threadIdx.x] = warp_sum;
             if (threadIdx.x == 0)
             {
@@ -272,10 +289,12 @@ struct Block_Scan
 
         if ((warp_id) == 0)
         {
-            warp_sum = threadIdx.x < BLOCK_WARPS ?
-                temp_space. warp_counter_offset[threadIdx.x] : 0;
+            //warp_sum = threadIdx.x < BLOCK_WARPS ?
+            warp_sum = //(threadIdx.x < (blockDim.x >> LOG_WARP_THREADS)) ?
+                temp_space. warp_counter_offset[threadIdx.x];// : 0;
             Warp_Scan(warp_sum, warp_sum);
-            if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < (blockDim.x >> LOG_WARP_THREADS))
                 temp_space. warp_counter_offset[threadIdx.x] = warp_sum;
         }
         __syncthreads();
@@ -294,10 +313,12 @@ struct Block_Scan
 
         if ((warp_id) == 0)
         {
-            warp_sum = threadIdx.x < BLOCK_WARPS ?
-                temp_space. warp_counter_offset[threadIdx.x] : 0;
+            //warp_sum = threadIdx.x < BLOCK_WARPS ?
+            warp_sum = //(threadIdx.x < (blockDim.x >> LOG_WARP_THREADS)) ?
+                temp_space. warp_counter_offset[threadIdx.x];// : 0;
             Warp_Scan(warp_sum, warp_sum, block_sum);
-            if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < BLOCK_WARPS)
+            //if (threadIdx.x < (blockDim.x >> LOG_WARP_THREADS))
                 temp_space. warp_counter_offset[threadIdx.x] = warp_sum;
             if (threadIdx.x == 0)
                 temp_space. block_sum = block_sum;

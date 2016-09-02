@@ -295,7 +295,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
 
     // parse configurations from mObject info
     Csr<VertexId, SizeT, Value> *graph = info->csr_ptr;
-    Csr<VertexId, SizeT, Value> *inv_graph = info->csc_ptr;
+    Csc<VertexId, SizeT, Value> *inv_graph = info->csc_ptr;
     VertexId src                   = info->info["source_vertex"     ].get_int64();
     int      max_grid_size         = info->info["max_grid_size"     ].get_int  ();
     int      num_gpus              = info->info["num_gpus"          ].get_int  ();
@@ -334,7 +334,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     cpu_timer.Start();
     json_spirit::mArray device_list = info->info["device_list"].get_array();
     int* gpu_idx = new int[num_gpus];
-    for (int i = 0; i < num_gpus; i++) gpu_idx[i] = device_list[i].get_int(); 
+    for (int i = 0; i < num_gpus; i++) gpu_idx[i] = device_list[i].get_int();
 
     // TODO: remove after merge mgpu-cq
     ContextPtr   *context = (ContextPtr*)  info->context;
@@ -442,7 +442,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
             }
         } else if (src_type == "list")
         {
-            if (source_list.size() == 0) 
+            if (source_list.size() == 0)
             {
                 if (!quiet_mode)
                     printf("No source list found. Use 0 as source.\n");
@@ -552,7 +552,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
                 if (pred >= graph->nodes || pred < 0)
                 {
                     //if (num_errors == 0)
-                        printf("INCORRECT: pred[%lld] : %lld out of bound\n", 
+                        printf("INCORRECT: pred[%lld] : %lld out of bound\n",
                             (long long)v, (long long)pred);
                     #pragma omp atomic
                     num_errors ++;
@@ -836,7 +836,7 @@ int main_(CommandLineArgs *args)
     //typedef long long SizeT;     // Use int as the graph size type
 
     Csr<VertexId, SizeT, Value> csr(false);  // CSR graph we process on
-    Csr<VertexId, SizeT, Value> csc(false);  // CSC graph we process on
+    Csc<VertexId, SizeT, Value> csc(false);  // CSC graph we process on
     Info<VertexId, SizeT, Value> *info = new Info<VertexId, SizeT, Value>;
 
     // graph construction or generation related parameters
@@ -905,8 +905,8 @@ int main_VertexId(CommandLineArgs *args)
 int main(int argc, char** argv)
 {
     CommandLineArgs args(argc, argv);
-    int graph_args = argc - args.ParsedArgc() - 1;
-    if (argc < 2 || graph_args < 1 || args.CheckCmdLineFlag("help"))
+    //int graph_args = argc - args.ParsedArgc() - 1;
+    if (argc < 2 /*|| graph_args < 1*/ || args.CheckCmdLineFlag("help"))
     {
         Usage();
         return 1;
