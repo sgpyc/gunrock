@@ -13,9 +13,11 @@
 
 #pragma once
 
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/small_world_generator.hpp>
-#include <boost/random/linear_congruential.hpp>
+#ifdef BOOST_FOUND
+    #include <boost/graph/adjacency_list.hpp>
+    #include <boost/graph/small_world_generator.hpp>
+    #include <boost/random/linear_congruential.hpp>
+#endif
 
 namespace gunrock {
 namespace graphio {
@@ -33,8 +35,10 @@ cudaError_t BuildSWGraph(
     int seed = -1,
     bool quiet = false)
 {
-    using namespace boost;
     cudaError_t retval = cudaSuccess;
+
+#ifdef BOOST_FOUND
+    using namespace boost;
 
     //typedef adjacency_list<vecS, vecS, bidirectionalS, property<vertex_index_t, VertexId>,
     //    property<edge_index_t, SizeT> > BGraph;
@@ -83,7 +87,14 @@ cudaError_t BuildSWGraph(
     }
 
     delete[] edge_counters; edge_counters = NULL;
-    return retval;    
+
+#else
+
+    retval = util::GRError(cudaErrorUnknown,
+        "boost support is not found or disabled", __FILE__, __LINE__);
+#endif
+
+    return retval;
 }
 
 } // namespace small_world
@@ -95,5 +106,3 @@ cudaError_t BuildSWGraph(
 // mode:c++
 // c-file-style: "NVIDIA"
 // End:
-
-

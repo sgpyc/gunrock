@@ -14,6 +14,9 @@
 
 #pragma once
 
+#ifndef BOOST_FOUND
+    //#include <experimental/filesystem> C++17
+#endif
 //#define RECORD_PER_ITERATION_STATS
 
 namespace gunrock {
@@ -269,7 +272,7 @@ public:
                     args.GetCmdLineArgument("src-seed", src_seed);
                 info["source_seed"]   = src_seed;
             } else if (source_type.compare("list") == 0)
-            { 
+            {
                 if (!args.CheckCmdLineFlag("quiet"))
                     printf("Using user specified source vertex for each run\n");
                 info["source_type"] = "list";
@@ -278,7 +281,7 @@ public:
                 args.GetCmdLineArgument("src", source);
                 info["source_type"] = "user-defined";
             }
-            info["source_list"] = GetSourceList(args); 
+            info["source_list"] = GetSourceList(args);
             info["source_vertex"] = (int64_t)source;
             if (!args.CheckCmdLineFlag("quiet"))
             {
@@ -755,7 +758,7 @@ public:
         std::string ofname = filename.data();
         std::ofstream of(ofname);
         // now store the filename back into the JSON structure
-        info["jsonfile"] = ofname;        
+        info["jsonfile"] = ofname;
         json_spirit::write_stream(
             json_spirit::mValue(info), of,
             json_spirit::pretty_print);
@@ -799,7 +802,7 @@ public:
             {
                 VertexId new_v = org_nodes * gpu + 1 + org_v;
                 SizeT new_row_offset = num_gpus + org_edges * gpu + org_row_offset;
-                if (undirected) 
+                if (undirected)
                 {
                     new_row_offset += gpu;
                     if (org_v > org_src) new_row_offset ++;
@@ -832,6 +835,30 @@ public:
         return 0;
     }
 
+    std::string Get_File_Stem(char *filename)
+    {
+        std::string file_stem = "";
+#ifdef BOOST_FOUND
+        boost::filesystem::path market_filename_path(filename);
+        file_stem = market_filename_path.stem().string();
+#else
+        //std::experimental::filesystem::path market_filename_path(market_filename); C++17
+        //file_stem = market_filename_path.stem().string(); C++17
+        int last_seperator_pos = strlen(filename) - 1;
+        while (last_seperator_pos >= 0 && filename[last_seperator_pos] != '/')
+            last_seperator_pos --;
+        int last_dot_pos = strlen(filename) -1;
+        while (last_dot_pos >= 0 && filename[last_dot_pos] != '.')
+            last_dot_pos --;
+        for (int pos = last_seperator_pos + 1;
+            pos <= last_dot_pos && pos < strlen(filename); pos++)
+        {
+            file_stem = file_stem + filename[pos];
+        }
+#endif
+        printf("%s -> %s\n", filename, file_stem.c_str());
+        return file_stem;
+    }
     /**
      * @brief Utility function to load input graph.
      *
@@ -866,8 +893,8 @@ public:
                 fprintf(stderr, "Input graph file %s does not exist.\n",market_filename);
                 exit (EXIT_FAILURE);
             }
-            boost::filesystem::path market_filename_path(market_filename);
-            file_stem = market_filename_path.stem().string();
+            file_stem = Get_File_Stem(market_filename);
+
             info["dataset"] = file_stem;
             if (graphio::BuildMarketGraph<EDGE_VALUE>(
                         market_filename,
@@ -944,13 +971,13 @@ public:
             info["rmat_vmin"] = rmat_vmin;
             info["rmat_vmultipiler"] = rmat_vmultipiler;
             //can use to_string since c++11 is required, niiiice.
-            file_stem = "rmat_" + 
-                (args.CheckCmdLineFlag("rmat_scale") ? 
-                    ("n" + std::to_string(rmat_scale)) : std::to_string(rmat_nodes)) 
-               + "_" + (args.CheckCmdLineFlag("rmat_edgefactor") ? 
+            file_stem = "rmat_" +
+                (args.CheckCmdLineFlag("rmat_scale") ?
+                    ("n" + std::to_string(rmat_scale)) : std::to_string(rmat_nodes))
+               + "_" + (args.CheckCmdLineFlag("rmat_edgefactor") ?
                     ("e" + std::to_string(rmat_edgefactor)) : std::to_string(rmat_edges));
             info["dataset"] = file_stem;
-            
+
             util::CpuTimer cpu_timer;
             cpu_timer.Start();
 
@@ -1058,13 +1085,13 @@ public:
             info["rgg_threshold"]   = rgg_threshold;
             info["rgg_vmultipiler"] = rgg_vmultipiler;
             //file_stem = "rgg_s"+std::to_string(rgg_scale)+"_e"+std::to_string(csr_ref.edges)+"_f"+std::to_string(rgg_thfactor);
-            file_stem = "rgg_" + 
-                (args.CheckCmdLineFlag("rgg_scale") ? 
-                    ("n" + std::to_string(rgg_scale)) : std::to_string(rgg_nodes)) 
-               + "_" + (args.CheckCmdLineFlag("rgg_thfactor") ? 
+            file_stem = "rgg_" +
+                (args.CheckCmdLineFlag("rgg_scale") ?
+                    ("n" + std::to_string(rgg_scale)) : std::to_string(rgg_nodes))
+               + "_" + (args.CheckCmdLineFlag("rgg_thfactor") ?
                     ("t" + std::to_string(rgg_thfactor)) : std::to_string(rgg_threshold));
             info["dataset"] = file_stem;
- 
+
             util::CpuTimer cpu_timer;
             cpu_timer.Start();
 
@@ -1122,12 +1149,12 @@ public:
             info["sw_k"          ] = (int64_t)sw_k          ;
             info["sw_vmultipiler"] = sw_vmultipiler;
             info["sw_vmin"       ] = sw_vmin       ;
-            file_stem = "smallworld_" + 
-                (args.CheckCmdLineFlag("sw_scale") ? 
+            file_stem = "smallworld_" +
+                (args.CheckCmdLineFlag("sw_scale") ?
                     ("n" + std::to_string(sw_scale)) : std::to_string(sw_nodes))
-                + "k" + std::to_string(sw_k) + "_p" + std::to_string(sw_p); 
+                + "k" + std::to_string(sw_k) + "_p" + std::to_string(sw_p);
             info["dataset"] = file_stem;
- 
+
             util::CpuTimer cpu_timer;
             cpu_timer.Start();
             if (graphio::small_world::BuildSWGraph<EDGE_VALUE>(
@@ -1226,8 +1253,7 @@ public:
                 return 1;
             }
 
-            boost::filesystem::path market_filename_path(market_filename);
-            file_stem = market_filename_path.stem().string();
+            file_stem = Get_File_Stem(market_filename);
             info["dataset"] = file_stem;
             if (graphio::BuildMarketGraph_SM<NODE_VALUE>(
                         market_filename,
@@ -1361,10 +1387,10 @@ public:
         {
             // TODO: collect info for multi-GPUs
             EnactorStats *estats = enactor_stats;
-            json_spirit::mArray per_iteration_advance_runtime; 
-            json_spirit::mArray per_iteration_advance_mteps; 
-            json_spirit::mArray per_iteration_advance_input_frontier; 
-            json_spirit::mArray per_iteration_advance_output_frontier; 
+            json_spirit::mArray per_iteration_advance_runtime;
+            json_spirit::mArray per_iteration_advance_mteps;
+            json_spirit::mArray per_iteration_advance_input_frontier;
+            json_spirit::mArray per_iteration_advance_output_frontier;
             json_spirit::mArray per_iteration_advance_dir;
             GetPerIterationAdvanceStats(
                     estats->per_iteration_advance_time,

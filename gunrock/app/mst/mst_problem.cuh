@@ -57,8 +57,8 @@ struct MSTProblem : ProblemBase <
     static const bool ENABLE_IDEMPOTENCE = false;
     static const int  MAX_NUM_VERTEX_ASSOCIATES = 2;
     static const int  MAX_NUM_VALUE__ASSOCIATES = 2;
-    typedef ProblemBase  <VertexId, SizeT, Value, 
-        MARK_PREDECESSORS, ENABLE_IDEMPOTENCE> BaseProblem; 
+    typedef ProblemBase  <VertexId, SizeT, Value,
+        MARK_PREDECESSORS, ENABLE_IDEMPOTENCE> BaseProblem;
     typedef DataSliceBase<VertexId, SizeT, Value,
         MAX_NUM_VERTEX_ASSOCIATES, MAX_NUM_VALUE__ASSOCIATES> BaseDataSlice;
     bool use_double_buffer;
@@ -166,7 +166,7 @@ struct MSTProblem : ProblemBase <
         BaseProblem(use_double_buffer,
         false, // enable_backward
         false, // keep_order
-        false), // keep_node_num 
+        false), // keep_node_num
         data_slices  (NULL),
         d_data_slices(NULL)
     {
@@ -257,7 +257,7 @@ struct MSTProblem : ProblemBase <
     */
     cudaError_t Init(
         bool          stream_from_host,
-        Csr<VertexId, SizeT, Value> 
+        Csr<VertexId, SizeT, Value>
                      *graph,
         Csr<VertexId, SizeT, Value>
                      *inv_graph        = NULL,
@@ -474,7 +474,7 @@ struct MSTProblem : ProblemBase <
     * all CUDA function calls.
     */
     cudaError_t Reset(
-        FrontierType frontier_type, 
+        FrontierType frontier_type,
         double queue_sizing,
         double queue_sizing1 = -1.0)
     {
@@ -492,8 +492,8 @@ struct MSTProblem : ProblemBase <
           data_slices[gpu]->Reset(
                 frontier_type,
                 this -> graph_slices[gpu],
-                this -> use_double_buffer,
                 queue_sizing,
+                this -> use_double_buffer,
                 queue_sizing1);
 
           if (ret = data_slices[gpu] -> frontier_queues[0].keys[0].EnsureSize(

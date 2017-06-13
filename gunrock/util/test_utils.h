@@ -15,12 +15,18 @@
 #pragma once
 
 #if defined(_WIN32) || defined(_WIN64)
-#include <windows.h>
-#undef small            // Windows is terrible for polluting macro namespace
+    #include <windows.h>
+    #undef small            // Windows is terrible for polluting macro namespace
 #elif defined(CLOCK_PROCESS_CPUTIME_ID)
-#include <sys/time.h>
+    #include <sys/time.h>
 #else
-#include <sys/resource.h>
+    #include <sys/resource.h>
+#endif
+
+#ifdef BOOST_FOUND
+    #include <boost/timer/timer.hpp>
+#else
+    #include <chrono>
 #endif
 
 #include <stdio.h>
@@ -37,7 +43,7 @@
 #include <fstream>
 #include <algorithm>
 #include <utility>
-#include <boost/timer/timer.hpp>
+
 #include <gunrock/util/random_bits.h>
 #include <gunrock/util/basic_utils.h>
 
@@ -354,7 +360,7 @@ struct CpuTimer
         return TimeDifference(start, current);
     }
 
-#else
+#elif defined(BOOST_FOUND)
 
     boost::timer::cpu_timer::cpu_timer cpu_t;
 
@@ -378,6 +384,37 @@ struct CpuTimer
         return cpu_t.elapsed().wall / 1000000.0;
     }
 
+#else
+
+    typedef std::chrono::time_point<std::chrono::system_clock> TimeT;
+    TimeT start_time, end_time;
+
+    void Start()
+    {
+        start_time = std::chrono::system_clock::now();
+    }
+
+    void Stop()
+    {
+        end_time = std::chrono::system_clock::now();
+    }
+
+    double TimeDifference(TimeT &a, TimeT &b)
+    {
+        std::chrono::duration<double> diff = b - a;
+        return diff.count() * 1000;
+    }
+
+    double ElapsedMillis()
+    {
+        return TimeDifference(start_time, end_time);
+    }
+
+    double MillisSinceStart()
+    {
+        TimeT now_time = std::chrono::system_clock::now();
+        return TimeDifference(start_time, now_time);
+    }
 #endif
 };
 

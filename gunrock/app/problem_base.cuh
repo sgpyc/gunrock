@@ -25,7 +25,9 @@
 #include <gunrock/graphio/small_world.cuh>
 
 // Information stats utilities
-#include <boost/filesystem.hpp>
+#ifdef BOOST_FOUND
+    #include <boost/filesystem.hpp>
+#endif
 #include <gunrock/util/sysinfo.h>
 #include <gunrock/util/gitsha1.h>
 #include <gunrock/util/json_spirit_writer_template.h>
@@ -1703,7 +1705,7 @@ struct ProblemBase
                     inv_edge_counters[gpu] = 0;
 
                 for (VertexId v = 0; v < graph -> nodes; v++)
-                    inv_edge_counters[partition_tables[0][v]] += 
+                    inv_edge_counters[partition_tables[0][v]] +=
                         inverse_graph -> row_offsets[v+1] - inverse_graph -> row_offsets[v];
 
                 for (int gpu = 0; gpu < num_gpus; gpu++)

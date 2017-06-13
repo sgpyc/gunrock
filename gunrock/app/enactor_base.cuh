@@ -15,7 +15,9 @@
 #pragma once
 #include <time.h>
 
-#include <boost/predef.h>
+#ifdef BOOST_FOUND
+    #include <boost/predef.h>
+#endif
 
 #include <gunrock/util/cuda_properties.cuh>
 #include <gunrock/util/cta_work_progress.cuh>

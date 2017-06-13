@@ -11,7 +11,7 @@
 
 force64 = 1
 use_metis = 0
-use_boost = 1
+use_boost = 0
 use_mpi = 1
 
 NVCC = "$(shell which nvcc)"
@@ -52,6 +52,8 @@ BOOST_LINK =
 ifeq ($(use_boost), 1)
     BOOST_INC = -I"/usr/local/include"
     BOOST_LINK = -Xcompiler -DBOOST_FOUND -L"/usr/local/lib" -Xlinker -lboost_system -Xlinker -lboost_chrono -Xlinker -lboost_timer -Xlinker -lboost_filesystem
+else
+	BOOST_INC = -I"/usr/local/include"
 endif
 
 ifeq (DARWIN, $(findstring DARWIN, $(OSUPPER)))
