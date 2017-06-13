@@ -10,11 +10,12 @@
 #-------------------------------------------------------------------------------
 
 force64 = 1
-use_metis = 1
+use_metis = 0
 use_boost = 1
+use_mpi = 1
+
 NVCC = "$(shell which nvcc)"
 NVCC_VERSION = $(strip $(shell nvcc --version | grep release | sed 's/.*release //' |  sed 's/,.*//'))
-
 KERNELS =
 
 # detect OS
@@ -93,12 +94,15 @@ else
 	ARCH = -m64
 endif
 
-NVCCFLAGS = -Xptxas -v -Xcudafe -\# -lineinfo --std=c++11 --expt-extended-lambda #-ccbin=g++-4.8
+NVCCFLAGS = -Xptxas -v -Xcudafe -\# -lineinfo --std=c++11 --expt-extended-lambda
 
 ifeq (WIN_NT, $(findstring WIN_NT, $(OSUPPER)))
 	NVCCFLAGS += -Xcompiler /bigobj -Xcompiler /Zm500
 endif
 
+ifeq ($(use_mpi), 1)
+	NVCCFLAGS += -ccbin=mpic++
+endif
 
 ifeq ($(verbose), 1)
     NVCCFLAGS += -v
