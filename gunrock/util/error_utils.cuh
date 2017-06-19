@@ -84,6 +84,11 @@ gunrockError_t GRError(
     int line,
     bool print = true);
 
+void PrintMsg(
+    std::string msg, const char *filename, int line);
+
+void PrintErrorMsg(
+    std::string msg, const char *filename, int line);
+
 } // namespace util
 } // namespace gunrock
-

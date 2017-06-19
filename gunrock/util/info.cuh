@@ -7,12 +7,15 @@
 
 /**
  * @file
- * enactor_base.cuh
+ * info.cuh
  *
- * @brief Base Graph Problem Enactor
+ * @brief Info data structure holding app level running infos
  */
 
 #pragma once
+
+#include <mpi.h>
+#include <gunrock/util/mpi_types.cuh>
 
 #ifndef BOOST_FOUND
     //#include <experimental/filesystem> C++17
@@ -39,7 +42,8 @@ private:
     int            max_iters;  // Maximum number of super-steps allowed
     int            grid_size;  // Maximum grid size (0: up to the enactor)
     std::string traversal_mode;  // Load-balanced or Dynamic cooperative
-    int             num_gpus;  // Number of GPUs used
+    int       num_local_gpus;  // Number of local GPUs used
+    int       num_total_gpus;  // Number of total GPUs used
     double          q_sizing;  // Maximum size scaling factor for work queues
     double         q_sizing1;  // Value of max_queue_sizing1
     double          i_sizing;  // Maximum size scaling factor for communication
@@ -58,6 +62,8 @@ private:
     double             alpha;  // Used in direction optimal BFS
     double              beta;  // Used in direction optimal BFS
     int            top_nodes;  // Used in Top-K
+    int        mpi_num_tasks;  // Number of mpi tasks
+    int             mpi_rank;  // Rank of local task
 
 public:
     json_spirit::mObject info;  // test parameters and running statistics
@@ -112,7 +118,8 @@ public:
         info["max_queue_sizing"]   = -1.0f;  // maximum queue sizing factor
         info["max_queue_sizing1"]  = -1.0f;  // maximum queue sizing factor
         info["m_teps"]             = 0.0f;   // traversed edges per second
-        info["num_gpus"]           = 1;      // number of GPU(s) used
+        info["num_local_gpus"]     = 1;      // number of logal GPU(s) used
+        info["num_total_gpus"]     = 1;      // number of total GPU(s) used
         info["nodes_visited"]      = 0;      // number of nodes visited
         info["partition_method"]   = "random";  // default partition method
         info["partition_factor"]   = -1;     // partition factor
@@ -163,6 +170,11 @@ public:
         // info["sysinfo"]
         // info["time"]
         // info["userinfo"]
+
+        MPI_Comm_size(MPI_COMM_WORLD, &mpi_num_tasks);
+        MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+        info["mpi_num_tasks"] = mpi_num_tasks;
+        info["mpi_rank"] = mpi_rank;
     }  // end Info()
 
     ~Info()
@@ -185,6 +197,7 @@ public:
      */
     void InitBase(std::string algorithm_name, util::CommandLineArgs &args)
     {
+        PrintMsg("InitBase() entered", __FILE__, __LINE__);
         // put basic information into info
         info["engine"] = "Gunrock";
         info["command_line"] = json_spirit::mValue(args.GetEntireCommandLine());
@@ -233,7 +246,7 @@ public:
         }
 
         // determine which source to start search
-        if (args.CheckCmdLineFlag("src"))
+        if (args.CheckCmdLineFlag("src") && mpi_rank == 0)
         {
             std::string source_type;
             args.GetCmdLineArgument("src", source_type);
@@ -448,9 +461,10 @@ public:
         // parse device count and device list
         info["device_list"] = GetDeviceList(args);
 
-        if (args.CheckCmdLineFlag("duplicate-graph"))
+        if (args.CheckCmdLineFlag("duplicate-graph") && mpi_rank == 0)
         {
-            DuplicateGraph(args, *csr_ptr, info["edge_value"].get_bool());
+            if (mpi_rank == 0)
+                DuplicateGraph(args, *csr_ptr, info["edge_value"].get_bool());
             info["duplicate_graph"] = true;
         }
 
@@ -463,31 +477,33 @@ public:
         if (args.CheckCmdLineFlag("device"))  // parse device list
         {
             args.GetCmdLineArguments<int>("device", temp_devices);
-            num_gpus = temp_devices.size();
+            num_local_gpus = temp_devices.size();
         }
         else  // use single device with index 0
         {
-            num_gpus = 1;
+            num_local_gpus = 1;
             int gpu_idx;
             util::GRError(cudaGetDevice(&gpu_idx),
                 "cudaGetDevice failed", __FILE__, __LINE__);
             temp_devices.push_back(gpu_idx);
         }
 
-        cudaStream_t*     streams_ = new cudaStream_t[num_gpus * num_gpus * 2];
-        mgpu::ContextPtr* context_ = new mgpu::ContextPtr[num_gpus * num_gpus];
+        cudaStream_t*     streams_ = new cudaStream_t[
+            num_local_gpus * num_local_gpus * 2];
+        mgpu::ContextPtr* context_ = new mgpu::ContextPtr[
+            num_local_gpus * num_local_gpus];
 
-        for (int gpu = 0; gpu < num_gpus; gpu++)
+        for (int gpu = 0; gpu < num_local_gpus; gpu++)
         {
             util::SetDevice(temp_devices[gpu]);
-            for (int i = 0; i < num_gpus * 2; i++)
+            for (int i = 0; i < num_local_gpus * 2; i++)
             {
-                int _i = gpu * num_gpus * 2 + i;
+                int _i = gpu * num_local_gpus * 2 + i;
                 util::GRError(cudaStreamCreate(&streams_[_i]),
                               "cudaStreamCreate failed.", __FILE__, __LINE__);
-                if (i < num_gpus)
+                if (i < num_local_gpus)
                 {
-                    context_[gpu * num_gpus + i] =
+                    context_[gpu * num_local_gpus + i] =
                         mgpu::CreateCudaDeviceAttachStream(
                             temp_devices[gpu], streams_[_i]);
                 }
@@ -496,6 +512,7 @@ public:
 
         context = (mgpu::ContextPtr*)context_;
         streams = (cudaStream_t*)streams_;
+        PrintMsg("InitBase() exited", __FILE__, __LINE__);
         ///////////////////////////////////////////////////////////////////////
     }
 
@@ -511,32 +528,52 @@ public:
         util::CommandLineArgs &args,
         Csr<VertexId, SizeT, Value> &csr_ref)
     {
-        // load or generate input graph
-        if (info["edge_value"].get_bool() && !info["random_edge_value"].get_bool())
+        PrintMsg("Init() entered", __FILE__, __LINE__);
+        if (mpi_rank == 0)
         {
-            LoadGraph<true, false>(args, csr_ref);  // load graph with weighs
-        }
-        else
-        {
-            LoadGraph<false, false>(args, csr_ref);  // load without weights
-            if (info["random_edge_value"].get_bool())
+            // load or generate input graph
+            if (info["edge_value"].get_bool() &&
+                !info["random_edge_value"].get_bool())
             {
-                if (csr_ref.edge_values != NULL) free(csr_ref.edge_values);
-                csr_ref.edge_values = (Value*)malloc(csr_ref.edges * sizeof(Value));
-                srand(time(NULL));
-                for (SizeT e= 0; e < csr_ref.edges; e++)
+                LoadGraph<true, false>(args, csr_ref);  // load graph with weighs
+            } else {
+                LoadGraph<false, false>(args, csr_ref);  // load without weights
+                if (info["random_edge_value"].get_bool())
                 {
-                    csr_ref.edge_values[e] = rand() %64;
+                    if (csr_ref.edge_values != NULL)
+                        free(csr_ref.edge_values);
+                    csr_ref.edge_values =
+                        (Value*)malloc(csr_ref.edges * sizeof(Value));
+                    srand(time(NULL));
+                    for (SizeT e= 0; e < csr_ref.edges; e++)
+                    {
+                        csr_ref.edge_values[e] = rand() %64;
+                    }
                 }
             }
+            csr_ref.GetAverageDegree();
+            csr_ref.GetStddevDegree();
         }
         csr_ptr = &csr_ref;  // set graph pointer
+
+        MPI_Bcast(&csr_ref.nodes, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.edges, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.average_degree, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.stddev_degree, 1, Get_Mpi_Type<float>(),
+            0, MPI_COMM_WORLD);
         InitBase(algorithm_name, args);
-        if (info["destination_vertex"].get_int64() < 0 || info["destination_vertex"].get_int64()>=(int)csr_ref.nodes)
-            info["destination_vertex"] = (int)csr_ref.nodes-1;   //if not set or something is wrong, set it to the largest vertex ID
+
+        if (info["destination_vertex"].get_int64() < 0 ||
+            info["destination_vertex"].get_int64()>=(int)csr_ref.nodes)
+            info["destination_vertex"] = (int)csr_ref.nodes-1;
+            //if not set or something is wrong, set it to the largest vertex ID
         info["stddev_degrees"] = (float)csr_ref.GetStddevDegree();
         info["num_vertices"] = (int64_t)csr_ref.nodes;
         info["num_edges"   ] = (int64_t)csr_ref.edges;
+        PrintMsg("Init() exited", __FILE__, __LINE__);
     }
 
     /**
@@ -557,36 +594,61 @@ public:
 	    // Special initialization for SM problem
         if(algorithm_name == "SM") return Init_SM(args,csr_ref,csc_ref);
 
-         // load or generate input graph
-        if (info["edge_value"].get_bool())
+        if (mpi_rank == 0)
         {
-            if (info["undirected"].get_bool())
+            // load or generate input graph
+            if (info["edge_value"].get_bool())
             {
-                LoadGraph<true, false>(args, csr_ref);  // with weigh values
-                csc_ref.FromCsr(csr_ref);
+                if (info["undirected"].get_bool())
+                {
+                    LoadGraph<true, false>(args, csr_ref);  // with weigh values
+                    csc_ref.FromCsr(csr_ref);
+                }
+                else
+                {
+                    LoadGraph<true, false>(args, csr_ref);  // load CSR input
+                    csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
+                }
             }
-            else
+            else  // does not need weight values
             {
-                LoadGraph<true, false>(args, csr_ref);  // load CSR input
-                csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
+                if (info["undirected"].get_bool())
+                {
+                    LoadGraph<false, false>(args, csr_ref);  // without weights
+                    csc_ref.FromCsr(csr_ref);
+                }
+                else
+                {
+                    LoadGraph<false, false>(args, csr_ref);  // without weights
+                    csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
+                }
             }
-        }
-        else  // does not need weight values
-        {
-            if (info["undirected"].get_bool())
-            {
-                LoadGraph<false, false>(args, csr_ref);  // without weights
-                csc_ref.FromCsr(csr_ref);
-            }
-            else
-            {
-                LoadGraph<false, false>(args, csr_ref);  // without weights
-                csc_ref.template CsrToCsc<EdgeTupleType>(csc_ref, csr_ref);
-            }
+            csr_ref.GetAverageDegree();
+            csr_ref.GetStddevDegree();
+            csc_ref.GetAverageDegree();
+            csc_ref.GetStddevDegree();
         }
         csr_ptr = &csr_ref;  // set CSR pointer
         csc_ptr = &csc_ref;  // set CSC pointer
+
+        MPI_Bcast(&csr_ref.nodes, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.edges, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.average_degree, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csr_ref.stddev_degrees, 1, Get_Mpi_Type<float>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csc_ref.nodes, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csc_ref.edges, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csc_ref.average_degree, 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&csc_ref.stddev_degrees, 1, Get_Mpi_Type<float>(),
+            0, MPI_COMM_WORLD);
         InitBase(algorithm_name, args);
+
         info["destination_vertex"] = (int64_t)csr_ref.nodes-1;   //by default set it to the largest vertex ID
         info["stddev_degrees"] = (float)csr_ref.GetStddevDegree();
         info["num_vertices"] = (int64_t)csr_ref.nodes;
@@ -627,30 +689,35 @@ public:
         if (args.CheckCmdLineFlag("device"))  // parse command
         {
             args.GetCmdLineArguments<int>("device", devices);
-            num_gpus = devices.size();
+            num_local_gpus = devices.size();
+            num_total_gpus = mpi_num_tasks * num_local_gpus;
             if (!args.CheckCmdLineFlag("quiet"))
             {
-                printf("Using %d GPU(s): [", num_gpus);
-                for (int i = 0; i < num_gpus; ++i)
+                printf("Using %d GPU(s): [", num_local_gpus);
+                for (int i = 0; i < num_local_gpus; ++i)
                 {
                     printf(" %d", devices[i]);
                 }
                 printf(" ].\n");
             }
-            info["num_gpus"] = num_gpus;  // update number of devices
-            for (int i = 0; i < num_gpus; i++)
+            info["num_local_gpus"] = num_local_gpus;  // update number of devices
+            info["num_total_gpus"] = num_total_gpus;
+            for (int i = 0; i < num_local_gpus; i++)
             {
                 device_list.push_back(devices[i]);
             }
         }
         else  // use single device with index 0
         {
-            num_gpus = 1;
+            num_local_gpus = 1;
+            num_total_gpus = 1 * mpi_num_tasks;
             device_list.push_back(0);
             if (!args.CheckCmdLineFlag("quiet"))
             {
                 printf("Using 1 GPU: [ 0 ].\n");
             }
+            info["num_local_gpus"] = num_local_gpus;
+            info["num_total_gpus"] = num_total_gpus;
         }
         return device_list;
     }
@@ -746,7 +813,8 @@ public:
         std::string filename =
             dir + "/" + info["algorithm"].get_str() + "_" +
             ((file_stem != "") ? (file_stem + "_") : "") +
-            info["time"].get_str() + ".json";
+            info["time"].get_str() + "_" +
+            info["mpi_rank"].get_str() + ".json";
         // now filter out bad chars (the list in bad_chars)
         char bad_chars[] = ":\n";
         for (unsigned int i = 0; i < strlen(bad_chars); ++i)
@@ -770,15 +838,15 @@ public:
         bool edge_value = false)
     {
         VertexId org_src = info["source_vertex"].get_int64();
-        int num_gpus     = info["num_gpus"     ].get_int  ();
+        int num_total_gpus = info["num_total_gpus"].get_int  ();
         bool undirected  = info["undirected"   ].get_bool ();
 
-        if (num_gpus == 1) return 0;
+        if (num_total_gpus == 1) return 0;
 
         SizeT org_nodes = graph. nodes;
         SizeT org_edges = graph. edges;
-        SizeT new_nodes = graph. nodes * num_gpus + 1;
-        SizeT new_edges = graph. edges * num_gpus + ((undirected) ? 2 : 1) * num_gpus;
+        SizeT new_nodes = graph. nodes * num_total_gpus + 1;
+        SizeT new_edges = graph. edges * num_total_gpus + ((undirected) ? 2 : 1) * num_total_gpus;
         printf("Duplicatiing graph, #V = %lld -> %lld, #E = %lld -> %lld, src = %lld -> 0\n",
             (long long)org_nodes, (long long)new_nodes,
             (long long)org_edges, (long long)new_edges,
@@ -787,7 +855,7 @@ public:
         SizeT    *new_row_offsets    = (SizeT*)malloc(sizeof(SizeT) * (new_nodes+1));
         VertexId *new_column_indices = (VertexId*)malloc(sizeof(VertexId) * new_edges);
         new_row_offsets[0] = 0;
-        for (int gpu = 0; gpu < num_gpus; gpu ++)
+        for (int gpu = 0; gpu < num_total_gpus; gpu ++)
             new_column_indices[gpu] = org_nodes * gpu + 1 + org_src;
         new_row_offsets[new_nodes] = new_edges;
         info["source_vertex"] = 0;
@@ -798,10 +866,10 @@ public:
         {
             SizeT org_row_offset = graph. row_offsets[org_v];
             SizeT out_degree = graph. row_offsets[org_v + 1] - org_row_offset;
-            for (int gpu = 0; gpu < num_gpus; gpu ++)
+            for (int gpu = 0; gpu < num_total_gpus; gpu ++)
             {
                 VertexId new_v = org_nodes * gpu + 1 + org_v;
-                SizeT new_row_offset = num_gpus + org_edges * gpu + org_row_offset;
+                SizeT new_row_offset = num_total_gpus + org_edges * gpu + org_row_offset;
                 if (undirected)
                 {
                     new_row_offset += gpu;
@@ -856,7 +924,7 @@ public:
             file_stem = file_stem + filename[pos];
         }
 #endif
-        printf("%s -> %s\n", filename, file_stem.c_str());
+        //printf("%s -> %s\n", filename, file_stem.c_str());
         return file_stem;
     }
     /**
@@ -944,11 +1012,11 @@ public:
             if (args.CheckCmdLineFlag("device"))  // parse device list
             {
                 args.GetCmdLineArguments<int>("device", temp_devices);
-                num_gpus = temp_devices.size();
+                num_local_gpus = temp_devices.size();
             }
             else  // use single device with index 0
             {
-                num_gpus = 1;
+                num_local_gpus = 1;
                 int gpu_idx;
                 util::GRError(cudaGetDevice(&gpu_idx),
                     "cudaGetDevice failed", __FILE__, __LINE__);
@@ -1350,18 +1418,18 @@ public:
 
         json_spirit::mArray device_list = info["device_list"].get_array();
 
-        for (int gpu = 0; gpu < num_gpus; ++gpu)
+        for (int gpu = 0; gpu < num_local_gpus; ++gpu)
         {
             int my_gpu_idx = device_list[gpu].get_int();
-            if (num_gpus != 1)
+            if (num_local_gpus != 1)
             {
                 if (util::SetDevice(my_gpu_idx)) return;
             }
             cudaThreadSynchronize();
 
-            for (int peer = 0; peer < num_gpus; ++peer)
+            for (int peer = 0; peer < num_local_gpus; ++peer)
             {
-                EnactorStats *estats = enactor_stats + gpu * num_gpus + peer;
+                EnactorStats *estats = enactor_stats + gpu * num_local_gpus + peer;
                 if (get_traversal_stats)
                 {
                     edges_queued += estats->edges_queued[0];

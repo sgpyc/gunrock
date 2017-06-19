@@ -73,7 +73,7 @@ struct Csr
         nodes = 0;
         edges = 0;
         average_degree = 0;
-        stddev_degree = 0.0f;
+        stddev_degree = -0.01f;
         average_edge_value = 0;
         average_node_value = 0;
         out_nodes = -1;
@@ -103,7 +103,7 @@ struct Csr
         {
             column_indices = NULL;
         } else {
-            column_indices = (VertexId*) malloc(sizeof(VertexId) * source.edges); 
+            column_indices = (VertexId*) malloc(sizeof(VertexId) * source.edges);
             memcpy(column_indices, source.column_indices, sizeof(VertexId) * source.edges);
         }
         if (source.edge_values == NULL)
@@ -119,12 +119,12 @@ struct Csr
         } else {
             node_values = (Value*) malloc(sizeof(Value) * source.nodes);
             memcpy(node_values, source.node_values, sizeof(Value) * source.nodes);
-        } 
+        }
     }
 
-    
+
     template <typename Tuple>
-    void CsrToCsc(Csr<VertexId, SizeT, Value> &target, 
+    void CsrToCsc(Csr<VertexId, SizeT, Value> &target,
             Csr<VertexId, SizeT, Value> &source)
     {
         target.nodes = source.nodes;
@@ -512,7 +512,7 @@ struct Csr
 	SizeT nodes,
 	bool quiet = false)
     {
-	    if(!quiet) printf("  Converting the labels of %lld vertices to binary format...\n", 
+	    if(!quiet) printf("  Converting the labels of %lld vertices to binary format...\n",
 				(long long)nodes);
 	    if(LOAD_NODE_VALUES) WriteBinary_SM(output_file, nodes, labels);
     }
@@ -545,7 +545,7 @@ struct Csr
         if (!quiet)
         {
             printf("  Converting %lld vertices, %lld directed edges (%s tuples) "
-                   "to CSR format...\n", 
+                   "to CSR format...\n",
                     (long long)coo_nodes, (long long)coo_edges,
                    ordered_rows ? "ordered" : "unordered");
         }
@@ -728,12 +728,12 @@ struct Csr
         }
         printf("\nDegree Histogram (%lld vertices, %lld edges):\n",
                (long long) nodes, (long long) edges);
-        printf("    Degree   0: %lld (%.2f%%)\n", 
+        printf("    Degree   0: %lld (%.2f%%)\n",
                (long long) log_counts[0],
                (float) log_counts[0] * 100.0 / nodes);
         for (int i = 0; i < max_log_length + 1; i++)
         {
-            printf("    Degree 2^%i: %lld (%.2f%%)\n", 
+            printf("    Degree 2^%i: %lld (%.2f%%)\n",
                 i, (long long)log_counts[i + 1],
                 (float) log_counts[i + 1] * 100.0 / nodes);
         }
@@ -903,6 +903,8 @@ struct Csr
      */
     SizeT GetStddevDegree()
     {
+        if (stddev_degree > 0)
+            return stddev_degree;
         if (average_degree == 0)
         {
            GetAverageDegree();
@@ -920,7 +922,7 @@ struct Csr
 
     /**
      * @brief Get the degrees of all the nodes in graph
-     * 
+     *
      * @param[in] node_degrees node degrees to fill in
      */
     void GetNodeDegree(unsigned long long *node_degrees)

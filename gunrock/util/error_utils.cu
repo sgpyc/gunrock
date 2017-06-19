@@ -13,7 +13,32 @@
  */
 
 #include <stdio.h>
-#include <gunrock/util/error_utils.cuh> 
+#include <mpi.h>
+#include <gunrock/util/error_utils.cuh>
+
+void gunrock::util::PrintMsg(
+    std::string msg, const char *filename, int line)
+{
+    int gpu_idx, mpi_rank;
+    cudaGetDevice(&gpu_idx);
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+    fprintf(stdout, "[%s, %d @ rank %d, gpu %d] %s\n",
+        filename, line, mpi_rank, gpu_idx, msg.c_str());
+    fflush(stdout);
+}
+
+void gunrock::util::PrintErrorMsg(
+    std::string msg, const char *filename, int line)
+{
+    int gpu_idx, mpi_rank;
+    cudaGetDevice(&gpu_idx);
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+    fprintf(stderr, "[%s, %d @ rank %d, gpu %d] %s\n",
+        filename, line, mpi_rank, gpu_idx, msg.c_str());
+    fflush(stderr);
+}
 
 /**
  * Displays error message in accordance with debug mode
@@ -26,10 +51,9 @@ cudaError_t gunrock::util::GRError(
     bool print)
 {
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[%s, %d @ gpu %d] %s (CUDA error %d: %s)\n", filename, line, gpu, message, error, cudaGetErrorString(error));
-        fflush(stderr);
+        PrintErrorMsg(std::string(message) + " (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        filename, line);
     }
     return error;
 }
@@ -42,11 +66,10 @@ cudaError_t gunrock::util::GRError(
     bool print)
 {
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[%s, %d @ gpu %d] %s (CUDA error %d: %s)\n", filename, line, gpu, message.c_str(), error, cudaGetErrorString(error));
-        fflush(stderr);
-    }   
+        PrintErrorMsg(message + " (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        filename, line);
+    }
     return error;
 }
 
@@ -61,10 +84,9 @@ cudaError_t gunrock::util::GRError(
 {
     cudaError_t error = cudaGetLastError();
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[%s, %d @ gpu %d] %s (CUDA error %d: %s)\n", filename, line, gpu, message, error, cudaGetErrorString(error));
-        fflush(stderr);
+        PrintErrorMsg(std::string(message) + " (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        filename, line);
     }
     return error;
 }
@@ -77,10 +99,9 @@ cudaError_t gunrock::util::GRError(
 {
     cudaError_t error = cudaGetLastError();
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[%s, %d @ gpu %d] %s (CUDA error %d: %s)\n", filename, line, gpu, message.c_str(), error, cudaGetErrorString(error));
-        fflush(stderr);
+        PrintErrorMsg(message + " (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        filename, line);
     }
     return error;
 }
@@ -93,10 +114,9 @@ cudaError_t gunrock::util::GRError(
     bool print)
 {
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[@ gpu %d] (CUDA error %d: %s)\n", gpu, error, cudaGetErrorString(error));
-        fflush(stderr);
+        PrintErrorMsg(" (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        "Unknown file", 0);
     }
     return error;
 }
@@ -109,10 +129,9 @@ cudaError_t gunrock::util::GRError(
 {
     cudaError_t error = cudaGetLastError();
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[@ gpu %d] (CUDA error %d: %s)\n", gpu, error, cudaGetErrorString(error));
-        fflush(stderr);
+        PrintErrorMsg(" (CUDA error "
+            + std::to_string(error) + std::string(cudaGetErrorString(error)),
+        "Unknown file", 0);
     }
     return error;
 }
@@ -134,10 +153,8 @@ gunrock::util::gunrockError_t gunrock::util::GRError(
     bool print)
 {
     if (error && print) {
-        int gpu;
-        cudaGetDevice(&gpu);
-        fprintf(stderr, "[%s, %d @ gpu %d] %s Gunrock error: %s.\n", filename, line, gpu, message.c_str(), GetErrorString(error).c_str());
-        fflush(stderr);
+        PrintErrorMsg(message + " Gunrock error: " + GetErrorString(error),
+            filename, line);
     }
     return error;
 }

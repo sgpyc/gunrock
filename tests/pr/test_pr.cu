@@ -21,6 +21,8 @@
 #include <fstream>
 #include <algorithm>
 
+#include <mpi.h>
+
 // Utilities and correctness-checking
 #include <gunrock/util/test_utils.cuh>
 
@@ -1045,6 +1047,7 @@ int main_(CommandLineArgs *args)
     cpu_timer2.Stop();
     info->info["load_time"] = cpu_timer2.ElapsedMillis();
 
+    return retval;
     retval = RunTests_normalized<VertexId, SizeT, Value>(info);  // run test
 
     cpu_timer.Stop();
@@ -1095,15 +1098,30 @@ int main_VertexId(CommandLineArgs *args)
 
 int main(int argc, char** argv)
 {
+    int rank = 0, num_tasks = 1, retval = 0;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_tasks);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     CommandLineArgs args(argc, argv);
     int graph_args = argc - args.ParsedArgc() - 1;
     if (argc < 2 || graph_args < 1 || args.CheckCmdLineFlag("help"))
     {
-        Usage();
-        return 1;
-    }
+        if (rank == 0)
+            Usage();
+        retval = 0;
+    } else
+        retval = main_VertexId(&args);
 
-    return main_VertexId(&args);
+    if (retval != 0)
+    {
+        fprintf(stderr, "[rank %d] exited with code %d.\n",
+            rank, retval);
+        fflush(stderr);
+        MPI_Abort(MPI_COMM_WORLD, retval);
+    } else
+        MPI_Finalize();
+    return retval;
 }
 
 // Leave this at the end of the file
