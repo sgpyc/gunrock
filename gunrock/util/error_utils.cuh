@@ -85,6 +85,9 @@ gunrockError_t GRError(
     bool print = true);
 
 void PrintMsg(
+    std::string msg);
+
+void PrintMsg(
     std::string msg, const char *filename, int line);
 
 void PrintErrorMsg(

@@ -17,6 +17,18 @@
 #include <gunrock/util/error_utils.cuh>
 
 void gunrock::util::PrintMsg(
+    std::string msg)
+{
+    int gpu_idx, mpi_rank;
+    cudaGetDevice(&gpu_idx);
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+    fprintf(stdout, "[rank %d, gpu %d] %s\n",
+        mpi_rank, gpu_idx, msg.c_str());
+    fflush(stdout);
+}
+
+void gunrock::util::PrintMsg(
     std::string msg, const char *filename, int line)
 {
     int gpu_idx, mpi_rank;

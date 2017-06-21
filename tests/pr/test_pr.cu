@@ -146,7 +146,8 @@ void DisplaySolution(VertexId *node, Value *rank, SizeT nodes)
     printf("\nTop %lld Ranked Vertices and PageRanks:\n", (long long)top);
     for (SizeT i = 0; i < top; ++i)
     {
-        printf("Vertex ID: %lld, PageRank: %.8le\n", (long long)node[i], (double)rank[i]);
+        printf("Vertex ID: %lld, PageRank: %.8le\n",
+            (long long)node[i], (double)rank[i]);
     }
 }
 
@@ -339,7 +340,8 @@ public:
 template <
     typename VertexId,
     typename Value>
-inline bool operator< (const Sort_Pair<VertexId, Value>& lhs, const Sort_Pair<VertexId, Value>& rhs)
+inline bool operator< (const Sort_Pair<VertexId, Value>& lhs,
+    const Sort_Pair<VertexId, Value>& rhs)
 {
     if (lhs.val < rhs.val) return true;
     if (rhs.val < lhs.val) return false;
@@ -461,7 +463,8 @@ void ReferencePageRank_Normalized(
     for (VertexId i = 0; i < nodes; ++i)
     {
         node_id[i] = pr_list[i].vertex_id;
-        rank[i] = scaled ? (pr_list[i].page_rank / (Value)nodes) : pr_list[i].page_rank;
+        rank[i] = scaled ?
+            (pr_list[i].page_rank / (Value)nodes) : pr_list[i].page_rank;
     }
 
     free(pr_list     ); pr_list      = NULL;
@@ -512,7 +515,8 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     bool        quick_mode          = info->info["quick_mode"       ].get_bool ();
     bool        stream_from_host    = info->info["stream_from_host" ].get_bool ();
     int         max_grid_size       = info->info["max_grid_size"    ].get_int  ();
-    int         num_gpus            = info->info["num_gpus"         ].get_int  ();
+    int         num_local_gpus      = info->info["num_local_gpus"   ].get_int  ();
+    int         num_total_gpus      = info->info["num_total_gpus"   ].get_int  ();
     int         max_iteration       = info->info["max_iteration"    ].get_int  ();
     double      max_queue_sizing    = 0.0; //info->info["max_queue_sizing" ].get_real ();
     double      max_queue_sizing1   = 0.0; //info->info["max_queue_sizing1"].get_real ();
@@ -536,29 +540,33 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     int      subqueue_latency       = info->info["subqueue_latency"  ].get_int ();
     int      fullqueue_latency      = info->info["fullqueue_latency" ].get_int ();
     int      makeout_latency        = info->info["makeout_latency"   ].get_int ();
+    int         mpi_rank            = info->info["mpi_rank"          ].get_int ();
+    int         mpi_num_tasks       = info->info["mpi_num_tasks"     ].get_int ();
     if (communicate_multipy > 1) max_in_sizing *= communicate_multipy;
 
     CpuTimer    cpu_timer;
     cudaError_t retval              = cudaSuccess;
 
     cpu_timer.Start();
-    json_spirit::mArray device_list = info->info["device_list"].get_array();
-    int* gpu_idx = new int[num_gpus];
-    for (int i = 0; i < num_gpus; i++) gpu_idx[i] = device_list[i].get_int();
+    json_spirit::mArray device_list =
+        info->info["device_list"].get_array();
+    int* gpu_idx = new int[num_local_gpus];
+    for (int i = 0; i < num_local_gpus; i++)
+        gpu_idx[i] = device_list[i].get_int();
 
     // TODO: remove after merge mgpu-cq
     ContextPtr   *context = (ContextPtr*)  info->context;
     cudaStream_t *streams = (cudaStream_t*)info->streams;
 
-    size_t *org_size = new size_t[num_gpus];
-    for (int gpu = 0; gpu < num_gpus; gpu++)
+    size_t *org_size = new size_t[num_local_gpus];
+    for (int gpu = 0; gpu < num_local_gpus; gpu++)
     {
         size_t dummy;
         if (retval = cudaSetDevice(gpu_idx[gpu])) return retval;
         if (retval = cudaMemGetInfo(&(org_size[gpu]), &dummy)) return retval;
     }
 
-    if (compensate)
+    if (compensate && mpi_rank == 0)
     {
         util::Array1D<SizeT, VertexId> zero_out_vertices;
 
@@ -572,11 +580,14 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         }
         if (counter != 0)
         {
-            if (!quiet_mode) printf("Adding 1 vertex and %lld edges to compensate 0 degree vertices\n",
-                (long long)counter + (long long)graph -> nodes);
+            if (!quiet_mode)
+                PrintMsg("Adding 1 vertex and " +
+                    std::to_string(counter + graph -> nodes) +
+                    " edges to compensate 0 degree vertices");
             util::Array1D<SizeT, VertexId> new_column_indices;
             util::Array1D<SizeT, SizeT   > new_row_offsets;
-            new_column_indices.Allocate(graph -> edges + counter + graph -> nodes, util::HOST);
+            new_column_indices.Allocate(
+                graph -> edges + counter + graph -> nodes, util::HOST);
             new_row_offsets   .Allocate(graph -> nodes + 2);
             SizeT edge_counter = 0;
             for (VertexId v = 0; v < graph->nodes; v++)
@@ -587,9 +598,11 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
                     new_column_indices[edge_counter] = graph -> nodes;
                     edge_counter ++;
                 } else {
-                    SizeT num_neighbors = graph -> row_offsets[v+1] - graph -> row_offsets[v];
+                    SizeT num_neighbors = graph -> row_offsets[v+1]
+                        - graph -> row_offsets[v];
                     for (SizeT e = 0; e < num_neighbors; e++)
-                        new_column_indices[edge_counter + e] = graph -> column_indices[graph -> row_offsets[v] + e];
+                        new_column_indices[edge_counter + e] =
+                            graph -> column_indices[graph -> row_offsets[v] + e];
                     edge_counter += num_neighbors;
                 }
             }
@@ -599,32 +612,37 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
             edge_counter += graph -> nodes;
             new_row_offsets[graph -> nodes + 1] = edge_counter;
             free(graph -> column_indices);
-            graph -> column_indices = (VertexId*) malloc((long long)edge_counter * sizeof(VertexId));
-            memcpy(graph -> column_indices, new_column_indices.GetPointer(util::HOST),
+            graph -> column_indices = (VertexId*) malloc(
+                (long long)edge_counter * sizeof(VertexId));
+            memcpy(graph -> column_indices,
+                new_column_indices.GetPointer(util::HOST),
                 sizeof(VertexId) * (long long)edge_counter);
             new_column_indices.Release();
             free(graph -> row_offsets);
-            graph -> row_offsets = (SizeT*) malloc (((long long)graph -> nodes + 2) * sizeof(SizeT));
-            memcpy(graph -> row_offsets, new_row_offsets.GetPointer(util::HOST),
+            graph -> row_offsets = (SizeT*) malloc (
+                ((long long)graph -> nodes + 2) * sizeof(SizeT));
+            memcpy(graph -> row_offsets,
+                new_row_offsets.GetPointer(util::HOST),
                 sizeof(SizeT) * ((long long)graph -> nodes + 2));
             graph -> edges = edge_counter;
             graph -> nodes +=1;
         }
     }
 
-    // Allocate host-side array (for both reference and GPU-computed results)
-    Value        *ref_rank           = new Value   [graph->nodes];
-    Value        *h_rank             = new Value   [graph->nodes];
-    VertexId     *h_node_id          = new VertexId[graph->nodes];
-    VertexId     *ref_node_id        = new VertexId[graph->nodes];
-    //Value        *ref_check          = (quick_mode) ? NULL : ref_rank;
+    if (compensate)
+    {
+        MPI_Bcast(&(graph -> nodes), 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+        MPI_Bcast(&(graph -> edges), 1, Get_Mpi_Type<SizeT>(),
+            0, MPI_COMM_WORLD);
+    }
 
     Problem *problem = new Problem(scaled);  // allocate problem on GPU
     if (retval = util::GRError(problem->Init(
         stream_from_host,
         graph,
         NULL,
-        num_gpus,
+        num_local_gpus,
         gpu_idx,
         partition_method,
         streams,
@@ -637,7 +655,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         return retval;
 
     Enactor *enactor = new Enactor(
-        num_gpus, gpu_idx, instrument, debug, size_check);  // enactor map
+        num_local_gpus, gpu_idx, instrument, debug, size_check);  // enactor map
     if (retval = util::GRError(enactor->Init(
         context, problem, traversal_mode, max_grid_size),
         "PR Enactor Init failed", __FILE__, __LINE__))
@@ -662,7 +680,8 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
 
     cpu_timer.Stop();
     info -> info["preprocess_time"] = cpu_timer.ElapsedMillis();
-
+    return retval;
+    
     // perform PageRank
     double total_elapsed = 0.0;
     double single_elapsed = 0.0;
@@ -710,6 +729,13 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     info -> info["process_times"] = process_times;
     info -> info["min_process_time"] = min_elapsed;
     info -> info["max_process_time"] = max_elapsed;
+
+    // Allocate host-side array (for both reference and GPU-computed results)
+    Value        *ref_rank           = new Value   [graph->nodes];
+    Value        *h_rank             = new Value   [graph->nodes];
+    VertexId     *h_node_id          = new VertexId[graph->nodes];
+    VertexId     *ref_node_id        = new VertexId[graph->nodes];
+    //Value        *ref_check          = (quick_mode) ? NULL : ref_rank;
 
     cpu_timer.Start();
     // copy out results
@@ -938,7 +964,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
 
     if (!quiet_mode)
     {
-        Display_Memory_Usage(num_gpus, gpu_idx, org_size, problem);
+        Display_Memory_Usage(num_local_gpus, gpu_idx, org_size, problem);
 #ifdef ENABLE_PERFORMANCE_PROFILING
         Display_Performance_Profiling(enactor);
 #endif
@@ -966,7 +992,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     cpu_timer.Stop();
     info->info["postprocess_time"] = cpu_timer.ElapsedMillis();
 
-    if (h_rank     )
+    if (h_rank     && mpi_rank == 0)
     {
         if (info->info["output_filename"].get_str() !="")
         {

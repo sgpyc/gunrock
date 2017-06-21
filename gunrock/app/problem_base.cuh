@@ -1446,7 +1446,10 @@ struct ProblemBase
     static const util::io::st::CacheModifier QUEUE_WRITE_MODIFIER                   = util::io::st::cg;             // Store instruction cache-modifier for writing outgoing frontier vertex-ids. Valid on SM2.0 or newer
 
     // Members
-    int                 num_gpus              ; // Number of GPUs to be sliced over
+    int                 num_local_gpus        ; // Number of local GPUs to be sliced over
+    int                 num_total_gpus        ; // Number of total GPUs
+    int                 mpi_num_tasks         ; // Number of mpi tasks
+    int                 mpi_rank              ; // MPI rank of local process
     int                 *gpu_idx              ; // GPU indices
     SizeT               nodes                 ; // Number of vertices in the graph
     SizeT               edges                 ; // Number of edges in the graph
@@ -1523,7 +1526,7 @@ struct ProblemBase
         // Cleanup graph slices on the heap
         if (graph_slices != NULL)
         {
-            for (int i = 0; i < num_gpus; ++i)
+            for (int i = 0; i < num_local_gpus; ++i)
             {
                 if (retval = graph_slices[i]->Release()) return retval;
                 delete graph_slices[i]; graph_slices[i] = NULL;
@@ -1550,7 +1553,7 @@ struct ProblemBase
      * \return Index of the GPU that owns the neighbor list of the specified vertex
      */
     //template <typename VertexId>
-    int GpuIndex(VertexId vertex)
+    /*int GpuIndex(VertexId vertex)
     {
         if (num_gpus <= 1)
         {
@@ -1563,7 +1566,7 @@ struct ProblemBase
         {
             return partition_tables[0][vertex];
         }
-    }
+    }*/
 
     /**
      * @brief Get the row offset for a specified vertex id.
@@ -1574,7 +1577,7 @@ struct ProblemBase
      * this will be the same as the vertex id.
      */
     //template <typename VertexId>
-    VertexId GraphSliceRow(VertexId vertex)
+    /*VertexId GraphSliceRow(VertexId vertex)
     {
         if (num_gpus <= 1)
         {
@@ -1584,7 +1587,7 @@ struct ProblemBase
         {
             return convertion_tables[0][vertex];
         }
-    }
+    }*/
 
     /**
      * @brief Initialize problem from host CSR graph.
@@ -1605,7 +1608,7 @@ struct ProblemBase
         bool        stream_from_host,
         Csr<VertexId, SizeT, Value> *graph,
         Csr<VertexId, SizeT, Value> *inverse_graph = NULL,
-        int         num_gpus          = 1,
+        int         num_local_gpus    = 1,
         int         *gpu_idx          = NULL,
         std::string partition_method  = "random",
         float       queue_sizing      = 2.0,
@@ -1613,27 +1616,30 @@ struct ProblemBase
         int         partition_seed    = -1)
     {
         cudaError_t retval      = cudaSuccess;
+        MPI_Comm_size(MPI_COMM_WORLD, &(this -> mpi_num_tasks));
+        MPI_Comm_rank(MPI_COMM_WORLD, &(this -> mpi_rank));
         this->org_graph         = graph;
         this->nodes             = graph->nodes;
         this->edges             = graph->edges;
-        this->num_gpus          = num_gpus;
-        this->gpu_idx           = new int [num_gpus];
+        this->num_local_gpus    = num_local_gpus;
+        this->num_total_gpus    = num_local_gpus * this -> mpi_num_tasks;
+        this->gpu_idx           = new int [num_local_gpus];
         bool have_inv_graph     = false;
-        if (num_gpus == 1 && gpu_idx == NULL)
+        if (num_local_gpus == 1 && gpu_idx == NULL)
         {
             if (retval = util::GRError(cudaGetDevice(&(this->gpu_idx[0])),
                 "ProblemBase cudaGetDevice failed", __FILE__, __LINE__)) return retval;
         }
         else
         {
-            for (int gpu = 0; gpu < num_gpus; gpu++)
+            for (int gpu = 0; gpu < num_local_gpus; gpu++)
                 this->gpu_idx[gpu] = gpu_idx[gpu];
         }
 
-        graph_slices = new GraphSlice<VertexId, SizeT, Value>*[num_gpus];
+        graph_slices = new GraphSlice<VertexId, SizeT, Value>*[num_local_gpus];
         //graph->DisplayGraph("org_graph",graph->nodes);
 
-        if (num_gpus > 1)
+        if (num_total_gpus > 1 && mpi_rank == 0)
         {
             util::CpuTimer cpu_timer;
 
@@ -1697,18 +1703,18 @@ struct ProblemBase
             printf("partition end. (%f ms)\n", cpu_timer.ElapsedMillis());
             //graph -> DisplayGraph("org_graph");
 
-            if (inverse_graph != NULL && keep_node_num && num_gpus > 1 && use_inv_graph && !undirected)
+            if (inverse_graph != NULL && keep_node_num && num_total_gpus > 1 && use_inv_graph && !undirected)
             {
-                inv_subgraphs = new Csr<VertexId, SizeT, Value>[num_gpus];
-                SizeT *inv_edge_counters = new SizeT[num_gpus];
-                for (int gpu = 0; gpu < num_gpus; gpu++)
+                inv_subgraphs = new Csr<VertexId, SizeT, Value>[num_total_gpus];
+                SizeT *inv_edge_counters = new SizeT[num_total_gpus];
+                for (int gpu = 0; gpu < num_total_gpus; gpu++)
                     inv_edge_counters[gpu] = 0;
 
                 for (VertexId v = 0; v < graph -> nodes; v++)
                     inv_edge_counters[partition_tables[0][v]] +=
                         inverse_graph -> row_offsets[v+1] - inverse_graph -> row_offsets[v];
 
-                for (int gpu = 0; gpu < num_gpus; gpu++)
+                for (int gpu = 0; gpu < num_total_gpus; gpu++)
                 {
                     Csr<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
                     //Csr<VertexId, SizeT, Value> *sub_graph = sub_graphs + gpu;
@@ -1723,7 +1729,7 @@ struct ProblemBase
                         inverse_graph -> row_offsets[v+1] - inverse_graph -> row_offsets[v];
                 }
 
-                for (int gpu = 0; gpu < num_gpus; gpu ++)
+                for (int gpu = 0; gpu < num_total_gpus; gpu ++)
                 {
                     Csr<VertexId, SizeT, Value> *inv_subgraph = inv_subgraphs + gpu;
                     for (VertexId v = 0; v < graph -> nodes; v++)
@@ -1776,14 +1782,295 @@ struct ProblemBase
                 out_offsets[gpu][peer]*=2;
             }*/
             if (retval) return retval;
-        } else {
+        } else if (num_total_gpus == 1)
+        {
             sub_graphs = graph;
         }
 
-        for (int gpu = 0; gpu < num_gpus; gpu++)
+        if (num_total_gpus > 1 && mpi_num_tasks > 1)
+        { // Distribute sub_graphs
+            int size_per_graph = 4;
+            SizeT *sub_graph_sizes = new SizeT[num_total_gpus * size_per_graph + 3];
+
+            if (mpi_rank == 0)
+            {
+                for (int gpu = 0; gpu < num_total_gpus; gpu ++)
+                {
+                    sub_graph_sizes[gpu * size_per_graph] = sub_graphs[gpu].nodes;
+                    sub_graph_sizes[gpu * size_per_graph + 1] = sub_graphs[gpu].edges;
+                    if (have_inv_graph)
+                    {
+                        sub_graph_sizes[gpu * size_per_graph + 2] = inv_subgraphs[gpu].nodes;
+                        sub_graph_sizes[gpu * size_per_graph + 3] = inv_subgraphs[gpu].edges;
+                    }
+                }
+                sub_graph_sizes[num_total_gpus * size_per_graph] = (graph -> node_values == NULL) ? 0 : 1;
+                sub_graph_sizes[num_total_gpus * size_per_graph + 1] = (graph -> edge_values == NULL) ? 0 : 1;
+                sub_graph_sizes[num_total_gpus * size_per_graph + 2] = (have_inv_graph) ? 1 : 0;
+            }
+
+            MPI_Bcast(sub_graph_sizes, sizeof(SizeT) * (num_total_gpus * size_per_graph + 3),
+                MPI_BYTE, 0, MPI_COMM_WORLD);
+
+            std::vector<MPI_Request> requests;
+            std::vector<MPI_Status > statuses;
+            if (mpi_rank != 0)
+            {
+                sub_graphs        = new GraphT   [num_local_gpus    ];
+                partition_tables  = new int*     [num_local_gpus + 1];
+                convertion_tables = new VertexId*[num_local_gpus + 1];
+                original_vertexes = new VertexId*[num_local_gpus    ];
+                in_counter        = new SizeT*   [num_local_gpus    ];
+                out_offsets       = new SizeT*   [num_local_gpus    ];
+                out_counter       = new SizeT*   [num_local_gpus    ];
+                if (enable_backward)
+                {
+                    backward_partitions = new int*     [num_local_gpus];
+                    backward_convertions= new VertexId*[num_local_gpus];
+                    backward_offsets    = new SizeT*   [num_local_gpus];
+                }
+
+                bool has_node_values = (sub_graph_sizes[num_total_gpus * size_per_graph] == 0) ? false : true;
+                bool has_edge_values = (sub_graph_sizes[num_total_gpus * size_per_graph + 1] == 0) ? false : true;
+                have_inv_graph    = (sub_graph_sizes[num_total_gpus * size_per_graph + 2] == 1) ? true : false;
+                if (have_inv_graph)
+                {
+                    inv_subgraphs = new Csr<VertexId, SizeT, Value>[num_local_gpus];
+                }
+                for (int gpu = 0; gpu < num_local_gpus; gpu++)
+                {
+                    int   gpu_rank = mpi_rank * num_local_gpus + gpu;
+                    in_counter       [gpu    ] = new SizeT[num_total_gpus + 1];
+                    util::Mpi_Irecv_Bulk(in_counter[gpu],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, 0, gpu_rank * 16 + 7,
+                        MPI_COMM_WORLD, requests);
+                }
+                util::Mpi_Waitall(requests, statuses);
+
+                for (int gpu = 0; gpu < num_local_gpus; gpu ++)
+                {
+                    int   gpu_rank = mpi_rank * num_local_gpus + gpu;
+                    auto &sub_graph = sub_graphs[gpu];
+                    SizeT sub_graph_nodes = sub_graph_sizes[gpu_rank * size_per_graph];
+                    SizeT sub_graph_edges = sub_graph_sizes[gpu_rank * size_per_graph + 1];
+
+                    if (!has_node_values && !has_edge_values)
+                    {
+                        sub_graph.template FromScratch< false, false>(sub_graph_nodes, sub_graph_edges);
+                    } else if (!has_node_values && has_edge_values)
+                    {
+                        sub_graph.template FromScratch< false, true>(sub_graph_nodes, sub_graph_edges);
+                    } else if (has_node_values && !has_edge_values)
+                    {
+                        sub_graph.template FromScratch< true, false>(sub_graph_nodes, sub_graph_edges);
+                    } else {
+                        sub_graph.template FromScratch< true, true> (sub_graph_nodes, sub_graph_edges);
+                    }
+
+                    util::Mpi_Irecv_Bulk(sub_graph.row_offsets,
+                        sizeof(SizeT) * (sub_graph_nodes + 1),
+                        MPI_BYTE, 0, gpu_rank * 16 + 0,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Irecv_Bulk(sub_graph.column_indices,
+                        sizeof(VertexId) * sub_graph_edges,
+                        MPI_BYTE, 0, gpu_rank * 16 + 1,
+                        MPI_COMM_WORLD, requests);
+
+                    if (has_node_values)
+                    util::Mpi_Irecv_Bulk(sub_graph.node_values,
+                        sizeof(Value) * sub_graph_nodes,
+                        MPI_BYTE, 0, gpu_rank * 16 + 2,
+                        MPI_COMM_WORLD, requests);
+
+                    if (has_edge_values)
+                    util::Mpi_Irecv_Bulk(sub_graph.edge_values,
+                        sizeof(Value) * sub_graph_edges,
+                        MPI_BYTE, 0, gpu_rank * 16 + 3,
+                        MPI_COMM_WORLD, requests);
+
+                    partition_tables [gpu + 1] = new int[sub_graph_nodes];
+                    convertion_tables[gpu + 1] = new VertexId[sub_graph_nodes];
+                    original_vertexes[gpu    ] = new VertexId[sub_graph_nodes];
+                    out_counter      [gpu    ] = new SizeT[num_total_gpus + 1];
+                    out_offsets      [gpu    ] = new SizeT[num_total_gpus + 1];
+
+                    util::Mpi_Irecv_Bulk(partition_tables[gpu + 1],
+                        sizeof(int) * sub_graph_nodes,
+                        MPI_BYTE, 0, gpu_rank * 16 + 4,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Irecv_Bulk(convertion_tables[gpu + 1],
+                        sizeof(VertexId) * sub_graph_nodes,
+                        MPI_BYTE, 0, gpu_rank * 16 + 5,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Irecv_Bulk(original_vertexes[gpu ],
+                        sizeof(VertexId) * sub_graph_nodes,
+                        MPI_BYTE, 0, gpu_rank * 16 + 6,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Irecv_Bulk(out_counter[gpu],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, 0, gpu_rank * 16 + 8,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Irecv_Bulk(out_offsets[gpu],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, 0, gpu_rank * 16 + 9,
+                        MPI_COMM_WORLD, requests);
+
+                    if (enable_backward)
+                    {
+                        backward_offsets[gpu] = new SizeT[sub_graph_nodes + 1];
+                        util::Mpi_Irecv_Bulk(backward_offsets[gpu],
+                            sizeof(SizeT) * (sub_graph_nodes + 1),
+                            MPI_BYTE, 0, gpu_rank * 16 + 10,
+                            MPI_COMM_WORLD, requests);
+
+                        SizeT backward_count = (keep_node_num) ? (sub_graph_nodes * num_total_gpus) : (in_counter[gpu][num_total_gpus]);
+
+                        backward_convertions[gpu] = new VertexId[backward_count];
+                        util::Mpi_Irecv_Bulk(backward_convertions[gpu],
+                            sizeof(VertexId) * backward_count,
+                            MPI_BYTE, 0, gpu_rank * 16 + 11,
+                            MPI_COMM_WORLD, requests);
+
+                        backward_partitions[gpu] = new int[backward_count];
+                        util::Mpi_Irecv_Bulk(backward_partitions[gpu],
+                            sizeof(int) * backward_count,
+                            MPI_BYTE, 0, gpu_rank * 16 + 12,
+                            MPI_COMM_WORLD, requests);
+                    }
+
+                    if (have_inv_graph)
+                    {
+                        auto &inv_subgraph = inv_subgraphs[gpu];
+                        SizeT inv_subgraph_nodes = sub_graph_sizes[gpu_rank * size_per_graph + 2];
+                        SizeT inv_subgraph_edges = sub_graph_sizes[gpu_rank * size_per_graph + 3];
+
+                        inv_subgraph.template FromScratch<false, false>(inv_subgraph_nodes, inv_subgraph_edges);
+
+                        util::Mpi_Irecv_Bulk(inv_subgraph.row_offsets,
+                            sizeof(SizeT) * (inv_subgraph_nodes + 1),
+                            MPI_BYTE, 0, gpu_rank * 16 + 13,
+                            MPI_COMM_WORLD, requests);
+
+                        util::Mpi_Irecv_Bulk(inv_subgraph.column_indices,
+                            sizeof(VertexId) * inv_subgraph_edges,
+                            MPI_BYTE, 0, gpu_rank * 16 + 14,
+                            MPI_COMM_WORLD, requests);
+                    }
+                } // for gpu
+            } // mpi_rank != 0
+
+            else { // mpi_rank == 0
+                for (int gpu_rank = num_local_gpus; gpu_rank < num_total_gpus; gpu_rank ++)
+                {
+                    int peer_rank = gpu_rank / num_local_gpus;
+                    util::Mpi_Isend_Bulk(in_counter[gpu_rank],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 7,
+                        MPI_COMM_WORLD, requests);
+                }
+
+                for (int gpu_rank = num_local_gpus; gpu_rank < num_total_gpus; gpu_rank ++)
+                {
+                    int peer_rank = gpu_rank / num_local_gpus;
+                    auto &sub_graph = sub_graphs[gpu_rank];
+
+                    util::Mpi_Isend_Bulk(sub_graph.row_offsets,
+                        sizeof(SizeT) * (sub_graph.nodes + 1),
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 0,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(sub_graph.column_indices,
+                        sizeof(VertexId) * sub_graph.edges,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 1,
+                        MPI_COMM_WORLD, requests);
+
+                    if (graph -> node_values != NULL)
+                    util::Mpi_Isend_Bulk(sub_graph.node_values,
+                        sizeof(Value) * sub_graph.nodes,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 2,
+                        MPI_COMM_WORLD, requests);
+
+                    if (graph -> edge_values != NULL)
+                    util::Mpi_Isend_Bulk(sub_graph.edge_values,
+                        sizeof(Value) * sub_graph.edges,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 3,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(partition_tables[gpu_rank + 1],
+                        sizeof(int) * sub_graph.nodes,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 4,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(convertion_tables[gpu_rank + 1],
+                        sizeof(VertexId) * sub_graph.nodes,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 5,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(original_vertexes[gpu_rank ],
+                        sizeof(VertexId) * sub_graph.nodes,
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 6,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(out_counter[gpu_rank],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 8,
+                        MPI_COMM_WORLD, requests);
+
+                    util::Mpi_Isend_Bulk(out_offsets[gpu_rank],
+                        sizeof(SizeT) * (num_total_gpus + 1),
+                        MPI_BYTE, peer_rank, gpu_rank * 16 + 9,
+                        MPI_COMM_WORLD, requests);
+
+                    if (enable_backward)
+                    {
+                        util::Mpi_Isend_Bulk(backward_offsets[gpu_rank],
+                            sizeof(SizeT) * (sub_graph.nodes + 1),
+                            MPI_BYTE, peer_rank, gpu_rank * 16 + 10,
+                            MPI_COMM_WORLD, requests);
+
+                        SizeT backward_count = (keep_node_num) ? (sub_graph.nodes * num_total_gpus) : (in_counter[gpu_rank][num_total_gpus]);
+
+                        util::Mpi_Isend_Bulk(backward_convertions[gpu_rank],
+                            sizeof(VertexId) * backward_count,
+                            MPI_BYTE, peer_rank, gpu_rank * 16 + 11,
+                            MPI_COMM_WORLD, requests);
+
+                        util::Mpi_Isend_Bulk(backward_partitions[gpu_rank],
+                            sizeof(int) * backward_count,
+                            MPI_BYTE, peer_rank, gpu_rank * 16 + 12,
+                            MPI_COMM_WORLD, requests);
+                    }
+
+                    if (have_inv_graph)
+                    {
+                        auto &inv_subgraph = inv_subgraphs[gpu_rank];
+                        util::Mpi_Isend_Bulk(inv_subgraph.row_offsets,
+                            sizeof(SizeT) * (inv_subgraph.nodes + 1),
+                            MPI_BYTE, peer_rank, gpu_rank * 16 + 13,
+                            MPI_COMM_WORLD, requests);
+
+                        util::Mpi_Isend_Bulk(inv_subgraph.column_indices,
+                            sizeof(VertexId) * inv_subgraph.edges,
+                            MPI_BYTE, peer_rank, gpu_rank * 16 + 14,
+                            MPI_COMM_WORLD, requests);
+                    }
+                }
+            }
+
+            util::Mpi_Waitall(requests, statuses);
+
+        } // mpi_num_tasks > 1
+
+        for (int gpu = 0; gpu < num_local_gpus; gpu++)
         {
             graph_slices[gpu] = new GraphSlice<VertexId, SizeT, Value>(this->gpu_idx[gpu]);
-            if (num_gpus > 1)
+            if (num_total_gpus > 1)
             {
                 if (enable_backward)
                 {
