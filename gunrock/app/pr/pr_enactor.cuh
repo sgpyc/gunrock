@@ -857,7 +857,8 @@ struct PRIteration : public IterationBase <
 
         for (int peer_ = 1; peer_ < num_total_gpus; peer_ ++)
         {
-            data_slice -> out_length[peer_] = data_slice -> remote_vertices_out[peer_].GetSize();
+            data_slice -> out_length[peer_]
+                = data_slice -> remote_vertices_out[peer_].GetSize();
             int num_blocks = data_slice -> out_length[peer_] / 512 + 1;
             if (num_blocks > 480) num_blocks = 480;
             Assign_Values_PR <<<num_blocks, 512, 0, streams[peer_]>>> (
@@ -880,12 +881,13 @@ struct PRIteration : public IterationBase <
         EnactorStats<SizeT>             *enactor_stats,
         FrontierAttribute<SizeT>        *frontier_attribute,
         util::Array1D<SizeT, DataSlice> *data_slice,
-        int                              num_local_gpus)
+        int                              num_local_gpus,
+        int                              num_total_gpus)
     {
         bool all_zero = true;
-        int mpi_num_tasks;
-        MPI_Comm_size(MPI_COMM_WORLD, &mpi_num_tasks);
-        int num_total_gpus = num_local_gpus * mpi_num_tasks;
+        //int mpi_num_tasks;
+        //MPI_Comm_size(MPI_COMM_WORLD, &mpi_num_tasks);
+        //int num_total_gpus = num_local_gpus * mpi_num_tasks;
         for (int gpu = 0; gpu < num_local_gpus * num_total_gpus; gpu++)
         if (enactor_stats[gpu].retval != cudaSuccess)
         {
@@ -899,7 +901,8 @@ struct PRIteration : public IterationBase <
         for (int gpu =0; gpu < num_local_gpus; gpu++)
         if (data_slice[gpu]-> num_updated_vertices)//PR_queue_length > 0)
         {
-            //printf("data_slice[%d].PR_queue_length = %d\n", gpu, data_slice[gpu]->PR_queue_length);
+            //printf("data_slice[%d].PR_queue_length = %d\n",
+            //    gpu, data_slice[gpu]->PR_queue_length);
             all_zero = false;
         }
         if (all_zero) return true;
@@ -908,7 +911,8 @@ struct PRIteration : public IterationBase <
         if (enactor_stats[gpu * num_total_gpus].iteration
             < data_slice[0]->max_iter)
         {
-            //printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats[gpu * num_total_gpus].iteration);
+            //printf("enactor_stats[%d].iteration = %lld\n",
+            //    gpu, enactor_stats[gpu * num_total_gpus].iteration);
             return false;
         }
 

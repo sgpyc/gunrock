@@ -30,25 +30,27 @@ namespace app {
  * @param[in] enactor_stats Pointer to the enactor stats.
  * @param[in] frontier_attribute Pointer to the frontier attribute.
  * @param[in] data_slice Pointer to the data slice we process on.
- * @param[in] num_gpus Number of GPUs used for testing.
+ * @param[in] num_local_gpus Number of local GPUs used for testing.
+ * @param[in] num_total_gpus Total number of GPUs
  */
 template <typename SizeT, typename DataSlice>
 bool All_Done(EnactorStats<SizeT>             *enactor_stats,
               FrontierAttribute<SizeT>        *frontier_attribute,
               util::Array1D<SizeT, DataSlice> *data_slice,
-              int                              num_gpus)
+              int                              num_local_gpus,
+              int                              num_total_gpus)
 {
-    for (int gpu = 0; gpu < num_gpus * num_gpus; gpu++)
+    for (int gpu = 0; gpu < num_local_gpus * num_total_gpus; gpu++)
     if (enactor_stats[gpu].retval!=cudaSuccess)
     {
         printf("(CUDA error %d @ GPU %d: %s\n",
-            enactor_stats[gpu].retval, gpu%num_gpus,
+            enactor_stats[gpu].retval, gpu % num_total_gpus,
             cudaGetErrorString(enactor_stats[gpu].retval));
         fflush(stdout);
         return true;
     }
 
-    for (int gpu = 0; gpu < num_gpus * num_gpus; gpu++)
+    for (int gpu = 0; gpu < num_local_gpus * num_total_gpus; gpu++)
     if (frontier_attribute[gpu].queue_length!=0 || frontier_attribute[gpu].has_incoming)
     {
         //printf("frontier_attribute[%d].queue_length = %d\n",
@@ -56,8 +58,8 @@ bool All_Done(EnactorStats<SizeT>             *enactor_stats,
         return false;
     }
 
-    for (int gpu  = 0; gpu  < num_gpus; gpu++ )
-    for (int peer = 1; peer < num_gpus; peer++)
+    for (int gpu  = 0; gpu  < num_local_gpus; gpu++ )
+    for (int peer = 1; peer < num_total_gpus; peer++)
     for (int i    = 0; i    < 2       ; i++   )
     if (data_slice[gpu] -> in_length[i][peer] != 0)
     {
@@ -66,8 +68,8 @@ bool All_Done(EnactorStats<SizeT>             *enactor_stats,
         return false;
     }
 
-    for (int gpu  = 0; gpu  < num_gpus; gpu++ )
-    for (int peer = 1; peer < num_gpus; peer++)
+    for (int gpu  = 0; gpu  < num_local_gpus; gpu++ )
+    for (int peer = 1; peer < num_total_gpus; peer++)
     if (data_slice[gpu] -> out_length[peer] != 0)
     {
         //printf("data_slice[%d]->out_length[%d] = %d\n",

@@ -680,8 +680,8 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
 
     cpu_timer.Stop();
     info -> info["preprocess_time"] = cpu_timer.ElapsedMillis();
-    return retval;
-    
+    //return retval;
+
     // perform PageRank
     double total_elapsed = 0.0;
     double single_elapsed = 0.0;
@@ -1073,7 +1073,7 @@ int main_(CommandLineArgs *args)
     cpu_timer2.Stop();
     info->info["load_time"] = cpu_timer2.ElapsedMillis();
 
-    return retval;
+    //return retval;
     retval = RunTests_normalized<VertexId, SizeT, Value>(info);  // run test
 
     cpu_timer.Stop();
