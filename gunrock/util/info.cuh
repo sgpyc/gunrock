@@ -197,7 +197,7 @@ public:
      */
     void InitBase(std::string algorithm_name, util::CommandLineArgs &args)
     {
-        PrintMsg("InitBase() entered", __FILE__, __LINE__);
+        //PrintMsg("InitBase() entered", __FILE__, __LINE__);
         // put basic information into info
         info["engine"] = "Gunrock";
         info["command_line"] = json_spirit::mValue(args.GetEntireCommandLine());
@@ -512,7 +512,7 @@ public:
 
         context = (mgpu::ContextPtr*)context_;
         streams = (cudaStream_t*)streams_;
-        PrintMsg("InitBase() exited", __FILE__, __LINE__);
+        //PrintMsg("InitBase() exited", __FILE__, __LINE__);
         ///////////////////////////////////////////////////////////////////////
     }
 
@@ -528,7 +528,7 @@ public:
         util::CommandLineArgs &args,
         Csr<VertexId, SizeT, Value> &csr_ref)
     {
-        PrintMsg("Init() entered", __FILE__, __LINE__);
+        //PrintMsg("Init() entered", __FILE__, __LINE__);
         if (mpi_rank == 0)
         {
             // load or generate input graph
@@ -573,7 +573,7 @@ public:
         info["stddev_degrees"] = (float)csr_ref.GetStddevDegree();
         info["num_vertices"] = (int64_t)csr_ref.nodes;
         info["num_edges"   ] = (int64_t)csr_ref.edges;
-        PrintMsg("Init() exited", __FILE__, __LINE__);
+        //PrintMsg("Init() exited", __FILE__, __LINE__);
     }
 
     /**
@@ -693,12 +693,14 @@ public:
             num_total_gpus = mpi_num_tasks * num_local_gpus;
             if (!args.CheckCmdLineFlag("quiet"))
             {
-                printf("Using %d GPU(s): [", num_local_gpus);
+                std::string str = "Using "
+                    + std::to_string(num_local_gpus) + " GPU(s): [";
                 for (int i = 0; i < num_local_gpus; ++i)
                 {
-                    printf(" %d", devices[i]);
+                    str = str + " " + std::to_string(devices[i]);
                 }
-                printf(" ].\n");
+                str = str + " ].";
+                PrintMsg(str);
             }
             info["num_local_gpus"] = num_local_gpus;  // update number of devices
             info["num_total_gpus"] = num_total_gpus;
@@ -714,7 +716,7 @@ public:
             device_list.push_back(0);
             if (!args.CheckCmdLineFlag("quiet"))
             {
-                printf("Using 1 GPU: [ 0 ].\n");
+                PrintMsg("Using 1 GPU: [ 0 ].");
             }
             info["num_local_gpus"] = num_local_gpus;
             info["num_total_gpus"] = num_total_gpus;
@@ -950,7 +952,7 @@ public:
         {
             if (!args.CheckCmdLineFlag("quiet"))
             {
-                printf("Loading Matrix-market coordinate-formatted graph ...\n");
+                PrintMsg("Loading Matrix-market coordinate-formatted graph ...");
             }
 
             char *market_filename = args.GetCmdLineArgvDataset();
@@ -974,11 +976,12 @@ public:
                 return 1;
             }
         }
-        else if (graph_type == "rmat" || graph_type == "grmat" || graph_type == "metarmat")  // R-MAT graph
+        else if (graph_type == "rmat" || graph_type == "grmat"
+            || graph_type == "metarmat")  // R-MAT graph
         {
             if (!args.CheckCmdLineFlag("quiet"))
             {
-                printf("Generating R-MAT graph ...\n");
+                PrintMsg("Generating R-MAT graph ...\n");
             }
             // parse R-MAT parameters
             SizeT rmat_nodes = 1 << 10;

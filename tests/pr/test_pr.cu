@@ -653,6 +653,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         partition_seed),
         "PR Problem Init failed", __FILE__, __LINE__))
         return retval;
+    return retval;
 
     Enactor *enactor = new Enactor(
         num_local_gpus, gpu_idx, instrument, debug, size_check);  // enactor map
@@ -1079,7 +1080,8 @@ int main_(CommandLineArgs *args)
     cpu_timer.Stop();
     info->info["total_time"] = cpu_timer.ElapsedMillis();
 
-    if (!(info->info["quiet_mode"].get_bool()))
+    if (!(info->info["quiet_mode"].get_bool())
+        && info->info["mpi_rank"].get_int() == 0)
     {
         info->DisplayStats();  // display collected statistics
     }
@@ -1107,18 +1109,18 @@ template <
 int main_SizeT(CommandLineArgs *args)
 {
 // can be disabled to reduce compile time
-    if (args -> CheckCmdLineFlag("64bit-SizeT") || sizeof(VertexId) > 4)
-        return main_Value<VertexId, long long>(args);
-    else
+    //if (args -> CheckCmdLineFlag("64bit-SizeT") || sizeof(VertexId) > 4)
+    //    return main_Value<VertexId, long long>(args);
+    //else
         return main_Value<VertexId, int      >(args);
 }
 
 int main_VertexId(CommandLineArgs *args)
 {
     // can be disabled to reduce compile time
-    if (args -> CheckCmdLineFlag("64bit-VertexId"))
-        return main_SizeT<long long>(args);
-    else
+    //if (args -> CheckCmdLineFlag("64bit-VertexId"))
+    //    return main_SizeT<long long>(args);
+    //else
         return main_SizeT<int      >(args);
 }
 
