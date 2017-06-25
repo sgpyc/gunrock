@@ -67,7 +67,7 @@ void Iteration_Loop(
     util::Array1D<SizeT, DataSlice>
                  *s_data_slice         =   problem     -> data_slices;
     GraphSliceT  *graph_slice          =   problem     -> graph_slices       [thread_num] ;
-    GraphSliceT  **s_graph_slice       =   problem     -> graph_slices;
+    //GraphSliceT  **s_graph_slice       =   problem     -> graph_slices;
     FrontierAttribute<SizeT>
                  *frontier_attribute   = &(enactor     -> frontier_attribute [thread_num * num_total_gpus]);
     FrontierAttribute<SizeT>
@@ -374,10 +374,11 @@ void Iteration_Loop(
                             peer,
                             data_slice->out_length[peer_],
                             enactor_stats_,
-                            s_data_slice  [thread_num].GetPointer(util::HOST),
-                            s_data_slice  [peer]      .GetPointer(util::HOST),
-                            s_graph_slice [thread_num],
-                            s_graph_slice [peer],
+                            //s_data_slice  [thread_num].GetPointer(util::HOST),
+                            //s_data_slice  [peer]      .GetPointer(util::HOST),
+                            //s_graph_slice [thread_num],
+                            //s_graph_slice [peer],
+                            s_data_slice,
                             streams       [peer__],
                             communicate_multipy);
                         Set_Record(data_slice, iteration,

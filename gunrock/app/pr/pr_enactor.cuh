@@ -1340,7 +1340,7 @@ public:
                     data_slice -> value__associate_out[1].GetPointer(util::DEVICE));
 
             enactor_stats -> iteration = 0;
-            PushNeighbor <Enactor, GraphSliceT, DataSlice, 0, 1> (
+            /*PushNeighbor <Enactor, GraphSliceT, DataSlice, 0, 1> (
                 this,
                 thread_num,
                 0,
@@ -1351,7 +1351,7 @@ public:
                 problem->graph_slices[thread_num],
                 problem->graph_slices[0],
                 data_slice->streams[0],
-                this -> communicate_multipy);
+                this -> communicate_multipy);*/
             Set_Record(data_slice, enactor_stats->iteration, 1, 0, data_slice->streams[0]);
             data_slice->final_event_set = true;
         }

@@ -51,7 +51,8 @@ bool All_Done(EnactorStats<SizeT>             *enactor_stats,
     }
 
     for (int gpu = 0; gpu < num_local_gpus * num_total_gpus; gpu++)
-    if (frontier_attribute[gpu].queue_length!=0 || frontier_attribute[gpu].has_incoming)
+    if (frontier_attribute[gpu].queue_length!=0
+        || frontier_attribute[gpu].has_incoming)
     {
         //printf("frontier_attribute[%d].queue_length = %d\n",
         //    gpu,frontier_attribute[gpu].queue_length);
@@ -125,15 +126,17 @@ cudaError_t Check_Size(
         oversized=true;
         if (size_check)
         {
-            if (array->GetSize() != 0) retval = array->EnsureSize(target_length, keep_content);
+            if (array->GetSize() != 0)
+                retval = array->EnsureSize(target_length, keep_content);
             else retval = array->Allocate(target_length, util::DEVICE);
         } else {
-            char str[256];
+            //char str[256];
             //memcpy(str, name, sizeof(char) * strlen(name));
             //memcpy(str + strlen(name), temp_str, sizeof(char) * strlen(temp_str));
             //str[strlen(name)+strlen(temp_str)]='0';
-            sprintf(str,"%s oversized", name);
-            retval = util::GRError(cudaErrorLaunchOutOfResources, str, __FILE__, __LINE__);
+            //sprintf(str,"%s oversized", name);
+            retval = util::GRError(cudaErrorLaunchOutOfResources,
+                std::string(name) + " oversized", __FILE__, __LINE__);
         }
     }
     return retval;
@@ -299,107 +302,150 @@ template <
 void PushNeighbor(
     Enactor           *enactor,
     int                gpu,
-    int                peer,
+    int                peer_gpu_rank,
     typename Enactor::SizeT
                        queue_length,
-    EnactorStats<typename Enactor::SizeT>  *enactor_stats,
-    DataSlice         *data_slice_l,
-    DataSlice         *data_slice_p,
-    GraphSliceT       *graph_slice_l,
-    GraphSliceT       *graph_slice_p,
+    EnactorStats<typename Enactor::SizeT>
+                      *enactor_stats,
+    util::Array1D<typename Enactor::SizeT, DataSlice>
+                      *s_data_slices,
+    //DataSlice         *data_slice_l,
+    //DataSlice         *data_slice_p,
+    //GraphSliceT       *graph_slice_l,
+    //GraphSliceT       *graph_slice_p,
     cudaStream_t       stream,
     float              communicate_multipy)
 {
     typedef typename Enactor::VertexId VertexId;
     typedef typename Enactor::SizeT    SizeT;
     typedef typename Enactor::Value    Value;
+    cudaError_t &retval = enactor_stats -> retval;
+    bool &size_check    = enactor -> size_check;
+    int num_local_gpus  = enactor -> num_local_gpus;
+    //int mpi_num_tasks
+    //    = enactor -> num_total_gpus / num_local_gpus;
+    int local_rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &local_rank);
 
-    if (peer == gpu) return;
-    int gpu_  = peer<gpu? gpu : gpu+1;
-    int peer_ = peer<gpu? peer+1 : peer;
-    int t  = enactor_stats->iteration%2;
-    bool to_reallocate = false;
-    bool over_sized    = false;
+    int local_gpu_rank = gpu + local_rank * num_local_gpus;
+    int peer_rank = peer_gpu_rank / num_local_gpus;
 
-    data_slice_p->in_length[t][gpu_] = queue_length;
-    data_slice_p->in_iteration[t][gpu_] = enactor_stats->iteration;
-    if (queue_length == 0) return;
+    // Same GPU
+    if (local_gpu_rank == peer_gpu_rank) return;
 
-    if (communicate_multipy > 1) queue_length *= communicate_multipy;
+    int gpu_rank_ = local_gpu_rank;
+    if (peer_gpu_rank > local_gpu_rank)
+        gpu_rank_ ++;
+    int peer_gpu_rank_ = peer_gpu_rank;
+    if (peer_gpu_rank < local_gpu_rank)
+        peer_gpu_rank_ ++;
 
-    if (data_slice_l -> keys_out[peer_].GetPointer(util::DEVICE) != NULL &&
-        data_slice_p -> keys_in[t][gpu_].GetSize() < queue_length)
-        to_reallocate = true;
-    if (data_slice_p -> vertex_associate_in[t][gpu_].GetSize() < queue_length * NUM_VERTEX_ASSOCIATES)
-        to_reallocate = true;
-    if (data_slice_p -> value__associate_in[t][gpu_].GetSize() < queue_length * NUM_VALUE__ASSOCIATES)
-        to_reallocate = true;
+    if (local_rank == peer_rank)
+    { // Local communication
+        int peer = peer_gpu_rank % num_local_gpus;
+        int t    = enactor_stats->iteration%2;
+        bool to_reallocate = false;
+        bool over_sized    = false;
+        auto &peer_data_slice  = s_data_slices[peer][0];
+        auto &local_data_slice = s_data_slices[gpu ][0];
 
-    if (to_reallocate)
-    {
-        if (enactor -> size_check)
-            if (enactor_stats -> retval = util::SetDevice(data_slice_p -> gpu_idx))
+        peer_data_slice.in_length   [t][gpu_rank_]
+            = queue_length;
+        peer_data_slice.in_iteration[t][gpu_rank_]
+            = enactor_stats -> iteration;
+        if (queue_length == 0) return;
+
+        if (communicate_multipy > 1)
+            queue_length *= communicate_multipy;
+
+        if (local_data_slice.keys_out[peer_gpu_rank_]
+            .GetPointer(util::DEVICE) != NULL &&
+            peer_data_slice.keys_in[t][gpu_rank_]
+            .GetSize() < queue_length)
+            to_reallocate = true;
+        if (peer_data_slice.vertex_associate_in[t][gpu_rank_]
+            .GetSize() < queue_length * NUM_VERTEX_ASSOCIATES)
+            to_reallocate = true;
+        if (peer_data_slice.value__associate_in[t][gpu_rank_]
+            .GetSize() < queue_length * NUM_VALUE__ASSOCIATES)
+            to_reallocate = true;
+
+        if (to_reallocate)
+        {
+            if (size_check)
+                if (retval = util::SetDevice(peer_data_slice.gpu_idx))
+                    return;
+            if (local_data_slice.keys_out[peer_gpu_rank_]
+                .GetPointer(util::DEVICE) != NULL)
+            if (retval = Check_Size<SizeT, VertexId>(
+                size_check, "keys_in", queue_length,
+                &(peer_data_slice.keys_in[t][gpu_rank_]),
+                over_sized, gpu, enactor_stats -> iteration, peer))
                 return;
-        if (data_slice_l -> keys_out[peer_].GetPointer(util::DEVICE) != NULL)
-        if (enactor_stats -> retval = Check_Size<SizeT, VertexId>(
-            enactor -> size_check, "keys_in",
-            queue_length,
-            &data_slice_p -> keys_in[t][gpu_], over_sized,
-            gpu, enactor_stats -> iteration, peer))
-            return;
-        if (enactor_stats -> retval = Check_Size<SizeT, VertexId>(
-            enactor -> size_check, "vertex_associate_in",
-            queue_length * NUM_VERTEX_ASSOCIATES,
-            &data_slice_p -> vertex_associate_in[t][gpu_], over_sized,
-            gpu, enactor_stats -> iteration, peer))
-            return;
-        if (enactor_stats -> retval = Check_Size<SizeT, Value>(
-            enactor -> size_check, "value__associate_in",
-            queue_length * NUM_VALUE__ASSOCIATES,
-            &data_slice_p -> value__associate_in[t][gpu_], over_sized,
-            gpu, enactor_stats -> iteration, peer))
-            return;
-        if (enactor -> size_check)
-            if (enactor_stats -> retval = util::SetDevice(data_slice_l -> gpu_idx))
+            if (retval = Check_Size<SizeT, VertexId>(
+                size_check, "vertex_associate_in",
+                queue_length * NUM_VERTEX_ASSOCIATES,
+                &(peer_data_slice.vertex_associate_in[t][gpu_rank_]),
+                over_sized, gpu, enactor_stats -> iteration, peer))
                 return;
-    }
+            if (retval = Check_Size<SizeT, Value>(
+                size_check, "value__associate_in",
+                queue_length * NUM_VALUE__ASSOCIATES,
+                &(peer_data_slice.value__associate_in[t][gpu_rank_]),
+                over_sized, gpu, enactor_stats -> iteration, peer))
+                return;
+            if (size_check)
+                if (retval = util::SetDevice(local_data_slice.gpu_idx))
+                    return;
+        }
 
-    if (data_slice_l -> keys_out[peer_].GetPointer(util::DEVICE) != NULL)
-    {
-        //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("keys_out",
-        //    data_slice_l -> keys_out[peer_].GetPointer(util::DEVICE),
-        //    queue_length, gpu, enactor_stats -> iteration, peer_, stream);
+        if (local_data_slice.keys_out[peer_gpu_rank_]
+            .GetPointer(util::DEVICE) != NULL)
+        {
+            //util::cpu_mt::PrintGPUArray<SizeT, VertexId>("keys_out",
+            //    local_data_slice.keys_out[peer_gpu_rank_].GetPointer(util::DEVICE),
+            //    queue_length, gpu, enactor_stats -> iteration, peer_, stream);
 
-        if (enactor_stats -> retval = util::GRError(cudaMemcpyAsync(
-            data_slice_p -> keys_in[t][gpu_].GetPointer(util::DEVICE),
-            data_slice_l -> keys_out[peer_] .GetPointer(util::DEVICE),
-            sizeof(VertexId) * queue_length,
-            cudaMemcpyDefault, stream),
+            if (retval = util::GRError(cudaMemcpyAsync(
+                 peer_data_slice.keys_in [t][  gpu_rank_].GetPointer(util::DEVICE),
+                local_data_slice.keys_out[peer_gpu_rank_].GetPointer(util::DEVICE),
+                sizeof(VertexId) * queue_length, cudaMemcpyDeviceToDevice, stream),
+                "cudamemcpyPeer keys failed", __FILE__, __LINE__))
+                return;
+            //printf("%d @ %p -> %d @ %p, size = %d\n",
+            //    gpu , local_data_slice.keys_out[peer_gpu_rank_].GetPointer(util::DEVICE),
+            //    peer,  peer_data_slice.keys_in[t][gpu_rank_].GetPointer(util::DEVICE),
+            //    sizeof(VertexId) * queue_length);
+        } else {
+            //printf("push key skiped\n");
+        }
+
+        if (NUM_VERTEX_ASSOCIATES != 0)
+        if (retval = util::GRError(cudaMemcpyAsync(
+            peer_data_slice .vertex_associate_in [t][  gpu_rank_]
+                .GetPointer(util::DEVICE),
+            local_data_slice.vertex_associate_out[peer_gpu_rank_]
+                .GetPointer(util::DEVICE),
+            sizeof(VertexId) * queue_length * NUM_VERTEX_ASSOCIATES,
+            cudaMemcpyDeviceToDevice, stream),
             "cudamemcpyPeer keys failed", __FILE__, __LINE__))
             return;
-        //printf("%d @ %p -> %d @ %p, size = %d\n",
-        //    gpu , data_slice_l -> keys_out[peer_].GetPointer(util::DEVICE),
-        //    peer, data_slice_p -> keys_in[t][gpu_].GetPointer(util::DEVICE),
-        //    sizeof(VertexId) * queue_length);
-    } else {
-        //printf("push key skiped\n");
+
+        if (NUM_VALUE__ASSOCIATES != 0)
+        if (retval = util::GRError(cudaMemcpyAsync(
+            peer_data_slice .value__associate_in [t][  gpu_rank_]
+                .GetPointer(util::DEVICE),
+            local_data_slice.value__associate_out[peer_gpu_rank_]
+                .GetPointer(util::DEVICE),
+            sizeof(Value) * queue_length * NUM_VALUE__ASSOCIATES,
+            cudaMemcpyDeviceToDevice, stream),
+            "cudamemcpyPeer keys failed", __FILE__, __LINE__))
+            return;
     }
-    if (NUM_VERTEX_ASSOCIATES != 0)
-    if (enactor_stats -> retval = util::GRError(cudaMemcpyAsync(
-        data_slice_p -> vertex_associate_in[t][gpu_].GetPointer(util::DEVICE),
-        data_slice_l -> vertex_associate_out[peer_] .GetPointer(util::DEVICE),
-        sizeof(VertexId) * queue_length * NUM_VERTEX_ASSOCIATES,
-        cudaMemcpyDefault, stream),
-        "cudamemcpyPeer keys failed", __FILE__, __LINE__))
-        return;
-    if (NUM_VALUE__ASSOCIATES != 0)
-    if (enactor_stats -> retval = util::GRError(cudaMemcpyAsync(
-        data_slice_p -> value__associate_in[t][gpu_].GetPointer(util::DEVICE),
-        data_slice_l -> value__associate_out[peer_] .GetPointer(util::DEVICE),
-        sizeof(Value) * queue_length * NUM_VALUE__ASSOCIATES,
-        cudaMemcpyDefault, stream),
-        "cudamemcpyPeer keys failed", __FILE__, __LINE__))
-        return;
+
+    else { // Inter-node communication via MPI
+
+    }
 
 #ifdef ENABLE_PERFORMANCE_PROFILING
     //enactor_stats -> iter_out_length.back().push_back(queue_length);
