@@ -113,6 +113,46 @@ cudaError_t Mpi_Waitall(
     return retval;
 }
 
+cudaError_t Mpi_Waitall(
+    std::vector<MPI_Request> &requests)
+{
+    cudaError_t retval = cudaSuccess;
+    int num_requests = requests.size();
+    int mpi_retval = MPI_Waitall(num_requests,
+        requests.data(), MPI_STATUSES_IGNORE);
+    if (mpi_retval != MPI_SUCCESS)
+    {
+        retval = GRError("Mpi_Waitall error " + std::to_string(mpi_retval),
+            __FILE__, __LINE__);
+        return retval;
+    }
+    return retval;
+}
+
+cudaError_t Mpi_Test(
+    std::vector<MPI_Request> &requests)
+{
+    cudaError_t retval = cudaSuccess;
+    for (auto it = requests.begin(); it!= requests.end(); )
+    {
+        auto &request = *it;
+        int flag;
+        int mpi_retval = MPI_Test(&request, &flag, MPI_STATUSES_IGNORE);
+        if (mpi_retval != MPI_SUCCESS)
+        {
+            retval = GRError("Mpi_Test error " + std::to_string(mpi_retval),
+                __FILE__, __LINE__);
+            return retval;
+        }
+
+        if (flag)
+        {
+            it = requests.erase(it);
+        } else it++;
+    }
+    return retval;
+}
+
 } // namespace util
 } // namespace gunrock
 

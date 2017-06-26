@@ -67,6 +67,8 @@ public:
     //static const bool SIZE_CHECK = _SIZE_CHECK;
     int           num_local_gpus;
     int           num_total_gpus;
+    int           mpi_rank;
+    int           mpi_num_tasks;
     int          *gpu_idx;
     FrontierType  frontier_type;
     bool          instrument;
@@ -130,8 +132,8 @@ protected:
         fullqueue_latency  (0        ),
         makeout_latency    (0        )
     {
-        int mpi_num_tasks;
         MPI_Comm_size(MPI_COMM_WORLD, &mpi_num_tasks);
+        MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
         num_total_gpus = num_local_gpus * mpi_num_tasks;
         cuda_props        .SetName("cuda_props"        );
         work_progress     .SetName("work_progress"     );

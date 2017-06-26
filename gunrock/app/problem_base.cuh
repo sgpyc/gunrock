@@ -16,6 +16,7 @@
 
 #include <vector>
 #include <string>
+#include <mpi.h>
 
 // Graph construction utilities
 #include <gunrock/graphio/market.cuh>
@@ -433,6 +434,16 @@ struct DataSliceBase
     util::Array1D<SizeT, int         > org_block_idx             ; // blockIdx.x
     util::Array1D<SizeT, int         > org_thread_idx            ; // threadIdx.x
 
+    // data used for mpi communication
+    util::Array1D<SizeT, std::vector<MPI_Request>> send_requests;
+    util::Array1D<SizeT, std::vector<MPI_Request>> recv_requests;
+    util::Array1D<SizeT, VertexId    > *temp_keys_in;
+    util::Array1D<SizeT, VertexId    > *temp_keys_out;
+    util::Array1D<SizeT, VertexId    > *temp_vertex_associate_in;
+    util::Array1D<SizeT, VertexId    > *temp_vertex_associate_out;
+    util::Array1D<SizeT, Value       > *temp_value__associate_in;
+    util::Array1D<SizeT, Value       > *temp_value__associate_out;
+
     /**
      * @brief DataSliceBase default constructor
      */
@@ -503,6 +514,8 @@ struct DataSliceBase
         org_block_idx          .SetName("org_block_idx"          );
         org_thread_idx         .SetName("org_thread_idx"         );
         latency_data           .SetName("latency_data"           );
+        send_requests          .SetName("send_requests"          );
+        recv_requests          .SetName("recv_requests"          );
 
         for (int i = 0; i < 4; i++)
         {
@@ -756,6 +769,40 @@ struct DataSliceBase
         if (retval = org_queue_idx .Release()) return retval;
         if (retval = org_block_idx .Release()) return retval;
         if (retval = org_thread_idx.Release()) return retval;
+
+        if (send_requests.GetPointer(util::HOST) != NULL)
+        for (int peer_gpu_rank_ = 0; peer_gpu_rank_ < num_total_gpus;
+            peer_gpu_rank_ ++)
+        {
+            send_requests[peer_gpu_rank_].clear();
+            recv_requests[peer_gpu_rank_].clear();
+        }
+        if (retval = send_requests .Release()) return retval;
+        if (retval = recv_requests .Release()) return retval;
+
+        if (temp_keys_in != NULL)
+        for (int peer_gpu_rank_ = 0; peer_gpu_rank_ < num_total_gpus;
+            peer_gpu_rank_ ++)
+        {
+            retval = temp_keys_in             [peer_gpu_rank_].Release();
+            if (retval) return retval;
+            retval = temp_vertex_associate_in [peer_gpu_rank_].Release();
+            if (retval) return retval;
+            retval = temp_value__associate_in [peer_gpu_rank_].Release();
+            if (retval) return retval;
+            retval = temp_keys_out            [peer_gpu_rank_].Release();
+            if (retval) return retval;
+            retval = temp_vertex_associate_out[peer_gpu_rank_].Release();
+            if (retval) return retval;
+            retval = temp_value__associate_out[peer_gpu_rank_].Release();
+            if (retval) return retval;
+        }
+        delete[] temp_keys_in             ; temp_keys_in              = NULL;
+        delete[] temp_vertex_associate_in ; temp_vertex_associate_in  = NULL;
+        delete[] temp_value__associate_in ; temp_value__associate_in  = NULL;
+        delete[] temp_keys_out            ; temp_keys_out             = NULL;
+        delete[] temp_vertex_associate_out; temp_vertex_associate_out = NULL;
+        delete[] temp_value__associate_out; temp_value__associate_out = NULL;
         return retval;
     } // end Release()
 
@@ -785,11 +832,15 @@ struct DataSliceBase
     {
         cudaError_t retval         = cudaSuccess;
         // Copy input values
-        this->num_total_gpus             = num_total_gpus;
+        this->num_total_gpus       = num_total_gpus;
         this->gpu_idx              = gpu_idx;
         this->use_double_buffer    = use_double_buffer;
         this->nodes                = graph->nodes;
         this->edges                = graph->edges;
+        int mpi_rank, mpi_num_tasks;
+        MPI_Comm_size(MPI_COMM_WORLD, &mpi_num_tasks);
+        MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+        int num_local_gpus         = num_total_gpus / mpi_num_tasks;
         //this->num_vertex_associate = num_vertex_associate;
         //this->num_value__associate = num_value__associate;
 
@@ -872,6 +923,60 @@ struct DataSliceBase
         //valid_out               = new util::Array1D<SizeT, VertexId > [num_total_gpus];
 
         if (num_total_gpus == 1) return retval;
+        // Allocate data for MPI communication
+        retval = send_requests.Allocate(num_total_gpus, util::HOST);
+        if (retval) return retval;
+        retval = recv_requests.Allocate(num_total_gpus, util::HOST);
+        if (retval) return retval;
+        temp_keys_in   = new util::Array1D<SizeT, VertexId> [num_total_gpus];
+        temp_keys_out  = new util::Array1D<SizeT, VertexId> [num_total_gpus];
+        temp_vertex_associate_in  = new util::Array1D<SizeT, VertexId> [num_total_gpus];
+        temp_vertex_associate_out = new util::Array1D<SizeT, VertexId> [num_total_gpus];
+        temp_value__associate_in  = new util::Array1D<SizeT, Value   > [num_total_gpus];
+        temp_value__associate_out = new util::Array1D<SizeT, Value   > [num_total_gpus];
+        for (int peer_gpu_rank_ = 0; peer_gpu_rank_ < num_total_gpus; peer_gpu_rank_++)
+        {
+            temp_keys_in             [peer_gpu_rank_].SetName(
+                "temp_keys_in["              + std::to_string(peer_gpu_rank_) + "]");
+            temp_keys_out            [peer_gpu_rank_].SetName(
+                "temp_keys_in["              + std::to_string(peer_gpu_rank_) + "]");
+            temp_vertex_associate_in [peer_gpu_rank_].SetName(
+                "temp_vertex_associate_in["  + std::to_string(peer_gpu_rank_) + "]");
+            temp_vertex_associate_out[peer_gpu_rank_].SetName(
+                "temp_vertex_associate_out[" + std::to_string(peer_gpu_rank_) + "]");
+            temp_value__associate_in [peer_gpu_rank_].SetName(
+                "temp_value__associate_in["  + std::to_string(peer_gpu_rank_) + "]");
+            temp_value__associate_out[peer_gpu_rank_].SetName(
+                "temp_value__associate_out[" + std::to_string(peer_gpu_rank_) + "]");
+
+            if (peer_gpu_rank_ == 0) continue;
+            if (peer_gpu_rank_ > mpi_rank * num_local_gpus &&
+                peer_gpu_rank_ < (mpi_rank + 1) * num_local_gpus)
+                continue;
+
+            SizeT num_in_node = num_in_nodes[peer_gpu_rank_] * in_sizing;
+            retval = temp_keys_in             [peer_gpu_rank_].Init(
+                num_in_node, util::HOST, true);
+            if (retval) return retval;
+            retval = temp_vertex_associate_in [peer_gpu_rank_].Init(
+                num_in_node * MAX_NUM_VERTEX_ASSOCIATES, util::HOST, true);
+            if (retval) return retval;
+            retval = temp_value__associate_in [peer_gpu_rank_].Init(
+                num_in_node * MAX_NUM_VALUE__ASSOCIATES, util::HOST, true);
+            if (retval) return retval;
+
+            SizeT num_out_node = num_out_nodes[peer_gpu_rank_] * in_sizing;
+            retval = temp_keys_out            [peer_gpu_rank_].Init(
+                num_out_node, util::HOST, true);
+            if (retval) return retval;
+            retval = temp_vertex_associate_out[peer_gpu_rank_].Init(
+                num_out_node * MAX_NUM_VERTEX_ASSOCIATES, util::HOST, true);
+            if (retval) return retval;
+            retval = temp_value__associate_out[peer_gpu_rank_].Init(
+                num_out_node * MAX_NUM_VALUE__ASSOCIATES, util::HOST, true);
+            if (retval) return retval;
+        }
+
         // Create incoming buffer on device
         keys_in             [0] = new util::Array1D<SizeT, VertexId > [num_total_gpus];
         keys_in             [1] = new util::Array1D<SizeT, VertexId > [num_total_gpus];
