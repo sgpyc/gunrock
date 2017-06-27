@@ -707,7 +707,7 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         {
             PrintMsg("__________________________");
         }
-        continue;
+        
         cpu_timer.Start();
         if (retval = util::GRError(enactor->Enact(traversal_mode),
             "PR Problem Enact Failed", __FILE__, __LINE__))
@@ -1042,10 +1042,10 @@ template <
     typename Value>
 cudaError_t RunTests_normalized(Info<VertexId, SizeT, Value> *info)
 {
-    if (info->info["normalized"].get_bool())
+    //if (info->info["normalized"].get_bool())
         return RunTests<VertexId, SizeT, Value, true>(info);
-    else
-        return RunTests<VertexId, SizeT, Value, false>(info);
+    //else
+    //    return RunTests<VertexId, SizeT, Value, false>(info);
 }
 
 /******************************************************************************

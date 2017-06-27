@@ -489,23 +489,23 @@ public:
         }
 
         cudaStream_t*     streams_ = new cudaStream_t[
-            num_local_gpus * num_local_gpus * 2];
+            num_local_gpus * num_total_gpus * 2];
         mgpu::ContextPtr* context_ = new mgpu::ContextPtr[
-            num_local_gpus * num_local_gpus];
+            num_local_gpus * num_total_gpus];
 
-        for (int gpu = 0; gpu < num_local_gpus; gpu++)
+        for (int gpu_rank_local = 0; gpu_rank_local < num_local_gpus; gpu_rank_local++)
         {
-            util::SetDevice(temp_devices[gpu]);
-            for (int i = 0; i < num_local_gpus * 2; i++)
+            util::SetDevice(temp_devices[gpu_rank_local]);
+            for (int peer_gpu_pipe = 0; peer_gpu_pipe < num_total_gpus * 2; peer_gpu_pipe++)
             {
-                int _i = gpu * num_local_gpus * 2 + i;
+                int _i = gpu_rank_local * num_total_gpus * 2 + peer_gpu_pipe;
                 util::GRError(cudaStreamCreate(&streams_[_i]),
                               "cudaStreamCreate failed.", __FILE__, __LINE__);
-                if (i < num_local_gpus)
+                if (peer_gpu_pipe < num_total_gpus)
                 {
-                    context_[gpu * num_local_gpus + i] =
+                    context_[gpu_rank_local * num_total_gpus + peer_gpu_pipe] =
                         mgpu::CreateCudaDeviceAttachStream(
-                            temp_devices[gpu], streams_[_i]);
+                            temp_devices[gpu_rank_local], streams_[_i]);
                 }
             }
         }

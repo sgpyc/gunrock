@@ -265,37 +265,40 @@ protected:
             cudaHostAllocMapped | cudaHostAllocPortable))
             return retval;
 
-        for (int gpu = 0; gpu < num_local_gpus; gpu++)
+        for (int gpu_rank_local = 0; gpu_rank_local < num_local_gpus; gpu_rank_local ++)
         {
-            if (retval = util::SetDevice(gpu_idx[gpu])) return retval;
+            if (retval = util::SetDevice(gpu_idx[gpu_rank_local])) return retval;
             // Setup work progress (only needs doing once since we maintain
             // it in our kernel code)
-            for (int peer = 0; peer < num_total_gpus; peer++)
+            for (int peer_gpu_rank = 0; peer_gpu_rank < num_total_gpus; peer_gpu_rank++)
             {
-                if (retval = work_progress     [gpu * num_total_gpus + peer].Init())
+                if (retval = work_progress     [gpu_rank_local * num_total_gpus + peer_gpu_rank].Init())
                     return retval;
 
-                if (retval = frontier_attribute[gpu * num_total_gpus + peer].Init())
+                if (retval = frontier_attribute[gpu_rank_local * num_total_gpus + peer_gpu_rank].Init())
                     return retval;
 
-                EnactorStats<SizeT> *enactor_stats_ = enactor_stats + gpu * num_total_gpus + peer;
+                EnactorStats<SizeT> *enactor_stats_ = enactor_stats + gpu_rank_local * num_total_gpus + peer_gpu_rank;
                 //initialize runtime stats
                 enactor_stats_ -> advance_grid_size = MaxGridSize(
-                    gpu, advance_occupancy, max_grid_size);
+                    gpu_rank_local, advance_occupancy, max_grid_size);
                 enactor_stats_ -> filter_grid_size  = MaxGridSize(
-                    gpu, filter_occupancy , max_grid_size);
+                    gpu_rank_local, filter_occupancy , max_grid_size);
                 if (retval = enactor_stats_ -> Init(node_lock_size))
                     return retval;
 
-                if (gpu != peer)
+                if (gpu_rank_local != (peer_gpu_rank % num_local_gpus) 
+                    && gpu_rank_local / num_local_gpus == peer_gpu_rank / num_local_gpus)
                 {
                     int peer_access_avail;
-                    if (retval = util::GRError(cudaDeviceCanAccessPeer(&peer_access_avail, gpu_idx[gpu], gpu_idx[peer]),
+                    int peer_gpu_rank_local = peer_gpu_rank % num_local_gpus;
+                    if (retval = util::GRError(cudaDeviceCanAccessPeer(
+                        &peer_access_avail, gpu_idx[gpu_rank_local], gpu_idx[peer_gpu_rank_local]),
                         "cudaDeviceCanAccess failed", __FILE__, __LINE__))
                         return retval;
                     if (peer_access_avail)
                     {
-                        retval = cudaDeviceEnablePeerAccess(gpu_idx[peer],0);
+                        retval = cudaDeviceEnablePeerAccess(gpu_idx[peer_gpu_rank_local],0);
                         if (retval == cudaErrorPeerAccessAlreadyEnabled)
                             retval = cudaSuccess;
                         if (retval = util::GRError(retval,
@@ -306,11 +309,11 @@ protected:
             }
 
 #ifdef ENABLE_PERFORMANCE_PROFILING
-            iter_sub_queue_time [gpu].clear();
-            iter_full_queue_time[gpu].clear();
-            iter_total_time     [gpu].clear();
-            iter_full_queue_nodes_queued[gpu].clear();
-            iter_full_queue_edges_queued[gpu].clear();
+            iter_sub_queue_time [gpu_rank_lcoal].clear();
+            iter_full_queue_time[gpu_rank_local].clear();
+            iter_total_time     [gpu_rank_local].clear();
+            iter_full_queue_nodes_queued[gpu_rank_local].clear();
+            iter_full_queue_edges_queued[gpu_rank_local].clear();
 #endif
         }
         return retval;

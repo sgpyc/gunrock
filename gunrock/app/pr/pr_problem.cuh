@@ -318,8 +318,10 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
                 for (int peer = 0; peer < this -> num_total_gpus; peer++)
                 {
                     out_counters[peer] = 0;
-                    remote_vertices_out[peer].SetName("remote_vetices_out[]");
-                    remote_vertices_in [peer].SetName("remote_vertces_in []");
+                    remote_vertices_out[peer].SetName("remote_vetices_out[" + 
+                        std::to_string(peer) + "]");
+                    remote_vertices_in [peer].SetName("remote_vertces_in [" +
+                        std::to_string(peer) + "]");
                 }
 
                 for (VertexId v=0; v<graph->nodes; v++)
@@ -621,7 +623,7 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
 
         for (int gpu=0; gpu < this->num_local_gpus; gpu++)
         {
-            data_slices[gpu].SetName("data_slices[]");
+            data_slices[gpu].SetName("data_slices[" + std::to_string(gpu) + "]");
             if (retval = util::SetDevice(this -> gpu_idx[gpu]))
                 return retval;
             if (retval = this -> graph_slices[gpu] -> out_degrees    .Release())

@@ -368,6 +368,7 @@ template <
     int MAX_NUM_VALUE__ASSOCIATES>
 struct DataSliceBase
 {
+    //static const int NUM_STAGES = 6;
     int    num_total_gpus      ; // Total_number of GPUs
     int    gpu_idx             ; // GPU index
     int    wait_counter        ; // Wait counter for iteration loop control
@@ -450,7 +451,7 @@ struct DataSliceBase
     DataSliceBase()
     {
         // Assign default values
-        num_stages               = 4;
+        num_stages               = 6;
         //num_vertex_associate     = 0;
         //num_value__associate     = 0;
         gpu_idx                  = 0;
@@ -519,8 +520,8 @@ struct DataSliceBase
 
         for (int i = 0; i < 4; i++)
         {
-            events[i].SetName("events[]");
-            events_set[i].SetName("events_set[]");
+            events[i].SetName("events[" + std::to_string(i) + "]");
+            events_set[i].SetName("events_set[" + std::to_string(i) + "]");
         }
     } // end DataSliceBase()
 
@@ -856,7 +857,7 @@ struct DataSliceBase
         //    = new util::Array1D<SizeT, unsigned char>[num_total_gpus + 1];
         for (int i = 0; i < num_total_gpus + 1; i++)
         {
-            this->scanned_edges[i].SetName("scanned_edges[]");
+            this->scanned_edges[i].SetName("scanned_edges[" + std::to_string(i) + "]");
         }
         if (retval = in_length[0].Allocate(num_total_gpus, util::HOST)) return retval;
         if (retval = in_length[1].Allocate(num_total_gpus, util::HOST)) return retval;
@@ -1003,7 +1004,8 @@ struct DataSliceBase
                 //        .Allocate(num_in_node, util::DEVICE))
                 //        return retval;
                 //}
-                vertex_associate_in[t][gpu].SetName("vertex_associate_in[][]");
+                vertex_associate_in[t][gpu].SetName("vertex_associate_in[" +
+                    std::to_string(t) + "][" + std::to_string(gpu) + "]");
                 if (retval = vertex_associate_in[t][gpu].Allocate(
                     num_in_node * MAX_NUM_VERTEX_ASSOCIATES, util::DEVICE))
                     return retval;
@@ -1018,7 +1020,8 @@ struct DataSliceBase
                 //        .Allocate(num_in_node, util::DEVICE))
                 //        return retval;
                 //}
-                value__associate_in[t][gpu].SetName("vertex_associate_in[][]");
+                value__associate_in[t][gpu].SetName("value__associate_in[" +
+                    std::to_string(t) + "][" + std::to_string(gpu) + "]");
                 if (retval = value__associate_in[t][gpu].Allocate(
                     num_in_node * MAX_NUM_VALUE__ASSOCIATES, util::DEVICE))
                     return retval;
@@ -1041,7 +1044,8 @@ struct DataSliceBase
                 //if (retval = value__associate_ins[t][gpu].Move(util::HOST, util::DEVICE))
                 //    return retval;
 
-                keys_in[t][gpu].SetName("keys_in");
+                keys_in[t][gpu].SetName("keys_in[" +
+                    std::to_string(t) + "][" + std::to_string(gpu) + "]");
                 if (gpu != 0)
                     if (retval = keys_in[t][gpu].Allocate(num_in_node, util::DEVICE))
                         return retval;
@@ -1102,7 +1106,7 @@ struct DataSliceBase
             //if (retval = keys_marker[gpu].Allocate(
             //    num_out_nodes[num_total_gpus] * in_sizing, util::DEVICE)) return retval;
             //keys_markers[gpu] = keys_marker[gpu].GetPointer(util::DEVICE);
-            keys_out   [gpu].SetName("keys_out[]");
+            keys_out   [gpu].SetName("keys_out[" + std::to_string(gpu) + "]");
             if (gpu != 0)
             {
                 if (retval = keys_out[gpu].Allocate(num_out_node, util::DEVICE))
@@ -1112,7 +1116,7 @@ struct DataSliceBase
 
             //vertex_associate_out  [gpu] = new util::Array1D<SizeT, VertexId>
             //    [MAX_NUM_VERTEX_ASSOCIATES];
-            vertex_associate_out [gpu].SetName("vertex_associate_outs[]");
+            vertex_associate_out [gpu].SetName("vertex_associate_outs[" + std::to_string(gpu) + "]");
             //if (retval = vertex_associate_outs[gpu].Allocate(
             //    MAX_NUM_VERTEX_ASSOCIATES, util::HOST | util::DEVICE)) return retval;
             //vertex_associate_outss[gpu] = vertex_associate_outs[gpu].GetPointer(util::DEVICE);
@@ -1138,7 +1142,7 @@ struct DataSliceBase
 
             //value__associate_out [gpu] = new util::Array1D<SizeT, Value>
             //    [MAX_NUM_VALUE__ASSOCIATES];
-            value__associate_out[gpu].SetName("value__associate_outs[]");
+            value__associate_out[gpu].SetName("value__associate_outs[" + std::to_string(gpu) + "]");
             //if (retval = value__associate_outs[gpu].Allocate(
             //    MAX_NUM_VALUE__ASSOCIATES, util::HOST | util::DEVICE)) return retval;
             //value__associate_outss[gpu] = value__associate_outs[gpu].GetPointer(util::DEVICE);

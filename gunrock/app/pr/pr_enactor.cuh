@@ -898,14 +898,14 @@ struct PRIteration : public IterationBase <
             return true;
         }
 
-        for (int gpu =0; gpu < num_local_gpus; gpu++)
+        /*for (int gpu =0; gpu < num_local_gpus; gpu++)
         if (data_slice[gpu]-> num_updated_vertices)//PR_queue_length > 0)
         {
             //printf("data_slice[%d].PR_queue_length = %d\n",
             //    gpu, data_slice[gpu]->PR_queue_length);
             all_zero = false;
         }
-        if (all_zero) return true;
+        if (all_zero) return true;*/
 
         for (int gpu =0; gpu < num_local_gpus; gpu++)
         if (enactor_stats[gpu * num_total_gpus].iteration
@@ -1705,12 +1705,12 @@ public:
             if (traversal_mode == "LB")
                 return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB         >
                     ::Enact(*this);
-            else if (traversal_mode == "LB_LIGHT")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
-                    ::Enact(*this);
-            else if (traversal_mode == "TWC")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
-                    ::Enact(*this);
+            //else if (traversal_mode == "LB_LIGHT")
+            //    return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
+            //        ::Enact(*this);
+            //else if (traversal_mode == "TWC")
+            //    return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
+            //        ::Enact(*this);
         }
 
         //to reduce compile time, get rid of other architecture for now
@@ -1734,12 +1734,12 @@ public:
             if (traversal_mode == "LB")
                 return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB         >
                     ::Reset(*this);
-            else if (traversal_mode == "LB_LIGHT")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
-                    ::Reset(*this);
-            else if (traversal_mode == "TWC")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
-                    ::Reset(*this);
+            //else if (traversal_mode == "LB_LIGHT")
+            //   return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
+            //        ::Reset(*this);
+            //else if (traversal_mode == "TWC")
+            //    return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
+            //        ::Reset(*this);
         }
 
         //to reduce compile time, get rid of other architecture for now
@@ -1770,12 +1770,12 @@ public:
             if (traversal_mode == "LB")
                 return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB         >
                     ::Init(*this, context, problem, max_grid_size);
-            else if (traversal_mode == "LB_LIGHT")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
-                    ::Init(*this, context, problem, max_grid_size);
-            else if (traversal_mode == "TWC")
-                return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
-                    ::Init(*this, context, problem, max_grid_size);
+            //else if (traversal_mode == "LB_LIGHT")
+            //    return MODE_SWITCH<SizeT, gunrock::oprtr::advance::LB_LIGHT   >
+            //        ::Init(*this, context, problem, max_grid_size);
+            //else if (traversal_mode == "TWC")
+            //    return MODE_SWITCH<SizeT, gunrock::oprtr::advance::TWC_FORWARD>
+            //        ::Init(*this, context, problem, max_grid_size);
         }
 
         //to reduce compile time, get rid of other architecture for now

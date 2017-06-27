@@ -243,6 +243,10 @@ void Iteration_Loop(
                         sizeof(SizeT), MPI_BYTE, peer_rank, send_tag_base,
                         MPI_COMM_WORLD, &send_request);
                     data_slice -> send_requests[peer_gpu_rank_].push_back(send_request);
+                    //util::PrintMsg(std::string(" -> rank ") + std::to_string(peer_rank) +
+                    //    ", tag " + std::to_string(send_tag_base) +
+                    //    ", out_length[" + std::to_string(peer_gpu_rank_) + "] = " + 
+                    //    std::to_string(data_slice -> out_length[peer_gpu_rank_]));
 
                     int recv_tag_base = (gpu_rank_local * num_total_gpus + peer_gpu_rank) * 16 + t * 8;
                     MPI_Request recv_request;
@@ -371,28 +375,44 @@ void Iteration_Loop(
                             to_show = false; break;
                         }
 
+                        //util::PrintMsg(std::string(" rank ") + std::to_string(peer_rank) +
+                        //    ", tag " + std::to_string(recv_tag_base) +
+                        //    " ->, in_length[" + std::to_string(peer_gpu_rank_) + "] = " + 
+                        //    std::to_string(data_slice -> in_length[iteration_mod_2][peer_gpu_rank_]));
+
                         if (data_slice -> keys_out[peer_gpu_rank_]
                             .GetPointer(util::DEVICE) != NULL)
-                        if (retval = util::Mpi_Irecv_Bulk(
-                            data_slice -> temp_keys_in[peer_gpu_rank_].GetPointer(util::HOST),
-                            data_slice -> in_length[iteration_mod_2][peer_gpu_rank_],
-                            peer_rank, recv_tag_base + 1, MPI_COMM_WORLD,
-                            data_slice -> recv_requests[peer_gpu_rank_]))
-                            break;
+                        {
+                            retval = data_slice -> temp_keys_in[peer_gpu_rank_].EnsureSize(
+                                data_slice -> in_length[iteration_mod_2][peer_gpu_rank_]);
+                            if (retval) break;
+                            retval = util::Mpi_Irecv_Bulk(
+                                data_slice -> temp_keys_in[peer_gpu_rank_].GetPointer(util::HOST),
+                                data_slice -> in_length[iteration_mod_2][peer_gpu_rank_],
+                                peer_rank, recv_tag_base + 1, MPI_COMM_WORLD,
+                                data_slice -> recv_requests[peer_gpu_rank_]);
+                            if (retval) break;
+                        }
 
-                        if (retval = util::Mpi_Irecv_Bulk(
+                        retval = data_slice -> temp_vertex_associate_in[peer_gpu_rank_].EnsureSize(
+                            data_slice -> in_length[iteration_mod_2][peer_gpu_rank_] * NUM_VERTEX_ASSOCIATES);
+                        if (retval) break;
+                        retval = util::Mpi_Irecv_Bulk(
                             data_slice -> temp_vertex_associate_in[peer_gpu_rank_].GetPointer(util::HOST),
                             data_slice -> in_length[iteration_mod_2][peer_gpu_rank_] * NUM_VERTEX_ASSOCIATES,
                             peer_rank, recv_tag_base + 2, MPI_COMM_WORLD,
-                            data_slice -> recv_requests[peer_gpu_rank_]))
-                            break;
+                            data_slice -> recv_requests[peer_gpu_rank_]);
+                        if (retval) break;
 
-                        if (retval = util::Mpi_Irecv_Bulk(
+                        retval = data_slice -> temp_value__associate_in[peer_gpu_rank_].EnsureSize(
+                            data_slice -> in_length[iteration_mod_2][peer_gpu_rank_] * NUM_VALUE__ASSOCIATES);
+                        if (retval) break;
+                        retval = util::Mpi_Irecv_Bulk(
                             data_slice -> temp_value__associate_in[peer_gpu_rank_].GetPointer(util::HOST),
                             data_slice -> in_length[iteration_mod_2][peer_gpu_rank_] * NUM_VALUE__ASSOCIATES,
                             peer_rank, recv_tag_base + 3, MPI_COMM_WORLD,
-                            data_slice -> recv_requests[peer_gpu_rank_]))
-                            break;
+                            data_slice -> recv_requests[peer_gpu_rank_]);
+                        if (retval) break;
                         next_stage = Recv; break;
 
                     case Remote_Send:
@@ -501,7 +521,7 @@ void Iteration_Loop(
                             data_slice -> keys_in[iteration_mod_2][peer_gpu_rank_]
                                 .GetPointer(util::DEVICE),
                             data_slice -> temp_keys_in[peer_gpu_rank_]
-                                .GetPointer(util::DEVICE),
+                                .GetPointer(util::HOST),
                             queue_length * sizeof(VertexId),
                             cudaMemcpyHostToDevice, stream),
                             "cudaMemcpyAsync keys_in H2D failed", __FILE__, __LINE__))
@@ -511,9 +531,9 @@ void Iteration_Loop(
                             data_slice -> vertex_associate_in[iteration_mod_2][peer_gpu_rank_]
                                 .GetPointer(util::DEVICE),
                             data_slice -> temp_vertex_associate_in[peer_gpu_rank_]
-                                .GetPointer(util::DEVICE),
+                                .GetPointer(util::HOST),
                             queue_length * sizeof(VertexId) * NUM_VERTEX_ASSOCIATES,
-                            cudaMemcpyHostToDevice, streams[peer_gpu_pipe]),
+                            cudaMemcpyHostToDevice, stream),
                             "cudaMemcpyAsync vertex_associate_in H2D failed", __FILE__, __LINE__))
                             break;
 
@@ -521,10 +541,13 @@ void Iteration_Loop(
                             data_slice -> value__associate_in[iteration_mod_2][peer_gpu_rank_]
                                 .GetPointer(util::DEVICE),
                             data_slice -> temp_value__associate_in[peer_gpu_rank_]
-                                .GetPointer(util::DEVICE),
+                                .GetPointer(util::HOST),
                             queue_length * sizeof(Value) * NUM_VALUE__ASSOCIATES,
-                            cudaMemcpyHostToDevice, streams[peer_gpu_pipe]),
-                            "cudaMemcpyAsync value__associate_in H2D failed", __FILE__, __LINE__))
+                            cudaMemcpyHostToDevice, stream),
+                            "cudaMemcpyAsync temp_value__associate_in[" +
+                            std::to_string(peer_gpu_rank_) + "] -> value__associate_in[" +
+                            std::to_string(iteration_mod_2) + "][" +
+                            std::to_string(peer_gpu_rank_) + "] H2D failed", __FILE__, __LINE__))
                             break;
                     }
 
