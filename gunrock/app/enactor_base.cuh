@@ -295,7 +295,10 @@ protected:
                         return retval;
                     if (peer_access_avail)
                     {
-                        if (retval = util::GRError(cudaDeviceEnablePeerAccess(gpu_idx[peer],0),
+                        retval = cudaDeviceEnablePeerAccess(gpu_idx[peer],0);
+                        if (retval == cudaErrorPeerAccessAlreadyEnabled)
+                            retval = cudaSuccess;
+                        if (retval = util::GRError(retval,
                             "cudaDeviceEnablePeerAccess failed", __FILE__, __LINE__))
                             return retval;
                     }

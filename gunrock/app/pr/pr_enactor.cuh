@@ -1476,48 +1476,52 @@ public:
        cudaError_t retval = cudaSuccess;
         if (retval =  BaseEnactor::Reset())
             return retval;
-        for (int gpu=0; gpu < this->num_local_gpus; gpu++)
+        for (int gpu_rank_local = 0; gpu_rank_local < this->num_local_gpus; gpu_rank_local++)
         {
-            thread_slices[gpu].status = ThreadSlice::Status::Wait;
+            thread_slices[gpu_rank_local].status = ThreadSlice::Status::Wait;
 
-            if (retval = util::SetDevice(problem -> gpu_idx[gpu]))
+            if (retval = util::SetDevice(problem -> gpu_idx[gpu_rank_local]))
                 return retval;
             if (AdvanceKernelPolicy::ADVANCE_MODE ==  gunrock::oprtr::advance::TWC_FORWARD)
             {
                 //return retval;
             } else {
+                auto &data_slice = problem -> data_slices[gpu_rank_local][0];
+                auto &frontier_attribute = this -> frontier_attribute[gpu_rank_local * this -> num_total_gpus];
+                auto &graph_slice = problem -> graph_slices[gpu_rank_local][0];
                 bool over_sized = false;
+
                 if (retval = Check_Size<SizeT, SizeT> (
                     this -> size_check, "scanned_edges",
-                    problem -> data_slices[gpu] -> local_vertices.GetSize() + 2,
-                    problem -> data_slices[gpu] -> scanned_edges,
+                    data_slice.local_vertices.GetSize() + 2,
+                    data_slice.scanned_edges,
                     over_sized, -1, -1, -1, false)) return retval;
-                this -> frontier_attribute [gpu * this -> num_total_gpus].queue_length
-                    = problem -> data_slices[gpu] -> local_vertices.GetSize();
+                frontier_attribute.queue_length
+                    = data_slice.local_vertices.GetSize();
 
                 retval = gunrock::oprtr::advance::ComputeOutputLength
                     <AdvanceKernelPolicy, Problem, PRFunctor<VertexId, SizeT, Value, Problem>,
                     gunrock::oprtr::advance::V2V>(
-                    this -> frontier_attribute + gpu * this -> num_total_gpus,//frontier_attribute,
-                    problem -> graph_slices[gpu] -> row_offsets.GetPointer(util::DEVICE),//d_offsets,
-                    problem -> graph_slices[gpu] -> column_indices.GetPointer(util::DEVICE),//d_indices,
+                    &frontier_attribute,//frontier_attribute,
+                    graph_slice.row_offsets.GetPointer(util::DEVICE),//d_offsets,
+                    graph_slice.column_indices.GetPointer(util::DEVICE),//d_indices,
                     (SizeT   *)NULL, ///d_inv_offsets,
                     (VertexId*)NULL,//d_inv_indices,
-                    problem -> data_slices[gpu] -> local_vertices.GetPointer(util::DEVICE),//d_in_key_queue,
-                    problem -> data_slices[gpu] -> scanned_edges[0].GetPointer(util::DEVICE),//partitioned_scanned_edges->GetPointer(util::DEVICE),
-                    problem -> graph_slices[gpu] -> nodes,//max_in,
-                    problem -> graph_slices[gpu] -> edges,//max_out,
-                    thread_slices[gpu].context[0][0],
-                    problem -> data_slices[gpu] -> streams[0],
+                    data_slice.local_vertices.GetPointer(util::DEVICE),//d_in_key_queue,
+                    data_slice.scanned_edges[0].GetPointer(util::DEVICE),//partitioned_scanned_edges->GetPointer(util::DEVICE),
+                    graph_slice.nodes,//max_in,
+                    graph_slice.edges,//max_out,
+                    thread_slices[gpu_rank_local].context[0][0],
+                    data_slice.streams[0],
                     //ADVANCE_TYPE,
                     false,
                     false,
                     false);
 
-                if (retval = this -> frontier_attribute[gpu * this -> num_total_gpus].output_length.Move(util::DEVICE, util::HOST,
-                    1, 0, problem -> data_slices[gpu] -> streams[0]))
+                if (retval = frontier_attribute.output_length.Move(util::DEVICE, util::HOST,
+                    1, 0, data_slice.streams[0]))
                     return retval;
-                if (retval = util::GRError(cudaStreamSynchronize(problem -> data_slices[gpu] -> streams[0]),
+                if (retval = util::GRError(cudaStreamSynchronize(data_slice.streams[0]),
                     "cudaStreamSynchronize failed", __FILE__, __LINE__))
                     return retval;
                 //printf("#local_vertices = %d, output_length = %d\n",

@@ -262,8 +262,9 @@ void Send_Remote(
     auto &local_data_slice = s_data_slices[gpu_rank_local][0];
     int gpu_rank = gpu_rank_local + mpi_rank * enactor -> num_local_gpus;
     int peer_rank = peer_gpu_rank / enactor -> num_local_gpus;
+    int peer_gpu_rank_remote = peer_gpu_rank % enactor -> num_local_gpus;
     int t        = enactor_stats -> iteration % 2;
-    int tag_base = gpu_rank * 16 + t * 8;
+    int tag_base = (enactor -> num_total_gpus * peer_gpu_rank_remote + gpu_rank) * 16 + t * 8;
     int gpu_rank_ = gpu_rank;
     if (peer_gpu_rank > gpu_rank)
         gpu_rank_ ++;
@@ -493,11 +494,12 @@ void ShowDebugInfo(
         queue_length = frontier_attribute->queue_length;
     //else if (enactor_stats->retval = util::GRError(work_progress->GetQueueLength(frontier_attribute->queue_index, queue_length, false, stream), "work_progress failed", __FILE__, __LINE__)) return;
     //util::cpu_mt::PrintCPUArray<SizeT, SizeT>((check_name+" Queue_Length").c_str(), &(queue_length), 1, thread_num, enactor_stats->iteration);
-    printf("%d\t %lld\t %d\t stage%d\t %s\t Queue_Length = %lld\n",
-        thread_num, enactor_stats->iteration, peer_,
-        data_slice->stages[peer_], check_name.c_str(),
-        (long long)queue_length);
-    fflush(stdout);
+    util::PrintMsg(std::to_string(thread_num) + "\t "
+        + std::to_string(enactor_stats -> iteration) + "\t "
+        + std::to_string(peer_) + "\t stage " 
+        + std::to_string(data_slice -> stages[peer_]) + "\t "
+        + check_name + "\t Queue_Length = "
+        + std::to_string(queue_length));
     //printf("%d \t %d\t \t peer_ = %d, selector = %d, length = %d, p = %p\n",thread_num, enactor_stats->iteration, peer_, frontier_attribute->selector,queue_length,graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE));fflush(stdout);
     //util::cpu_mt::PrintGPUArray<SizeT, VertexId>((check_name+" keys").c_str(), data_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE), queue_length, thread_num, enactor_stats->iteration,peer_, stream);
     //if (graph_slice->frontier_queues.values[frontier_attribute->selector].GetPointer(util::DEVICE)!=NULL)

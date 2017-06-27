@@ -64,8 +64,9 @@ cudaError_t gunrock::util::GRError(
 {
     if (error && print) {
         PrintErrorMsg(std::string(message) + " (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        filename, line);
+            + std::to_string(error) + " : " 
+            + std::string(cudaGetErrorString(error)) + ")",
+            filename, line);
     }
     return error;
 }
@@ -79,8 +80,9 @@ cudaError_t gunrock::util::GRError(
 {
     if (error && print) {
         PrintErrorMsg(message + " (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        filename, line);
+            + std::to_string(error) + " : " 
+            + std::string(cudaGetErrorString(error)) + ")",
+            filename, line);
     }
     return error;
 }
@@ -97,8 +99,9 @@ cudaError_t gunrock::util::GRError(
     cudaError_t error = cudaGetLastError();
     if (error && print) {
         PrintErrorMsg(std::string(message) + " (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        filename, line);
+            + std::to_string(error) + ":"
+            + std::string(cudaGetErrorString(error)) + ")",
+            filename, line);
     }
     return error;
 }
@@ -112,8 +115,9 @@ cudaError_t gunrock::util::GRError(
     cudaError_t error = cudaGetLastError();
     if (error && print) {
         PrintErrorMsg(message + " (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        filename, line);
+            + std::to_string(error) + " : " 
+            + std::string(cudaGetErrorString(error)) + ")",
+            filename, line);
     }
     return error;
 }
@@ -127,8 +131,9 @@ cudaError_t gunrock::util::GRError(
 {
     if (error && print) {
         PrintErrorMsg(" (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        "Unknown file", 0);
+            + std::to_string(error) + " : "
+            + std::string(cudaGetErrorString(error)) + ")",
+            "Unknown file", 0);
     }
     return error;
 }
@@ -142,8 +147,9 @@ cudaError_t gunrock::util::GRError(
     cudaError_t error = cudaGetLastError();
     if (error && print) {
         PrintErrorMsg(" (CUDA error "
-            + std::to_string(error) + std::string(cudaGetErrorString(error)),
-        "Unknown file", 0);
+            + std::to_string(error) + " : "
+            + std::string(cudaGetErrorString(error)) + ")",
+            "Unknown file", 0);
     }
     return error;
 }

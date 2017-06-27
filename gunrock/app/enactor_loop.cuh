@@ -232,8 +232,9 @@ void Iteration_Loop(
                     peer_gpu_rank++)
                 {
                     int peer_rank = peer_gpu_rank / num_local_gpus;
+                    int peer_gpu_rank_remote = peer_gpu_rank % num_local_gpus;
                     if (peer_rank == local_rank) continue;
-                    int send_tag_base = gpu_rank * 16 + t * 8;
+                    int send_tag_base = (peer_gpu_rank_remote * num_total_gpus + gpu_rank) * 16 + t * 8;
                     int peer_gpu_rank_ = (peer_gpu_rank < gpu_rank) ?
                         peer_gpu_rank + 1 : peer_gpu_rank;
 
@@ -243,7 +244,7 @@ void Iteration_Loop(
                         MPI_COMM_WORLD, &send_request);
                     data_slice -> send_requests[peer_gpu_rank_].push_back(send_request);
 
-                    int recv_tag_base = peer_gpu_rank * 16 + t * 8;
+                    int recv_tag_base = (gpu_rank_local * num_total_gpus + peer_gpu_rank) * 16 + t * 8;
                     MPI_Request recv_request;
                     MPI_Irecv(&(data_slice -> in_length[t][peer_gpu_rank_]),
                         sizeof(SizeT), MPI_BYTE, peer_rank, recv_tag_base,
@@ -301,7 +302,7 @@ void Iteration_Loop(
                 auto &context            = contexts[peer_gpu_rank_];
                 auto  loop_type          = Host_Recv;
                 //int send_tag_base        = gpu_rank      * 16 + iteration_mod_2 * 8;
-                int recv_tag_base        = peer_gpu_rank * 16 + iteration_mod_2 * 8;
+                int recv_tag_base        = (gpu_rank_local * num_total_gpus + peer_gpu_rank) * 16 + iteration_mod_2 * 8;
 
                 if (peer_gpu_pipe == 0)
                     loop_type = Host_Recv;

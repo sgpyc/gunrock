@@ -653,7 +653,6 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         partition_seed),
         "PR Problem Init failed", __FILE__, __LINE__))
         return retval;
-    return retval;
 
     Enactor *enactor = new Enactor(
         num_local_gpus, gpu_idx, instrument, debug, size_check);  // enactor map
@@ -689,7 +688,8 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     double max_elapsed    = 0.0;
     double min_elapsed    = 1e10;
     json_spirit::mArray process_times;
-    if (!quiet_mode) printf("Using traversal mode %s\n", traversal_mode.c_str());
+    if (!quiet_mode && mpi_rank == 0) 
+        printf("Using traversal mode %s\n", traversal_mode.c_str());
 
     for (int iter = 0; iter < iterations; ++iter)
     {
@@ -705,8 +705,9 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
 
         if (!quiet_mode)
         {
-            printf("__________________________\n"); fflush(stdout);
+            PrintMsg("__________________________");
         }
+        continue;
         cpu_timer.Start();
         if (retval = util::GRError(enactor->Enact(traversal_mode),
             "PR Problem Enact Failed", __FILE__, __LINE__))
@@ -720,16 +721,17 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         if (single_elapsed < min_elapsed) min_elapsed = single_elapsed;
         if (!quiet_mode)
         {
-            printf("--------------------------\n"
-                "iteration %d elapsed: %lf ms\n",
-                iter, single_elapsed);
-            fflush(stdout);
+            PrintMsg(std::string("--------------------------\n"
+                "iteration ") + std::to_string(iter) +
+                " elapsed: " + std::to_string(single_elapsed) +
+                " ms");
         }
     }
     total_elapsed /= iterations;
     info -> info["process_times"] = process_times;
     info -> info["min_process_time"] = min_elapsed;
     info -> info["max_process_time"] = max_elapsed;
+    return retval;
 
     // Allocate host-side array (for both reference and GPU-computed results)
     Value        *ref_rank           = new Value   [graph->nodes];

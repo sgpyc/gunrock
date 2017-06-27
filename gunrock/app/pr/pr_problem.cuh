@@ -111,6 +111,7 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
         util::Array1D<int, SizeT> out_counters;
         util::Array1D<SizeT, unsigned char> cub_sort_storage;
         util::Array1D<SizeT, VertexId     > temp_vertex;
+        util::Array1D<SizeT, SizeT        > remote_vertices_counts;
 
         /*
          * @brief Default constructor
@@ -146,6 +147,7 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
             out_counters  .SetName("out_counters"  );
             cub_sort_storage.SetName("cub_sort_storage");
             temp_vertex   .SetName("temp_vertex");
+            remote_vertices_counts.SetName("remote_vertices_counts");
         }
 
         /*
@@ -170,6 +172,7 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
             if (retval = out_counters.Release()) return retval;
             if (retval = cub_sort_storage.Release()) return retval;
             if (retval = temp_vertex .Release()) return retval;
+            if (retval = remote_vertices_counts.Release()) return retval;
             //if (retval = markers     .Release()) return retval;
             //if (temp_keys_out != NULL)
             //{
@@ -662,83 +665,198 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
 
         if (this -> num_total_gpus == 1) return retval;
 
-        for (int gpu = 0; gpu < this -> num_local_gpus; gpu++)
+        for (int gpu_rank_local = 0; gpu_rank_local < this -> num_local_gpus; gpu_rank_local++)
         {
-            if (retval = util::SetDevice(this -> gpu_idx[gpu]))
+            if (retval = util::SetDevice(this -> gpu_idx[gpu_rank_local]))
                 return retval;
 
-            // TODO: modify for multi-node
-            for (int peer = 0; peer < this -> num_total_gpus; peer++)
+            int gpu_rank = gpu_rank_local + this -> num_local_gpus * this -> mpi_rank;
+            auto &data_slice = data_slices[gpu_rank_local][0];
+
+            if (gpu_rank == 0)
             {
-                if (peer == gpu) continue;
-                int peer_ = (peer < gpu) ? peer + 1 : peer;
-                int gpu_  = (peer < gpu) ? gpu : gpu + 1;
-                data_slices[gpu] -> in_counters[peer_]
-                    = data_slices[peer] -> out_counters[gpu_];
-                if (gpu != 0)
-                {
-                    data_slices[gpu] -> remote_vertices_in[peer_].SetPointer(
-                        data_slices[peer] -> remote_vertices_out[gpu_].GetPointer(util::HOST),
-                        data_slices[peer] -> remote_vertices_out[gpu_].GetSize(),
-                        util::HOST);
-                } else {
-                    data_slices[gpu] -> remote_vertices_in[peer_].SetPointer(
-                        data_slices[peer] -> remote_vertices_out[gpu_].GetPointer(util::HOST),
-                        max(data_slices[peer] -> remote_vertices_out[gpu_].GetSize(),
-                        data_slices[peer] -> local_vertices.GetSize()),
-                        util::HOST);
+                retval = data_slice.remote_vertices_counts.Allocate(this -> num_total_gpus, util::HOST);
+                if (retval) return retval;
+                data_slice.remote_vertices_counts[0] = data_slice.local_vertices.GetSize();
+            }
+
+            for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
+            {
+                if (peer_gpu_rank == gpu_rank) continue;
+                int peer_rank         = peer_gpu_rank / this -> num_local_gpus;
+                int peer_gpu_rank_    = (peer_gpu_rank < gpu_rank) ? peer_gpu_rank + 1 : peer_gpu_rank;
+                int gpu_rank_remote_  = (peer_gpu_rank < gpu_rank) ? gpu_rank : gpu_rank + 1;
+                int peer_gpu_rank_remote = peer_gpu_rank % this -> num_local_gpus;
+
+                if (peer_rank == this -> mpi_rank)
+                { // Local peer GPU
+                    auto &peer_gpu_data_slice = data_slices[peer_gpu_rank_remote][0];
+                    data_slice.in_counters[peer_gpu_rank_]
+                        = peer_gpu_data_slice.out_counters[gpu_rank_remote_];
+                    if (gpu_rank != 0)
+                    {
+                        data_slice.remote_vertices_in[peer_gpu_rank_].SetPointer(
+                            peer_gpu_data_slice.remote_vertices_out[gpu_rank_remote_].GetPointer(util::HOST),
+                            peer_gpu_data_slice.remote_vertices_out[gpu_rank_remote_].GetSize(),
+                            util::HOST);
+                    } else {
+                        data_slice.remote_vertices_in[peer_gpu_rank_].SetPointer(
+                                peer_gpu_data_slice.remote_vertices_out[gpu_rank_remote_].GetPointer(util::HOST),
+                            max(peer_gpu_data_slice.remote_vertices_out[gpu_rank_remote_].GetSize(),
+                                peer_gpu_data_slice.local_vertices.GetSize()),
+                            util::HOST);
+                        data_slice.remote_vertices_counts[peer_gpu_rank_]
+                            = peer_gpu_data_slice.local_vertices.GetSize();
+                    }
+                } else { // Remote peer GPU
+                    
+                    int send_tag_base = this -> num_total_gpus * peer_gpu_rank_remote + gpu_rank;
+                    retval = util::Mpi_Isend_Bulk(&(data_slice.out_counters[peer_gpu_rank_]),
+                        1, peer_rank, send_tag_base, MPI_COMM_WORLD, data_slice.send_requests[peer_gpu_rank_]);
+                    if (retval) return retval;
+
+                    int recv_tag_base = this -> num_total_gpus * gpu_rank_local + peer_gpu_rank;
+                    retval = util::Mpi_Irecv_Bulk(&(data_slice.in_counters[peer_gpu_rank_]),
+                        1, peer_rank, recv_tag_base, MPI_COMM_WORLD, data_slice.recv_requests[peer_gpu_rank_]);
+                    if (retval) return retval;
                 }
-                if (retval = data_slices[gpu] -> remote_vertices_in[peer_].Move(util::HOST, util::DEVICE,
-                    data_slices[peer] -> remote_vertices_out[gpu_].GetSize()))
+            }
+
+            if (this -> mpi_rank != 0)
+            {
+                int send_tag = this -> num_total_gpus * this -> num_local_gpus + gpu_rank;
+                SizeT num_local_vertices = data_slice.local_vertices.GetSize();
+                retval = util::Mpi_Isend_Bulk(&num_local_vertices, 1, 0, send_tag,
+                    MPI_COMM_WORLD, data_slice.send_requests[0]);
+                if (retval) return retval;
+            } else if (gpu_rank == 0)
+            {
+                for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
+                {
+                    int peer_rank = peer_gpu_rank / this -> num_local_gpus;
+                    if (peer_rank == this -> mpi_rank) continue;
+                    int peer_gpu_rank_ = (peer_gpu_rank < gpu_rank) ? peer_gpu_rank + 1 : peer_gpu_rank;
+                    int recv_tag = this -> num_total_gpus * this -> num_local_gpus + peer_gpu_rank;
+                    retval = util::Mpi_Irecv_Bulk(data_slice.remote_vertices_counts + peer_gpu_rank,
+                        1, peer_rank, recv_tag, MPI_COMM_WORLD, data_slice.recv_requests[peer_gpu_rank_]);
+                    if (retval) return retval;
+                }
+            }
+        }
+
+        for (int gpu_rank_local = 0; gpu_rank_local < this -> num_local_gpus; gpu_rank_local ++)
+        { 
+            int gpu_rank = gpu_rank_local + this -> num_local_gpus * this -> mpi_rank;
+            auto &data_slice = data_slices[gpu_rank_local][0];
+            for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
+            {
+                if (peer_gpu_rank == gpu_rank) continue;
+                int peer_rank         = peer_gpu_rank / this -> num_local_gpus;
+                int peer_gpu_rank_    = (peer_gpu_rank < gpu_rank) ? peer_gpu_rank + 1 : peer_gpu_rank;
+                //int gpu_rank_remote_  = (peer_gpu_rank < gpu_rank) ? gpu_rank : gpu_rank + 1;
+                int peer_gpu_rank_remote = peer_gpu_rank % this -> num_local_gpus;
+
+                if (peer_rank == this -> mpi_rank) continue;
+                retval = util::Mpi_Waitall(data_slice.recv_requests[peer_gpu_rank_]);
+                if (retval) return retval;
+                data_slice.recv_requests[peer_gpu_rank_].clear();
+                
+                int send_tag_base = this -> num_total_gpus * peer_gpu_rank_remote + gpu_rank;
+                retval = util::Mpi_Isend_Bulk(data_slice.remote_vertices_out[peer_gpu_rank_] + 0,
+                    data_slice.remote_vertices_out[peer_gpu_rank_].GetSize(),
+                    peer_rank, send_tag_base, MPI_COMM_WORLD, data_slice.send_requests[peer_gpu_rank_]);
+                if (retval) return retval;
+
+                if (gpu_rank != 0)
+                    retval  = data_slice.remote_vertices_in[peer_gpu_rank_].Allocate(
+                        data_slice.in_counters[peer_gpu_rank_], util::HOST);
+                else retval = data_slice.remote_vertices_in[peer_gpu_rank_].Allocate(
+                        max(data_slice.in_counters[peer_gpu_rank_],
+                            data_slice.remote_vertices_counts[peer_gpu_rank_]), util::HOST);
+                if (retval) return retval;
+
+                int recv_tag_base = this -> num_total_gpus * gpu_rank_local + peer_gpu_rank;
+                retval = util::Mpi_Irecv_Bulk(data_slice.remote_vertices_in[peer_gpu_rank_] + 0,
+                    data_slice.remote_vertices_in [peer_gpu_rank_].GetSize(),
+                    peer_rank, recv_tag_base, MPI_COMM_WORLD, data_slice.recv_requests[peer_gpu_rank_]);
+                if (retval) return retval;
+            }
+        }
+
+        for (int gpu_rank_local = 0; gpu_rank_local < this -> num_local_gpus; gpu_rank_local ++)
+        { 
+            int gpu_rank = gpu_rank_local + this -> num_local_gpus * this -> mpi_rank;
+            auto &data_slice = data_slices[gpu_rank_local][0];
+            for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
+            {
+                if (peer_gpu_rank == gpu_rank) continue;
+                int peer_rank         = peer_gpu_rank / this -> num_local_gpus;
+                int peer_gpu_rank_    = (peer_gpu_rank < gpu_rank) ? peer_gpu_rank + 1 : peer_gpu_rank;
+                //int gpu_rank_remote_  = (peer_gpu_rank < gpu_rank) ? gpu_rank : gpu_rank + 1;
+                //int peer_gpu_rank_remote = peer_gpu_rank % this -> num_local_gpus;
+
+                if (peer_rank != this -> mpi_rank)
+                {
+                    retval = util::Mpi_Waitall(data_slice.recv_requests[peer_gpu_rank_]);
+                    if (retval) return retval;
+                    data_slice.recv_requests[peer_gpu_rank_].clear();
+                }
+
+                if (retval = data_slice.remote_vertices_in[peer_gpu_rank_].Move(util::HOST, util::DEVICE,
+                    data_slice.in_counters[peer_gpu_rank_]))
                     return retval;
 
                 for (int t=0; t<2; t++)
                 {
-                    if (data_slices[gpu] -> value__associate_in[t][peer_].GetPointer(util::DEVICE) == NULL)
+                    if (data_slice.value__associate_in[t][peer_gpu_rank_].GetPointer(util::DEVICE) == NULL)
                     {
-                        if (retval = data_slices[gpu] -> value__associate_in[t][peer_].Allocate(
-                            data_slices[gpu] -> in_counters[peer_], util::DEVICE))
+                        if (retval = data_slice.value__associate_in[t][peer_gpu_rank_].Allocate(
+                            data_slice.in_counters[peer_gpu_rank_], util::DEVICE))
                             return retval;
                     } else {
-                        if (retval = data_slices[gpu] -> value__associate_in[t][peer_].EnsureSize(
-                            data_slices[gpu] -> in_counters[peer_]))
+                        if (retval = data_slice.value__associate_in[t][peer_gpu_rank_].EnsureSize(
+                            data_slice.in_counters[peer_gpu_rank_]))
                             return retval;
                     }
                 }
             }
         }
 
-        for (int gpu = 1; gpu < this -> num_local_gpus; gpu++)
+        for (int gpu_rank_local = (this -> mpi_rank == 0 ? 1 : 0); gpu_rank_local < this -> num_local_gpus; gpu_rank_local++)
         {
-            if (retval = util::SetDevice(this -> gpu_idx[gpu]))
+            if (retval = util::SetDevice(this -> gpu_idx[gpu_rank_local]))
                 return retval;
-            if (data_slices[gpu] -> value__associate_out[1]
+            if (data_slices[gpu_rank_local] -> value__associate_out[1]
                 .GetPointer(util::DEVICE) == NULL)
             {
-                if (retval = data_slices[gpu] -> value__associate_out[1].Allocate(
-                    data_slices[gpu] -> local_vertices.GetSize(), util::DEVICE))
+                if (retval = data_slices[gpu_rank_local] -> value__associate_out[1].Allocate(
+                    data_slices[gpu_rank_local] -> local_vertices.GetSize(), util::DEVICE))
                     return retval;
             } else {
-                if (retval = data_slices[gpu] -> value__associate_out[1]
-                    .EnsureSize(data_slices[gpu] -> local_vertices.GetSize()))
+                if (retval = data_slices[gpu_rank_local] -> value__associate_out[1]
+                    .EnsureSize(data_slices[gpu_rank_local] -> local_vertices.GetSize()))
                     return retval;
             }
         }
 
-        if (retval = util::SetDevice(this -> gpu_idx[0]))
-            return retval;
-        for (int gpu = 1; gpu < this -> num_local_gpus; gpu++)
+        if (this -> mpi_rank == 0)
         {
-            if (data_slices[0] -> value__associate_in[0][gpu]
-                .GetPointer(util::DEVICE) == NULL)
+            if (retval = util::SetDevice(this -> gpu_idx[0]))
+                return retval;
+            auto &data_slice = data_slices[0][0];
+            for (int peer_gpu_rank = 1; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
             {
-                if (retval = data_slices[0] -> value__associate_in[0][gpu]
-                    .Allocate(data_slices[gpu] -> local_vertices.GetSize(), util::DEVICE))
-                    return retval;
-            } else {
-                if (retval = data_slices[0] -> value__associate_in[0][gpu]
-                    .EnsureSize(data_slices[gpu] -> local_vertices.GetSize()))
-                    return retval;
+                if (data_slice.value__associate_in[0][peer_gpu_rank]
+                    .GetPointer(util::DEVICE) == NULL)
+                {
+                    if (retval = data_slice.value__associate_in[0][peer_gpu_rank]
+                        .Allocate(data_slice.remote_vertices_counts[peer_gpu_rank], util::DEVICE))
+                        return retval;
+                } else {
+                    if (retval = data_slice.value__associate_in[0][peer_gpu_rank]
+                        .EnsureSize(data_slice.remote_vertices_counts[peer_gpu_rank]))
+                        return retval;
+                }
             }
         }
         //delete[] local_nodes; local_nodes = NULL;
