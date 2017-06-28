@@ -63,13 +63,14 @@ struct Dispatch<KernelPolicy, Problem, Functor, true>
         typedef util::Block_Scan<SizeT, KernelPolicy::CUDA_ARCH, KernelPolicy::LOG_THREADS> BlockScanT;
                 
         __shared__ typename BlockScanT::Temp_Space scan_space;
-        if (threadIdx.x == 0 && blockIdx.x == 0)
+        if (threadIdx.x == 0)
         {
             if (queue_reset)
                 work_progress.StoreQueueLength(input_queue_length, queue_index);
             else 
                 input_queue_length = work_progress.LoadQueueLength(queue_index);
-            work_progress.StoreQueueLength(0, queue_index + 2);
+            if (blockIdx.x == 0)
+                work_progress.StoreQueueLength(0, queue_index + 2);
         }
         SizeT *d_out_length = work_progress.GetQueueCounter(queue_index + 1);
         __syncthreads();
@@ -77,9 +78,10 @@ struct Dispatch<KernelPolicy, Problem, Functor, true>
         while (pos - threadIdx.x < input_queue_length)
         {
             bool to_process = true;
-            VertexId input_item = (d_in_queue == NULL) ? pos : d_in_queue[pos];
+            VertexId input_item = 0;
             if (pos < input_queue_length)
             {
+                input_item = (d_in_queue == NULL) ? pos : d_in_queue[pos];
                 to_process = Functor::CondFilter(
                     util::InvalidValue<VertexId>(),
                     input_item,
