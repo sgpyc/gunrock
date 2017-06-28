@@ -203,15 +203,23 @@ extern "C" {
     inline void PrintMessage (const char* const message, const int gpu=-1, const int iteration=-1, int peer = -1)
     {
         //float ft = (float)stime*1000/CLOCKS_PER_SEC;
-        if      (gpu!=-1 && iteration!=-1 && peer >=0) printf("%d\t %d\t %d\t %s\n",gpu,iteration,peer,message);
-        else if (gpu!=-1                  && peer >=0) printf("%d\t   \t %d\t %s\n",gpu,          peer,message);
-        else if (           iteration!=-1 && peer >=0) printf("  \t %d\t %d\t %s\n",    iteration,peer,message);
-        else if (                            peer >=0) printf("  \t   \t %d\t %s\n",              peer,message);
-        else if (gpu!=-1 && iteration!=-1            ) printf("%d\t %d\t   \t %s\n",gpu,iteration,     message);
-        else if (gpu!=-1                             ) printf("%d\t   \t   \t %s\n",gpu,               message);
-        else if (           iteration!=-1            ) printf("  \t %d\t   \t %s\n",    iteration,     message);
-        else                                           printf("  \t   \t   \t %s\n",                   message);
-        fflush(stdout);
+        std::string str = "";
+        if (gpu != -1) str = str + std::to_string(gpu);
+        str = str + "\t ";
+        if (iteration != -1) str = str + std::to_string(iteration);
+        str = str + "\t ";
+        if (peer >= 0) str = str + std::to_string(peer);
+        str = str + "\t " + std::string(message);
+        util::PrintMsg(str);
+        //if      (gpu!=-1 && iteration!=-1 && peer >=0) printf("%d\t %d\t %d\t %s\n",gpu,iteration,peer,message);
+        //else if (gpu!=-1                  && peer >=0) printf("%d\t   \t %d\t %s\n",gpu,          peer,message);
+        //else if (           iteration!=-1 && peer >=0) printf("  \t %d\t %d\t %s\n",    iteration,peer,message);
+        //else if (                            peer >=0) printf("  \t   \t %d\t %s\n",              peer,message);
+        //else if (gpu!=-1 && iteration!=-1            ) printf("%d\t %d\t   \t %s\n",gpu,iteration,     message);
+        //else if (gpu!=-1                             ) printf("%d\t   \t   \t %s\n",gpu,               message);
+        //else if (           iteration!=-1            ) printf("  \t %d\t   \t %s\n",    iteration,     message);
+        //else                                           printf("  \t   \t   \t %s\n",                   message);
+        //fflush(stdout);
     }
 
     template <typename _Value>

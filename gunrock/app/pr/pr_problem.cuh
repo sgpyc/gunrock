@@ -747,7 +747,10 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
         }
 
         for (int gpu_rank_local = 0; gpu_rank_local < this -> num_local_gpus; gpu_rank_local ++)
-        { 
+        {
+             if (retval = util::SetDevice(this -> gpu_idx[gpu_rank_local]))
+                return retval;
+ 
             int gpu_rank = gpu_rank_local + this -> num_local_gpus * this -> mpi_rank;
             auto &data_slice = data_slices[gpu_rank_local][0];
             for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)
@@ -786,7 +789,10 @@ struct PRProblem : ProblemBase<VertexId, SizeT, Value,
         }
 
         for (int gpu_rank_local = 0; gpu_rank_local < this -> num_local_gpus; gpu_rank_local ++)
-        { 
+        {
+            if (retval = util::SetDevice(this -> gpu_idx[gpu_rank_local]))
+                return retval;
+ 
             int gpu_rank = gpu_rank_local + this -> num_local_gpus * this -> mpi_rank;
             auto &data_slice = data_slices[gpu_rank_local][0];
             for (int peer_gpu_rank = 0; peer_gpu_rank < this -> num_total_gpus; peer_gpu_rank++)

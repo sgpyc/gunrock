@@ -390,26 +390,9 @@ struct PRIteration : public IterationBase <
             if (enactor -> debug)
                 util::cpu_mt::PrintMessage("Filter start.",
                     thread_num, enactor_stats->iteration, peer_);
-             // filter kernel
-            /*gunrock::oprtr::filter::LaunchKernel
-                <FilterKernelPolicy, Problem, PrFunctor>(
-                enactor_stats->filter_grid_size,
-                FilterKernelPolicy::THREADS,
-                (size_t)0,
-                stream,
-                typename PrFunctor::LabelT(),//enactor_stats->iteration,
-                frontier_attribute->queue_reset,
-                frontier_attribute->queue_index,
-                frontier_attribute->queue_length,
-                frontier_queue->keys[frontier_attribute->selector  ].GetPointer(util::DEVICE),      // d_in_queue
-                (Value*)NULL,
-                (VertexId*)NULL,//frontier_queue->keys[frontier_attribute->selector^1].GetPointer(util::DEVICE),// d_out_queue
-                d_data_slice,
-                (unsigned char*)NULL,
-                work_progress[0],
-                frontier_queue->keys[frontier_attribute->selector  ].GetSize(),           // max_in_queue
-                util::MaxValue<VertexId>(), //frontier_queue->keys[frontier_attribute->selector^1].GetSize(),         // max_out_queue
-                enactor_stats->filter_kernel_stats);*/
+            //util::PrintMsg("Queue_Length = " + 
+            //    std::to_string(data_slice -> local_vertices.GetSize()));
+            // filter kernel
             gunrock::oprtr::filter::LaunchKernel
                 <FilterKernelPolicy, Problem, PrFunctor>(
                 enactor_stats[0],
@@ -882,7 +865,8 @@ struct PRIteration : public IterationBase <
         FrontierAttribute<SizeT>        *frontier_attribute,
         util::Array1D<SizeT, DataSlice> *data_slice,
         int                              num_local_gpus,
-        int                              num_total_gpus)
+        int                              num_total_gpus,
+        int                              gpu_rank_local)
     {
         bool all_zero = true;
         //int mpi_num_tasks;
@@ -906,6 +890,11 @@ struct PRIteration : public IterationBase <
             all_zero = false;
         }
         if (all_zero) return true;*/
+
+        if (enactor_stats[gpu_rank_local * num_total_gpus].iteration
+            < data_slice[0] -> max_iter)
+            return false;
+        else return true;
 
         for (int gpu =0; gpu < num_local_gpus; gpu++)
         if (enactor_stats[gpu * num_total_gpus].iteration
@@ -1563,7 +1552,8 @@ public:
             return retval;
         }
 
-        if (this -> debug) printf("\nGPU PR Done.\n");
+        if (this -> debug) 
+            util::PrintMsg("GPU PR Done.");
         return retval;
     }
 

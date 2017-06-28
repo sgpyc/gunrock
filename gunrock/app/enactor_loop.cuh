@@ -30,18 +30,6 @@ using namespace mgpu;
 namespace gunrock {
 namespace app {
 
-enum Loop_Stage : int
-{
-    Pre_SendRecv = 0,
-    Send         = 1,
-    Recv         = 2,
-    Comp_OutLength = 3,
-    SubQ_Core    = 4,
-    Copy         = 5,
-    End          = 6,
-    Finished     = 7,
-};
-
 enum Loop_Type
 {
     Host_Send, // Dummy
@@ -183,7 +171,7 @@ void Iteration_Loop(
 
     while (!Iteration::Stop_Condition(
         s_enactor_stats, s_frontier_attribute, s_data_slice,
-        num_local_gpus, num_total_gpus))
+        num_local_gpus, num_total_gpus, gpu_rank_local))
     {
         SizeT Total_Length             = 0;
         SizeT received_length          = frontier_attributes[0].queue_length;
@@ -228,32 +216,33 @@ void Iteration_Loop(
             if (enactor_statses[0].iteration != 0)
             {
                 auto t = enactor_statses[0].iteration % 2;
+                //util::PrintMsg("Iteration = " + std::to_string(enactor_statses[0].iteration) +
+                //    ", t = " + std::to_string(t));
+                //int t = 0;
                 for (int peer_gpu_rank = 0; peer_gpu_rank < num_total_gpus;
                     peer_gpu_rank++)
                 {
                     int peer_rank = peer_gpu_rank / num_local_gpus;
                     int peer_gpu_rank_remote = peer_gpu_rank % num_local_gpus;
                     if (peer_rank == local_rank) continue;
-                    int send_tag_base = (peer_gpu_rank_remote * num_total_gpus + gpu_rank) * 16 + t * 8;
+                    int send_tag_base = util::Get_Send_Tag(peer_gpu_rank_remote,
+                        num_total_gpus, gpu_rank, t * 8);
                     int peer_gpu_rank_ = (peer_gpu_rank < gpu_rank) ?
                         peer_gpu_rank + 1 : peer_gpu_rank;
 
-                    MPI_Request send_request;
-                    MPI_Isend(&(data_slice -> out_length[peer_gpu_rank_]),
-                        sizeof(SizeT), MPI_BYTE, peer_rank, send_tag_base,
-                        MPI_COMM_WORLD, &send_request);
-                    data_slice -> send_requests[peer_gpu_rank_].push_back(send_request);
+                    util::Mpi_Isend_Bulk(&(data_slice -> out_length[peer_gpu_rank_]),
+                        1, peer_rank, send_tag_base,
+                        MPI_COMM_WORLD, data_slice -> send_requests[peer_gpu_rank_]);
                     //util::PrintMsg(std::string(" -> rank ") + std::to_string(peer_rank) +
                     //    ", tag " + std::to_string(send_tag_base) +
                     //    ", out_length[" + std::to_string(peer_gpu_rank_) + "] = " + 
                     //    std::to_string(data_slice -> out_length[peer_gpu_rank_]));
 
-                    int recv_tag_base = (gpu_rank_local * num_total_gpus + peer_gpu_rank) * 16 + t * 8;
-                    MPI_Request recv_request;
-                    MPI_Irecv(&(data_slice -> in_length[t][peer_gpu_rank_]),
-                        sizeof(SizeT), MPI_BYTE, peer_rank, recv_tag_base,
-                        MPI_COMM_WORLD, &recv_request);
-                    data_slice -> recv_requests[peer_gpu_rank_].push_back(recv_request);
+                    int recv_tag_base = util::Get_Recv_Tag(gpu_rank_local,
+                        num_total_gpus, peer_gpu_rank, t * 8);
+                    util::Mpi_Irecv_Bulk(&(data_slice -> in_length[t][peer_gpu_rank_]),
+                        1, peer_rank, recv_tag_base,
+                        MPI_COMM_WORLD, data_slice -> recv_requests[peer_gpu_rank_]);
                     data_slice -> in_iteration [t][peer_gpu_rank_] = enactor_statses[0].iteration;
                 }
             }
@@ -276,7 +265,7 @@ void Iteration_Loop(
         while (data_slice->wait_counter < num_total_gpus * 2
            && (!Iteration::Stop_Condition(
             s_enactor_stats, s_frontier_attribute, s_data_slice,
-            num_local_gpus, num_total_gpus)))
+            num_local_gpus, num_total_gpus, gpu_rank_local)))
         {
             //util::cpu_mt::PrintCPUArray<int, int>("stages", stages,
             //    num_total_gpus * 2, thread_num, iteration);
@@ -306,7 +295,8 @@ void Iteration_Loop(
                 auto &context            = contexts[peer_gpu_rank_];
                 auto  loop_type          = Host_Recv;
                 //int send_tag_base        = gpu_rank      * 16 + iteration_mod_2 * 8;
-                int recv_tag_base        = (gpu_rank_local * num_total_gpus + peer_gpu_rank) * 16 + iteration_mod_2 * 8;
+                int recv_tag_base        = util::Get_Recv_Tag(gpu_rank_local, 
+                    num_total_gpus, peer_gpu_rank, iteration_mod_2 * 8);
 
                 if (peer_gpu_pipe == 0)
                     loop_type = Host_Recv;
@@ -799,7 +789,7 @@ void Iteration_Loop(
 
         if (!Iteration::Stop_Condition(
             s_enactor_stats, s_frontier_attribute, s_data_slice,
-            num_local_gpus, num_total_gpus))
+            num_local_gpus, num_total_gpus, gpu_rank_local))
         {
             for (int peer_gpu_rank_ = 0; peer_gpu_rank_ < num_total_gpus;
                 peer_gpu_rank_++)
@@ -808,7 +798,7 @@ void Iteration_Loop(
             while (wait_count < num_total_gpus &&
                 !Iteration::Stop_Condition(
                 s_enactor_stats, s_frontier_attribute, s_data_slice,
-                num_local_gpus, num_total_gpus))
+                num_local_gpus, num_total_gpus, gpu_rank_local))
             {
                 for (int peer_gpu_rank_=0; peer_gpu_rank_<num_total_gpus;
                     peer_gpu_rank_++)
@@ -1088,7 +1078,7 @@ void Iteration_Loop(
                 while (wait_count < num_total_gpus-1 &&
                     !Iteration::Stop_Condition(
                     s_enactor_stats, s_frontier_attribute, s_data_slice,
-                    num_local_gpus, num_total_gpus))
+                    num_local_gpus, num_total_gpus, gpu_rank_local))
                 {
                     for (int peer_gpu_pipe = num_total_gpus + 1;
                         peer_gpu_pipe < num_total_gpus * 2; peer_gpu_pipe++)
@@ -1355,7 +1345,8 @@ public:
         util::Array1D<SizeT, DataSlice>
                                       *data_slice,
         int                            num_local_gpus,
-        int                            num_total_gpus)
+        int                            num_total_gpus,
+        int                            gpu_rank_local)
     {
         return All_Done(enactor_stats, frontier_attribute, data_slice,
             num_local_gpus, num_total_gpus);
@@ -1440,10 +1431,11 @@ public:
         int  iteration  = enactor_stats -> iteration;
 
         if (enactor -> debug)
-            printf("%d\t %d\t %d\t queue_length = %d, output_length = %d\n",
-                thread_num, iteration, peer_,
-                frontier_queue->keys[selector^1].GetSize(),
-                request_length);fflush(stdout);
+            util::PrintMsg(std::to_string(thread_num) + "\t " +
+                std::to_string(iteration) + "\t " +
+                std::to_string(peer_) + "\t queue_length = " +
+                std::to_string(frontier_queue -> keys[selector^1].GetSize()) +
+                ", output_length = " + std::to_string(request_length));
 
         if (enactor_stats->retval =
             Check_Size</*true,*/ SizeT, VertexId > (

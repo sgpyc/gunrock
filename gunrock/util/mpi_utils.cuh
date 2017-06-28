@@ -22,8 +22,28 @@
     #define GR_MPI_CHUNK_BYTES 1LL<<25
 #endif
 
+#define MPI_DEBUG false
+
 namespace gunrock {
 namespace util {
+
+int Get_Recv_Tag(
+    int target_gpu_rank_local,
+    int num_total_gpus,
+    int source_gpu_rank,
+    int sub_tag)
+{
+    return (target_gpu_rank_local * num_total_gpus + source_gpu_rank) * 32 + sub_tag;
+}
+
+int Get_Send_Tag(
+    int target_gpu_rank_remote,
+    int num_total_gpus,
+    int source_gpu_rank,
+    int sub_tag)
+{
+    return (target_gpu_rank_remote * num_total_gpus + source_gpu_rank) * 32 + sub_tag;
+}
 
 template <typename T, typename SizeT>
 cudaError_t Mpi_Isend_Bulk(
@@ -37,6 +57,13 @@ cudaError_t Mpi_Isend_Bulk(
     cudaError_t retval = cudaSuccess;
     size_t current_offset = 0;
     size_t total_bytes = length * sizeof(T);
+
+    if (length <= 0) return retval;
+    if (MPI_DEBUG)
+        PrintMsg("Sending \t" + std::to_string(length) +
+            "\t x \t" + std::to_string(sizeof(T)) + 
+            "\t bytes to rank \t" + std::to_string(target) + 
+            "\t , tag \t" + std::to_string(tag));
 
     while (current_offset < total_bytes)
     {
@@ -72,6 +99,13 @@ cudaError_t Mpi_Irecv_Bulk(
     cudaError_t retval = cudaSuccess;
     size_t current_offset = 0;
     size_t total_bytes = length * sizeof(T);
+
+    if (length <= 0) return retval;
+    if (MPI_DEBUG)
+        PrintMsg("Receiving \t" + std::to_string(length) +
+            "\t x \t" + std::to_string(sizeof(T)) + 
+            "\t bytes from rank \t" + std::to_string(source) + 
+            "\t , tag \t" + std::to_string(tag));
 
     while (current_offset < total_bytes)
     {

@@ -21,6 +21,34 @@
 namespace gunrock {
 namespace app {
 
+enum Loop_Stage : int
+{
+    Pre_SendRecv = 0, 
+    Send         = 1,
+    Recv         = 2,
+    Comp_OutLength = 3, 
+    SubQ_Core    = 4, 
+    Copy         = 5,
+    End          = 6,
+    Finished     = 7, 
+};
+
+std::string Stage_to_String(const int &stage)
+{
+    switch (stage)
+    {
+    case Pre_SendRecv: return "PreSR";
+    case Send        : return "Send";
+    case Recv        : return "Recv";
+    case Comp_OutLength: return "ComOL";
+    case SubQ_Core   : return "SubQ";
+    case Copy        : return "Copy";
+    case End         : return "End";
+    case Finished    : return "Fined";
+    }
+    return "Unknown";
+}
+
 /*
  * @brief
  *
@@ -264,7 +292,9 @@ void Send_Remote(
     int peer_rank = peer_gpu_rank / enactor -> num_local_gpus;
     int peer_gpu_rank_remote = peer_gpu_rank % enactor -> num_local_gpus;
     int t        = enactor_stats -> iteration % 2;
-    int tag_base = (enactor -> num_total_gpus * peer_gpu_rank_remote + gpu_rank) * 16 + t * 8;
+    //int tag_base = (enactor -> num_total_gpus * peer_gpu_rank_remote + gpu_rank) * 16 + t * 8;
+    int tag_base = util::Get_Send_Tag(peer_gpu_rank_remote, 
+            enactor -> num_total_gpus, gpu_rank, t * 8);
     int gpu_rank_ = gpu_rank;
     if (peer_gpu_rank > gpu_rank)
         gpu_rank_ ++;
@@ -497,7 +527,7 @@ void ShowDebugInfo(
     util::PrintMsg(std::to_string(thread_num) + "\t "
         + std::to_string(enactor_stats -> iteration) + "\t "
         + std::to_string(peer_) + "\t stage " 
-        + std::to_string(data_slice -> stages[peer_]) + "\t "
+        + Stage_to_String(data_slice -> stages[peer_]) + "\t "
         + check_name + "\t Queue_Length = "
         + std::to_string(queue_length));
     //printf("%d \t %d\t \t peer_ = %d, selector = %d, length = %d, p = %p\n",thread_num, enactor_stats->iteration, peer_, frontier_attribute->selector,queue_length,graph_slice->frontier_queues[peer_].keys[frontier_attribute->selector].GetPointer(util::DEVICE));fflush(stdout);
