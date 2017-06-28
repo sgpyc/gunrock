@@ -721,8 +721,9 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
         if (single_elapsed < min_elapsed) min_elapsed = single_elapsed;
         if (!quiet_mode)
         {
-            PrintMsg(std::string("--------------------------\n"
-                "iteration ") + std::to_string(iter) +
+            PrintMsg("--------------------------");
+            PrintMsg(
+                "iteration " + std::to_string(iter) +
                 " elapsed: " + std::to_string(single_elapsed) +
                 " ms");
         }
@@ -731,190 +732,199 @@ cudaError_t RunTests(Info<VertexId, SizeT, Value> *info)
     info -> info["process_times"] = process_times;
     info -> info["min_process_time"] = min_elapsed;
     info -> info["max_process_time"] = max_elapsed;
-    return retval;
 
-    // Allocate host-side array (for both reference and GPU-computed results)
-    Value        *ref_rank           = new Value   [graph->nodes];
-    Value        *h_rank             = new Value   [graph->nodes];
-    VertexId     *h_node_id          = new VertexId[graph->nodes];
-    VertexId     *ref_node_id        = new VertexId[graph->nodes];
-    //Value        *ref_check          = (quick_mode) ? NULL : ref_rank;
+    Value    *ref_rank  = NULL;
+    Value    *h_rank    = NULL;
+    VertexId *h_node_id = NULL;
+    VertexId *ref_node_id = NULL;
 
-    cpu_timer.Start();
-    // copy out results
-    if (retval = util::GRError(enactor->Extract(),
-        "PR Enactor extract failed", __FILE__, __LINE__))
-        return retval;
-    if (retval = util::GRError(problem->Extract(h_rank, h_node_id),
-        "PR Problem Data Extraction Failed", __FILE__, __LINE__))
-        return retval;
-
-    if (!quiet_mode)
+    //if (mpi_rank == 0)
+    if (false)
     {
-        double total_pr = 0;
-        for (SizeT i = 0; i < graph->nodes; ++i)
+        // Allocate host-side array (for both reference and GPU-computed results)
+        ref_rank           = new Value   [graph->nodes];
+        h_rank             = new Value   [graph->nodes];
+        h_node_id          = new VertexId[graph->nodes];
+        ref_node_id        = new VertexId[graph->nodes];
+        //Value        *ref_check          = (quick_mode) ? NULL : ref_rank;
+
+        cpu_timer.Start();
+        // copy out results
+        if (retval = util::GRError(enactor->Extract(),
+            "PR Enactor extract failed", __FILE__, __LINE__))
+            return retval;
+        if (retval = util::GRError(problem->Extract(h_rank, h_node_id),
+            "PR Problem Data Extraction Failed", __FILE__, __LINE__))
+            return retval;
+
+        if (!quiet_mode)
         {
-            total_pr += h_rank[i];
+            double total_pr = 0;
+            for (SizeT i = 0; i < graph->nodes; ++i)
+            {
+                total_pr += h_rank[i];
+            }
+            printf("Total rank : %.10lf\n", total_pr);
         }
-        printf("Total rank : %.10lf\n", total_pr);
-    }
 
-    // compute reference CPU solution
-    if (!quick_mode)
-    {
-        if (!quiet_mode) { printf("Computing reference value ...\n"); }
-        if (NORMALIZED)
-            ReferencePageRank_Normalized <VertexId, SizeT, Value>(
-                *graph,
-                ref_node_id,
-                ref_rank,
-                delta,
-                error,
-                max_iteration,
-                !undirected,
-                quiet_mode,
-                scaled);
-        else ReferencePageRank <VertexId, SizeT, Value>(
-                *graph,
-                ref_node_id,
-                ref_rank,
-                delta,
-                error,
-                max_iteration,
-                !undirected,
-                quiet_mode);
-        if (!quiet_mode) { printf("\n"); }
-
-        // Verify the result
-        if (!quiet_mode) { printf("Validity Rank: \n"); }
-        Value *unorder_rank = new Value[graph->nodes];
-        SizeT *v_count      = new SizeT[graph->nodes];
-        SizeT  error_count  = 0;
-        for (VertexId i=0; i<graph->nodes; i++)
-            v_count[i] = 0;
-
-        for (VertexId i=0; i<graph->nodes; i++)
+        // compute reference CPU solution
+        if (!quick_mode)
         {
-            VertexId v = h_node_id[i];
-            if (v < 0 || v >= graph->nodes)
-            {
-                if (error_count == 0 && !quiet_mode)
-                    printf("INCORRECT : node_id[%lld] (%lld) is out of bound\n",
-                        (long long)i, (long long)v);
-                error_count ++;
-                continue;
-            }
-            if (v_count[v] > 0)
-            {
-                if (error_count == 0 && !quiet_mode)
-                    printf("INCORRECT : node_id[%lld] (%lld) appears more than once\n",
-                        (long long)i, (long long)v);
-                error_count ++;
-                continue;
-            }
-            v_count[v] ++;
-            unorder_rank[v] = h_rank[i];
-        }
-        for (VertexId v=0; v<graph->nodes; v++)
-        if (v_count[v] == 0)
-        {
-            if (error_count == 0 && !quiet_mode)
-                printf("INCORRECT : vertex %lld does not appear in result\n", (long long)v);
-            error_count ++;
-        }
-        double ref_total_rank = 0;
-        double max_diff       = 0;
-        VertexId max_diff_pos = graph->nodes;
-        double max_rdiff      = 0;
-        VertexId max_rdiff_pos= graph->nodes;
-        for (VertexId i=0; i<graph->nodes; i++)
-        {
-            VertexId v = ref_node_id[i];
-            if (v < 0 || v >= graph->nodes)
-            {
-                if (error_count == 0 && !quiet_mode)
-                    printf("INCORRECT : ref_node_id[%lld] = %lld, out of bound\n",
-                        (long long)i, (long long)v);
-                error_count ++;
-                continue;
-            }
+            if (!quiet_mode) { printf("Computing reference value ...\n"); }
+            if (NORMALIZED)
+                ReferencePageRank_Normalized <VertexId, SizeT, Value>(
+                    *graph,
+                    ref_node_id,
+                    ref_rank,
+                    delta,
+                    error,
+                    max_iteration,
+                    !undirected,
+                    quiet_mode,
+                    scaled);
+            else ReferencePageRank <VertexId, SizeT, Value>(
+                    *graph,
+                    ref_node_id,
+                    ref_rank,
+                    delta,
+                    error,
+                    max_iteration,
+                    !undirected,
+                    quiet_mode);
+            if (!quiet_mode) { printf("\n"); }
 
-            ref_total_rank += ref_rank[i];
-            Value diff = fabs(ref_rank[i] - unorder_rank[v]);
-            if ((ref_rank[i] > 1e-12 && diff > error * ref_rank[i]) ||
-                (ref_rank[i] <= 1e-12 && diff > error))
+            // Verify the result
+            if (!quiet_mode) { printf("Validity Rank: \n"); }
+            Value *unorder_rank = new Value[graph->nodes];
+            SizeT *v_count      = new SizeT[graph->nodes];
+            SizeT  error_count  = 0;
+            for (VertexId i=0; i<graph->nodes; i++)
+                v_count[i] = 0;
+
+            for (VertexId i=0; i<graph->nodes; i++)
             {
-                if (error_count == 0 && !quiet_mode)
-                    printf("INCORRECT : rank[%lld] (%.8le) != %.8le\n",
-                        (long long)v, (double)unorder_rank[v], (double)ref_rank[i]);
-                error_count ++;
-            }
-            if (diff > max_diff)
-            {
-                max_diff = diff;
-                max_diff_pos = i;
-            }
-            if (ref_rank[i] > 1e-12)
-            {
-                Value rdiff = diff / ref_rank[i];
-                if (rdiff > max_rdiff)
+                VertexId v = h_node_id[i];
+                if (v < 0 || v >= graph->nodes)
                 {
-                    max_rdiff = rdiff;
-                    max_rdiff_pos = i;
+                    if (error_count == 0 && !quiet_mode)
+                        printf("INCORRECT : node_id[%lld] (%lld) is out of bound\n",
+                            (long long)i, (long long)v);
+                    error_count ++;
+                    continue;
+                }
+                if (v_count[v] > 0)
+                {
+                    if (error_count == 0 && !quiet_mode)
+                        printf("INCORRECT : node_id[%lld] (%lld) appears more than once\n",
+                            (long long)i, (long long)v);
+                    error_count ++;
+                    continue;
+                }
+                v_count[v] ++;
+                unorder_rank[v] = h_rank[i];
+            }
+            for (VertexId v=0; v<graph->nodes; v++)
+            if (v_count[v] == 0)
+            {
+                if (error_count == 0 && !quiet_mode)
+                    printf("INCORRECT : vertex %lld does not appear in result\n", (long long)v);
+                error_count ++;
+            }
+            double ref_total_rank = 0;
+            double max_diff       = 0;
+            VertexId max_diff_pos = graph->nodes;
+            double max_rdiff      = 0;
+            VertexId max_rdiff_pos= graph->nodes;
+            for (VertexId i=0; i<graph->nodes; i++)
+            {
+                VertexId v = ref_node_id[i];
+                if (v < 0 || v >= graph->nodes)
+                {
+                    if (error_count == 0 && !quiet_mode)
+                        printf("INCORRECT : ref_node_id[%lld] = %lld, out of bound\n",
+                            (long long)i, (long long)v);
+                    error_count ++;
+                    continue;
+                }
+
+                ref_total_rank += ref_rank[i];
+                Value diff = fabs(ref_rank[i] - unorder_rank[v]);
+                if ((ref_rank[i] > 1e-12 && diff > error * ref_rank[i]) ||
+                    (ref_rank[i] <= 1e-12 && diff > error))
+                {
+                    if (error_count == 0 && !quiet_mode)
+                        printf("INCORRECT : rank[%lld] (%.8le) != %.8le\n",
+                            (long long)v, (double)unorder_rank[v], (double)ref_rank[i]);
+                    error_count ++;
+                }
+                if (diff > max_diff)
+                {
+                    max_diff = diff;
+                    max_diff_pos = i;
+                }
+                if (ref_rank[i] > 1e-12)
+                {
+                    Value rdiff = diff / ref_rank[i];
+                    if (rdiff > max_rdiff)
+                    {
+                        max_rdiff = rdiff;
+                        max_rdiff_pos = i;
+                    }
                 }
             }
-        }
-        if (error_count == 0 && !quiet_mode)
-            printf("CORRECT\n");
-        else if (!quiet_mode)
-            printf("number of errors : %lld\n", (long long) error_count);
-        printf("Reference total rank : %.10lf\n", ref_total_rank);
-        fflush(stdout);
-        printf("Maximum difference : ");
-        if (max_diff_pos < graph->nodes)
-            printf("rank[%lld] %.8le vs. %.8le, ",
-                (long long)ref_node_id[max_diff_pos],
-                (double)unorder_rank[ref_node_id[max_diff_pos]],
-                (double)ref_rank[max_diff_pos]);
-        printf("%.8le\n", (double)max_diff);
-        printf("Maximum relative difference :");
-        if (max_rdiff_pos < graph->nodes)
-            printf("rank[%lld] %.8le vs. %.8le, ",
-                (long long)ref_node_id[max_rdiff_pos],
-                (double)unorder_rank[ref_node_id[max_rdiff_pos]],
-                (double)ref_rank[max_rdiff_pos]);
-        printf("%.8lf %%\n", (double)max_rdiff * 100);
-
-        if (!quiet_mode) { printf("Validity Order: \n"); }
-        error_count = 0;
-        for (SizeT i=0; i<graph->nodes-1; i++)
-        if (h_rank[i] < h_rank[i+1])
-        {
             if (error_count == 0 && !quiet_mode)
-                printf("INCORRECT : rank[%lld] (%.8le), place %lld < rank[%lld] (%.8le), place %lld\n",
-                    (long long)h_node_id[i  ], (double)h_rank[i  ], (long long)i,
-                    (long long)h_node_id[i+1], (double)h_rank[i+1], (long long)i+1);
-            error_count ++;
-        }
-        if (error_count == 0 && !quiet_mode)
-            printf("CORRECT\n");
-        else if (!quiet_mode)
-            printf("number of errors : %lld\n", (long long) error_count);
-        delete[] unorder_rank; unorder_rank = NULL;
+                printf("CORRECT\n");
+            else if (!quiet_mode)
+                printf("number of errors : %lld\n", (long long) error_count);
+            printf("Reference total rank : %.10lf\n", ref_total_rank);
+            fflush(stdout);
+            printf("Maximum difference : ");
+            if (max_diff_pos < graph->nodes)
+                printf("rank[%lld] %.8le vs. %.8le, ",
+                    (long long)ref_node_id[max_diff_pos],
+                    (double)unorder_rank[ref_node_id[max_diff_pos]],
+                    (double)ref_rank[max_diff_pos]);
+            printf("%.8le\n", (double)max_diff);
+            printf("Maximum relative difference :");
+            if (max_rdiff_pos < graph->nodes)
+                printf("rank[%lld] %.8le vs. %.8le, ",
+                    (long long)ref_node_id[max_rdiff_pos],
+                    (double)unorder_rank[ref_node_id[max_rdiff_pos]],
+                    (double)ref_rank[max_rdiff_pos]);
+            printf("%.8lf %%\n", (double)max_rdiff * 100);
 
-        /*SizeT errors_count = CompareResults_(
-                           h_rank, ref_check,
-                           graph->nodes, true, quiet_mode, error);
-        if (errors_count > 0)
-        {
-            if (!quiet_mode)
+            if (!quiet_mode) { printf("Validity Order: \n"); }
+            error_count = 0;
+            for (SizeT i=0; i<graph->nodes-1; i++)
+            if (h_rank[i] < h_rank[i+1])
             {
-                printf("number of errors : %lld\n", (long long) errors_count);
+                if (error_count == 0 && !quiet_mode)
+                    printf("INCORRECT : rank[%lld] (%.8le), place %lld < rank[%lld] (%.8le), place %lld\n",
+                        (long long)h_node_id[i  ], (double)h_rank[i  ], (long long)i,
+                        (long long)h_node_id[i+1], (double)h_rank[i+1], (long long)i+1);
+                error_count ++;
             }
-        }*/
+            if (error_count == 0 && !quiet_mode)
+                printf("CORRECT\n");
+            else if (!quiet_mode)
+                printf("number of errors : %lld\n", (long long) error_count);
+            delete[] unorder_rank; unorder_rank = NULL;
+
+            /*SizeT errors_count = CompareResults_(
+                               h_rank, ref_check,
+                               graph->nodes, true, quiet_mode, error);
+            if (errors_count > 0)
+            {
+                if (!quiet_mode)
+                {
+                    printf("number of errors : %lld\n", (long long) errors_count);
+                }
+            }*/
+        }
     }
 
-    if (!quiet_mode)
+    //if (!quiet_mode && mpi_rnak == 0
+    if (false)
     {
         //printf("\nFirst 40 labels of the GPU result.");
         // Display Solution
