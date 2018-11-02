@@ -226,13 +226,13 @@ double CPU_Reference(
         for (SizeT e = 0; e < graph.edges; ++e)
         {
             auto &pair = graph.CooT::edge_pairs[e];
-            BGraphT::edge_descriptor edge =
+            typename BGraphT::edge_descriptor edge =
                 add_edge(pair.x, pair.y, g).first;
             put(edge_index, g, edge, pair.x);
         }
 
         // compute PageRank
-        CpuTimer cpu_timer;
+        util::CpuTimer cpu_timer;
         cpu_timer.Start();
 
         std::vector<ValueT> ranks_vec(num_vertices(g));

@@ -131,6 +131,9 @@ struct main_struct
                 util::PrintMsg("-----------------------------------\nElapsed: " + 
             std::to_string(elapsed) + " ms\n Max flow CPU = " +
             std::to_string(max_flow), true);
+            app::mf::Validate_Results(
+                parameters, u_graph, source, sink, flow_edge,
+                reverse + 0, (int*)NULL, (ValueT*)NULL);
         }
 
         std::vector<std::string> switches{"advance-mode"};

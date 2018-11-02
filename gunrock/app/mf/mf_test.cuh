@@ -548,21 +548,21 @@ double CPU_Reference(
  * \return     int  Number of errors
  */
 template <typename GraphT, typename ValueT, typename VertexT>
-int Validate_Results(
+uint64_t Validate_Results(
     util::Parameters  &parameters,
     GraphT		  &graph,
     VertexT		  source,
     VertexT		  sink,
     ValueT		  *h_flow,
     VertexT		  *reverse,
-    int               *min_cut,
+    int           *min_cut,
     ValueT		  *ref_flow = NULL,
     bool		  verbose = true)
 {
     typedef typename GraphT::CsrT   CsrT;
     typedef typename GraphT::SizeT  SizeT;  
 
-    int num_errors = 0;
+    uint64_t num_errors = 0;
     bool quiet = parameters.Get<bool>("quiet");
     bool quick = parameters.Get<bool>("quick");
     auto nodes = graph.nodes;
@@ -582,35 +582,41 @@ int Validate_Results(
                 flow_incoming_sink += flow_e_in;
         }
     }
-    util::PrintMsg("Max Flow GPU = " + std::to_string(flow_incoming_sink));
+    util::PrintMsg("Max Flow = " + std::to_string(flow_incoming_sink), !quiet);
 
-    // Verify min cut h_flow
-    ValueT mincut_flow = (ValueT)0;
-    for (auto u = 0; u < graph.nodes; ++u){
-        if (min_cut[u] == 1){
-            auto e_start = graph.CsrT::GetNeighborListOffset(u);
-            auto num_neighbors = graph.CsrT::GetNeighborListLength(u);
-            auto e_end = e_start + num_neighbors;
-            for (auto e = e_start; e < e_end; ++e){
-                auto v = graph.CsrT::GetEdgeDest(e);
-                if (min_cut[v] == 0){
-                    auto f = graph.CsrT::edge_values[e];
-                    mincut_flow += f;
+    if (min_cut != NULL)
+    {
+        util::PrintMsg("Min cut validity: ", !quiet, false);
+        // Verify min cut h_flow
+        ValueT mincut_flow = (ValueT)0;
+        for (auto u = 0; u < graph.nodes; ++u){
+            if (min_cut[u] == 1){
+                auto e_start = graph.CsrT::GetNeighborListOffset(u);
+                auto num_neighbors = graph.CsrT::GetNeighborListLength(u);
+                auto e_end = e_start + num_neighbors;
+                for (auto e = e_start; e < e_end; ++e){
+                    auto v = graph.CsrT::GetEdgeDest(e);
+                    if (min_cut[v] == 0){
+                        auto f = graph.CsrT::edge_values[e];
+                        mincut_flow += f;
+                    }
                 }
             }
         }
-    }
-    util::PrintMsg("MIN CUT flow = " + std::to_string(mincut_flow));
-    if (fabs(mincut_flow - flow_incoming_sink) > MF_EPSILON_VALIDATE)
-    {
-        ++num_errors;
-        util::PrintMsg("FAIL: Min cut " + std::to_string(mincut_flow) +
-                " and max flow " + std::to_string(flow_incoming_sink) + 
-                " are not equal", !quiet);
+        if (fabs(mincut_flow - flow_incoming_sink) > MF_EPSILON_VALIDATE)
+        {
+            ++num_errors;
+            util::PrintMsg("FAIL: Min cut " + std::to_string(mincut_flow) +
+                    " and max flow " + std::to_string(flow_incoming_sink) + 
+                    " are not equal", !quiet);
+        } else {
+            util::PrintMsg("PASS!", !quiet);
+        }
+        util::PrintMsg("MIN CUT flow = " + std::to_string(mincut_flow));
     }
 
     // Verify the result
-    if (!quick)
+    /*if (!quick)
     {
         util::PrintMsg("Flow Validity (compare results):\n", !quiet, false);
 
@@ -646,8 +652,8 @@ int Validate_Results(
         }
     }
     else
-    {
-        util::PrintMsg("Flow Validity:\n", !quiet, false);
+    {*/
+        util::PrintMsg("Flow Validity: ", !quiet, false);
 
         for (VertexT v = 0; v < nodes; ++v)
         {
@@ -660,21 +666,32 @@ int Validate_Results(
             for (auto e = e_start; e < e_end; ++e)
             {
                 if (util::isValid(h_flow[e]))
-                    flow_v += h_flow[e];
-                else{
+                {
+                    if (h_flow[e] > 0 && 
+                        h_flow[e] - graph.CsrT::edge_values[e] > MF_EPSILON_VALIDATE)
+                    {
+                        num_errors ++;
+                        if (num_errors == 1)
+                            util::PrintMsg("FAIL: edge " + std::to_string(e)
+                                + ", flow = " + std::to_string(h_flow[e])
+                                + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]));
+                    } else 
+                        flow_v += h_flow[e];
+                } else {
                     ++num_errors;
                     debug_aml("flow for edge %d is invalid\n", e);
                 }
             }
             if (fabs(flow_v) > MF_EPSILON_VALIDATE){
-                debug_aml("summary flow for vertex %d is %lf > %llf\n", 
+                debug_aml("Excess for vertex %d is %lf > %llf\n", 
                         v, fabs(flow_v), 1e-12);
-            }else
+            } else
                 continue;
             ++num_errors;
-            util::PrintMsg("FAIL: for vertex " + std::to_string(v) +
-                    " summary flow " + std::to_string(flow_v) + 
-                    " is not equal 0", !quiet);
+            if (num_errors == 1)
+                util::PrintMsg("FAIL: for vertex " + std::to_string(v) +
+                    " excess " + std::to_string(flow_v) + 
+                    " is not equal to 0", !quiet);
         }
         if (num_errors > 0)
         {
@@ -683,8 +700,84 @@ int Validate_Results(
         } else {
             util::PrintMsg("PASS", !quiet);
         }
-    }
+    //}
 
+    util::PrintMsg("Max Validity: ", !quiet, false);
+    VertexT *active_vertices = new VertexT[graph.nodes];
+    char    *vertex_markers  = new char   [graph.nodes];
+    ValueT  *possible_flows  = new ValueT [graph.nodes];
+    VertexT *vertex_parents  = new VertexT[graph.nodes];
+    SizeT   *parent_edges    = new SizeT  [graph.nodes];
+    for (VertexT v = 0; v < graph.nodes; v++)
+    {
+        vertex_markers[v] = 0;
+        possible_flows[v] = 0;
+    }
+    VertexT head = 0, tail = 0;
+    active_vertices[0] = source;
+    possible_flows[source] = 1e20;
+    vertex_markers[source] = 1;
+    vertex_parents[source] = util::PreDefinedValues<VertexT>::InvalidValue;
+    while (head >= tail)
+    {
+        VertexT v = active_vertices[tail];
+        vertex_markers[v] = 2;
+        tail ++;
+        if (possible_flows[v] < MF_EPSILON_VALIDATE)
+            continue;
+
+        SizeT edge_start = graph.CsrT::GetNeighborListOffset(v);
+        SizeT degree = graph.CsrT::GetNeighborListLength(v);
+        SizeT edge_end = edge_start + degree;
+
+        for (SizeT e = edge_start; e < edge_end; e++)
+        {
+            VertexT u = graph.CsrT::GetEdgeDest(e);
+            if (vertex_markers[u] == 2)
+                continue;
+            ValueT residue = graph.CsrT::edge_values[e] - h_flow[e]; 
+            if (residue > possible_flows[v])
+                residue = possible_flows[v];
+            if (residue > possible_flows[u])
+            {
+                possible_flows[u] = residue;
+                vertex_parents[u] = v;
+                parent_edges  [u] = e;
+                if (vertex_markers[u] == 0)
+                {
+                    vertex_markers[u] = 1;
+                    head ++;
+                    active_vertices[head] = u;
+                }
+            }
+        }
+    }
+    if (possible_flows[sink] > MF_EPSILON_VALIDATE)
+    {
+        util::PrintMsg("FAIL. Possible extra flow of "
+            + std::to_string(possible_flows[sink])
+            + " from source " + std::to_string(source)
+            + " to sink " + std::to_string(sink), !quiet);
+        VertexT v = sink;
+        util::PrintMsg(std::to_string(v), !quiet, false);
+        while (util::isValid(v) && v != source)
+        {
+            SizeT e = parent_edges[v];
+            v = vertex_parents[v];
+            util::PrintMsg(" <-(" + std::to_string(e)
+                + ", " + std::to_string(graph.CsrT::edge_values[e])
+                + ", " + std::to_string(h_flow[e])
+                + ")- " + std::to_string(v), !quiet, false);
+        }
+        util::PrintMsg("", !quiet);
+    } else 
+        util::PrintMsg("PASS", !quiet);
+
+    delete[] active_vertices; active_vertices = NULL;
+    delete[] vertex_markers ; vertex_markers  = NULL;
+    delete[] possible_flows ; possible_flows  = NULL;
+    delete[] vertex_parents ; vertex_parents  = NULL;
+    delete[] parent_edges   ; parent_edges    = NULL;
     if (!quick && verbose)
     {
         // Display Solution
