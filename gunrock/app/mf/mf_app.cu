@@ -65,6 +65,49 @@ cudaError_t UseParameters(util::Parameters &parameters)
     	util::PreDefinedValues<int>::InvalidValue,
     	"seed to generate random sources or sink",
     	__FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<int>(
+        "omp-threads",
+        util::REQUIRED_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        32,
+        "number of threads to run OpenMP reference",
+        __FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<int>(
+        "omp-runs",
+        util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+        1,
+        "number of runs for OpenMP reference",
+        __FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<bool>(
+        "iter-stats",
+        util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+        false,
+        "whether to show per-iteration stats",
+        __FILE__, __LINE__));
+    
+    GUARD_CU(parameters.Use<uint64_t>(
+        "max-iter",
+        util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+        util::PreDefinedValues<uint64_t>::InvalidValue,
+        "if set, the number of iterations to run",
+        __FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<bool>(
+        "merge-push-relabel",
+        util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        true,
+        "whether to merge push and relabel operations",
+        __FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<uint64_t>(
+        "relabeling-interval",
+        util::REQUIRED_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        util::PreDefinedValues<uint64_t>::InvalidValue,
+        "if set, the number of iterations to do relabeling",
+        __FILE__, __LINE__));
+
     return retval;
 }
 
@@ -92,6 +135,7 @@ cudaError_t RunTests(
 
     typedef Problem<GraphT>	      ProblemT;
     typedef Enactor<ProblemT>	      EnactorT;
+    typedef typename GraphT::SizeT SizeT;
 
     util::CpuTimer total_timer;	total_timer.Start();
     util::CpuTimer cpu_timer;	cpu_timer.Start();
@@ -106,6 +150,35 @@ cudaError_t RunTests(
 	    quiet_mode, num_runs);
 
     util::Info info("MF", parameters, graph); // initialize Info structure
+
+    int num_omp_runs    = parameters.Get<int>("omp-runs");
+    if (num_omp_runs > 0)
+    {
+        ValueT *omp_flows = new ValueT[graph.edges];
+        ValueT max_flow = 0;
+        SizeT iterations = 0;
+        for (int i = 0; i < num_omp_runs; i++)
+        {
+            util::PrintMsg("________OMP implementation______", !quiet_mode);
+            double elapsed = app::mf::OMP_Reference(
+                parameters, graph, source, sink, max_flow,
+                h_reverse, omp_flows, iterations);
+            util::PrintMsg("--------------------------------\n"
+                "Run " + std::to_string(i)
+                + ", elapsed: " + std::to_string(elapsed)
+                + ", max_flow = " + std::to_string(max_flow)
+                + ", #iterations = " + std::to_string(iterations), !quiet_mode);
+            if (validation == "each")
+                app::mf::Validate_Results(parameters, graph, source, sink,
+                    omp_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false);
+        }
+        if (validation == "last")
+        {
+            app::mf::Validate_Results(parameters, graph, source, sink,
+                omp_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false);
+        }
+        delete[] omp_flows; omp_flows = NULL; 
+    }
 
     // Allocate host-side array (for both reference and GPU-computed results)
     // ... for function Extract
@@ -154,7 +227,7 @@ cudaError_t RunTests(
 
             int num_errors = app::mf::Validate_Results(parameters, graph, 
 		        source, sink, h_flow, h_reverse, min_cut, ref_flow, 
-		        quiet_mode);
+		        false);
         }
     }
 
@@ -166,7 +239,7 @@ cudaError_t RunTests(
         app::mf::minCut(graph, source, h_flow, min_cut, vertex_reachabilities, h_residuals);
 
         int num_errors = app::mf::Validate_Results(parameters, graph, 
-            source, sink, h_flow, h_reverse, min_cut, ref_flow, quiet_mode);
+            source, sink, h_flow, h_reverse, min_cut, ref_flow, false);
     }
 
     // Compute running statistics

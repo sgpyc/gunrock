@@ -133,15 +133,15 @@ struct main_struct
             std::to_string(max_flow), true);
             app::mf::Validate_Results(
                 parameters, u_graph, source, sink, flow_edge,
-                reverse + 0, (int*)NULL, (ValueT*)NULL);
+                reverse + 0, (int*)NULL, (ValueT*)NULL, false);
         }
 
         std::vector<std::string> switches{"advance-mode"};
         GUARD_CU(app::Switch_Parameters(parameters, u_graph, switches,
         [flow_edge, reverse](util::Parameters &parameters, GraphT &u_graph)
         {
-          debug_aml("go to RunTests");
-          return app::mf::RunTests(parameters, u_graph, 
+            debug_aml("go to RunTests");
+            return app::mf::RunTests(parameters, u_graph, 
                   reverse.GetPointer(util::HOST), flow_edge);
         }));
 

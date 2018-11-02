@@ -531,6 +531,283 @@ double CPU_Reference(
     return elapsed;
 }
 
+template <typename T>
+__forceinline__ bool ToTrack(const T &v)
+{
+    //int num_targets=3;
+    //T targets[] = {9, 3214, 2658};
+
+    //for (auto i = 0; i < num_targets; i++)
+    //    if (v == targets[i])
+    //        return true;
+    return false;
+}
+
+/**
+ * @brief OpenMP based MF implementations
+ *
+ * @tparam GraphT   Type of the graph
+ * @tparam VertexT  Type of the vertex
+ * @tparam ValueT   Type of the capacity/flow/excess
+ * @param[in]  parameters Running parameters
+ * @param[in]  graph      Input graph
+ * @param[in]  src        The source vertex
+ * @param[in]  sin        The sink vertex
+ * @param[out] maxflow	  Value of computed maxflow reached sink
+ * @param[out] reverse	  Computed reverse
+ * @param[out] edges_flow Computed flows on edges
+ *
+ * \return     double      Time taken for the MF
+ */
+template <typename VertexT, typename ValueT, typename GraphT>
+double OMP_Reference(
+	util::Parameters &parameters,
+	GraphT  &graph,
+	VertexT  source,
+	VertexT  sink,
+	ValueT  &maxflow,
+	VertexT *reverses,
+	ValueT  *flows,
+    typename GraphT::SizeT &iterations)
+{
+    typedef typename GraphT::SizeT SizeT;
+    typedef typename GraphT::CsrT  CsrT;
+
+    bool iter_stats   = parameters.template Get<bool>("iter-stats");
+    int  num_threads  = parameters.template Get<int>("omp-threads");
+    bool quiet        = parameters.template Get<bool>("quiet");
+    uint64_t max_iter    = parameters.template Get<uint64_t>("max-iter");
+    bool merge_push_relabel = parameters.template Get<bool>("merge-push-relabel"); 
+    uint64_t relabeling_interval = parameters.template Get<uint64_t>("relabeling-interval");
+
+    util::CpuTimer cpu_timer;
+    auto     nodes    = graph.nodes;
+    auto     edges    = graph.edges;
+    auto    &capacities = graph.CsrT::edge_values;
+    ValueT  *excesses = new ValueT [nodes];
+    VertexT *heights  = new VertexT[nodes]; 
+    bool    *pusheds  = new bool   [nodes];   
+    VertexT *active_vertices = NULL;
+    SizeT    total_num_active_vertices = 0;
+    SizeT    total_num_e_visited = 0;
+    SizeT    total_num_valid_e   = 0;
+    SizeT    total_num_pushes    = 0;
+    SizeT    total_num_s_pushes  = 0;
+    SizeT    total_num_relabels  = 0;
+
+    // Init
+    for (VertexT v = 0; v < nodes; v++)
+    {
+        excesses[v] = 0;
+        heights [v] = 0;
+    }
+    for (SizeT e = 0; e < edges; e++)
+        flows[e] = 0;
+    SizeT src_degree = graph.CsrT::GetNeighborListLength(source);
+    SizeT src_offset = graph.CsrT::GetNeighborListOffset(source);
+    for (SizeT e = src_offset; e < src_offset + src_degree; e++)
+    {
+        ValueT capacity = capacities[e];
+        excesses[graph.CsrT::GetEdgeDest(e)] += capacity;
+        flows[e] = capacity;
+        flows[reverses[e]] = -capacity;
+    }
+    if (util::isValid(relabeling_interval))
+        relabeling(graph, source, sink, heights, reverses, flows);
+    else
+        heights[source] = nodes;
+
+    iterations  = 0;
+    bool  has_update = true;
+    SizeT num_active_vertices = nodes;
+    cpu_timer.Start();        
+    while (has_update)
+    {
+        has_update = false;
+        SizeT num_e_visited = 0;
+        SizeT num_valid_e   = 0;
+        SizeT num_pushes    = 0;
+        SizeT num_s_pushes  = 0;
+        SizeT num_relabels  = 0;
+        #pragma omp parallel for num_threads(num_threads) \
+            reduction(+:num_e_visited, num_valid_e, num_pushes, num_s_pushes, num_relabels)
+        for (SizeT i = 0; i < num_active_vertices; i++)
+        {
+            VertexT v = (active_vertices == NULL) ? i : active_vertices[i];
+            if (v == source || v == sink)
+                continue;
+            auto excess = excesses[v];
+            if (ToTrack(v))
+                util::PrintMsg(std::to_string(v)
+                    + " : excess = " + std::to_string(excess)
+                    + ", height = " + std::to_string(heights[v]));
+            if (excess < MF_EPSILON)
+                continue;
+            
+            VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
+            bool pushed = false;
+            SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
+            SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
+            SizeT e_end    = e_start + v_degree;
+            auto  height   = heights[v];
+            for (SizeT e = e_start; e < e_end; e++)
+            {
+                num_e_visited ++;
+                VertexT u = graph.CsrT::GetEdgeDest(e);
+                ValueT move = capacities[e] - flows[e];
+                if (move < MF_EPSILON)
+                    continue;
+
+                num_valid_e ++;
+                
+                auto height_u = heights[u];
+                if (height <= height_u)
+                {
+                    if (min_height > height_u)
+                        min_height = height_u;
+                    continue;
+                }
+
+                if (move > excess)
+                    move = excess;
+                //if (move < MF_EPSILON)
+                //    continue;
+
+                if (ToTrack(v) || ToTrack(u))
+                    util::PrintMsg("Pushing " + std::to_string(move)
+                        + " from " + std::to_string(v) 
+                        + " to " + std::to_string(u));                
+                num_pushes ++; 
+                #pragma omp atomic
+                //{
+                    excesses[v] -= move;
+                //}
+                #pragma omp atomic
+                //{
+                    excesses[u] += move;
+                //}
+                #pragma omp atomic
+                //{
+                    flows[e] += move;
+                //}
+                auto reverse_e = reverses[e];
+                #pragma omp atomic
+                //{
+                    flows[reverse_e] -= move;
+                //}
+                pushed = true;
+                if (capacities[e] - move < MF_EPSILON)
+                    num_s_pushes ++;
+                excess -= move;
+                if (excess < MF_EPSILON)
+                    break;
+            }
+
+            pusheds[v] = pushed;
+            if (pushed)
+            {
+                has_update = true;
+            } else if (merge_push_relabel)
+            {
+                if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
+                    heights[v] <= min_height)
+                {
+                    if (ToTrack(v))
+                        util::PrintMsg("Relabeling " + std::to_string(v)
+                            + " to " + std::to_string(min_height + 1));
+                    heights[v] = min_height + 1;
+                    has_update = true;
+                    num_relabels ++;
+                }
+            }
+        }
+
+        if (!merge_push_relabel)
+        {
+            #pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
+            for (SizeT i = 0; i < num_active_vertices; i++)
+            {
+                VertexT v = (active_vertices == NULL) ? i : active_vertices[i];
+                if (v == source || v == sink)
+                    continue;
+                auto excess = excesses[v];
+                if (excess < MF_EPSILON)
+                    continue;
+                if (pusheds[v])
+                    continue;
+ 
+                VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
+                SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
+                SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
+                SizeT e_end    = e_start + v_degree;
+                auto  height   = heights[v];
+                
+                for (SizeT e = e_start; e < e_end; e++)
+                {
+                    num_e_visited ++;
+                    ValueT move = capacities[e] - flows[e];
+                    if (move < MF_EPSILON)
+                        continue;
+ 
+                    VertexT u = graph.CsrT::GetEdgeDest(e);
+                    auto height_u = heights[u];
+                    if (min_height > height_u)
+                        min_height = height_u; 
+                }
+                if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
+                    min_height >= heights[v])
+                {
+                    if (ToTrack(v))
+                        util::PrintMsg("Relabeling " + std::to_string(v)
+                            + " to " + std::to_string(min_height + 1));
+                    heights[v] = min_height + 1;
+                    has_update = true;
+                    num_relabels ++;
+                }
+            }
+        }
+
+        if (iter_stats)
+        {
+            util::PrintMsg(
+                  std::to_string(iterations) + "\t"
+                + std::to_string(num_active_vertices) + "\t"
+                + std::to_string(num_e_visited) + "\t"
+                + std::to_string(num_valid_e) + "\t"
+                + std::to_string(num_pushes) + "\t"
+                + std::to_string(num_s_pushes) + "\t"
+                + std::to_string(num_relabels) + "\t"
+                + std::to_string(excesses[sink]), !quiet);
+        } 
+        iterations ++;
+        total_num_active_vertices += num_active_vertices;
+        total_num_e_visited += num_e_visited;
+        total_num_valid_e += num_valid_e;
+        total_num_pushes += num_pushes;
+        total_num_s_pushes += num_s_pushes;
+        total_num_relabels += num_relabels;
+        if (util::isValid(max_iter) && iterations > max_iter)
+            break;
+        if ((iterations % relabeling_interval) == 0)
+            relabeling(graph, source, sink, heights, reverses, flows);
+    }
+    cpu_timer.Stop();
+    util::PrintMsg(
+          "Total\t"
+        + std::to_string(total_num_active_vertices) + "\t"
+        + std::to_string(total_num_e_visited) + "\t"
+        + std::to_string(total_num_valid_e) + "\t"
+        + std::to_string(total_num_pushes) + "\t"
+        + std::to_string(total_num_s_pushes) + "\t"
+        + std::to_string(total_num_relabels) + "\t"
+        + std::to_string(excesses[sink]), !quiet);
+
+    maxflow = excesses[sink];
+    delete[] excesses; excesses = NULL;
+    delete[] heights ; heights  = NULL;
+    return cpu_timer.ElapsedMillis();
+}
+
 /**
  * @brief Validation of MF results
  *
