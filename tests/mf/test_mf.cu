@@ -136,7 +136,8 @@ struct main_struct
                 reverse + 0, (int*)NULL, (ValueT*)NULL, false);
         }
 
-        std::vector<std::string> switches{"advance-mode"};
+        std::vector<std::string> switches{"advance-mode", "merge-push-relabel", "omp-threads", "max-iter", 
+            "relabeling-interval", "active-vertices"};
         GUARD_CU(app::Switch_Parameters(parameters, u_graph, switches,
         [flow_edge, reverse](util::Parameters &parameters, GraphT &u_graph)
         {

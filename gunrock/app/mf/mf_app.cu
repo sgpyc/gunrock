@@ -108,6 +108,12 @@ cudaError_t UseParameters(util::Parameters &parameters)
         "if set, the number of iterations to do relabeling",
         __FILE__, __LINE__));
 
+    GUARD_CU(parameters.Use<bool>(
+        "active-vertices",
+        util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        false,
+        "whether to mark activer activers and only process them",
+        __FILE__, __LINE__));
     return retval;
 }
 
@@ -157,6 +163,9 @@ cudaError_t RunTests(
         ValueT *omp_flows = new ValueT[graph.edges];
         ValueT max_flow = 0;
         SizeT iterations = 0;
+        double min_elapsed = 1e20;
+        double max_elapsed = 0;
+        double sum_elapsed = 0;
         for (int i = 0; i < num_omp_runs; i++)
         {
             util::PrintMsg("________OMP implementation______", !quiet_mode);
@@ -168,6 +177,11 @@ cudaError_t RunTests(
                 + ", elapsed: " + std::to_string(elapsed)
                 + ", max_flow = " + std::to_string(max_flow)
                 + ", #iterations = " + std::to_string(iterations), !quiet_mode);
+            if (min_elapsed > elapsed)
+                min_elapsed = elapsed;
+            if (max_elapsed < elapsed)
+                max_elapsed = elapsed;
+            sum_elapsed += elapsed;
             if (validation == "each")
                 app::mf::Validate_Results(parameters, graph, source, sink,
                     omp_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false);
@@ -177,7 +191,10 @@ cudaError_t RunTests(
             app::mf::Validate_Results(parameters, graph, source, sink,
                 omp_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false);
         }
-        delete[] omp_flows; omp_flows = NULL; 
+        delete[] omp_flows; omp_flows = NULL;
+        util::PrintMsg(" Avg. elapsed: " + std::to_string(sum_elapsed / num_omp_runs) + " ms", !quiet_mode);
+        util::PrintMsg(" Min. elapsed: " + std::to_string(min_elapsed) + " ms", !quiet_mode);
+        util::PrintMsg(" Max. elapsed: " + std::to_string(max_elapsed) + " ms", !quiet_mode);
     }
 
     // Allocate host-side array (for both reference and GPU-computed results)
@@ -233,7 +250,7 @@ cudaError_t RunTests(
 
     // Copy out results
     cpu_timer.Start();
-    if (validation == "last")
+    if (validation == "last" && num_runs > 0)
     {
         GUARD_CU(problem.Extract(h_flow));
         app::mf::minCut(graph, source, h_flow, min_cut, vertex_reachabilities, h_residuals);

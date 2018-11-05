@@ -541,6 +541,7 @@ __forceinline__ bool ToTrack(const T &v)
     //    if (v == targets[i])
     //        return true;
     return false;
+    //return true;
 }
 
 /**
@@ -573,27 +574,38 @@ double OMP_Reference(
     typedef typename GraphT::SizeT SizeT;
     typedef typename GraphT::CsrT  CsrT;
 
-    bool iter_stats   = parameters.template Get<bool>("iter-stats");
-    int  num_threads  = parameters.template Get<int>("omp-threads");
-    bool quiet        = parameters.template Get<bool>("quiet");
-    uint64_t max_iter    = parameters.template Get<uint64_t>("max-iter");
-    bool merge_push_relabel = parameters.template Get<bool>("merge-push-relabel"); 
+    bool     iter_stats          = parameters.template Get<bool    >("iter-stats");
+    int      num_threads         = parameters.template Get<int     >("omp-threads");
+    bool     quiet               = parameters.template Get<bool    >("quiet");
+    uint64_t max_iter            = parameters.template Get<uint64_t>("max-iter");
+    bool     merge_push_relabel  = parameters.template Get<bool    >("merge-push-relabel"); 
     uint64_t relabeling_interval = parameters.template Get<uint64_t>("relabeling-interval");
+    bool     use_active_vertices = parameters.template Get<bool    >("active-vertices");
 
     util::CpuTimer cpu_timer;
     auto     nodes    = graph.nodes;
     auto     edges    = graph.edges;
     auto    &capacities = graph.CsrT::edge_values;
-    ValueT  *excesses = new ValueT [nodes];
-    VertexT *heights  = new VertexT[nodes]; 
-    bool    *pusheds  = new bool   [nodes];   
-    VertexT *active_vertices = NULL;
+    ValueT  *excesses            = new ValueT [nodes];
+    ValueT  *org_excesses        = new ValueT [nodes];
+    VertexT *heights             = new VertexT[nodes]; 
+    VertexT *next_heights        = new VertexT[nodes];
+    bool    *pusheds             = new bool   [nodes];   
+    VertexT *active_vertices     = NULL;
+    VertexT *next_active_vertices= NULL;
+    VertexT *active_markers      = NULL;
     SizeT    total_num_active_vertices = 0;
     SizeT    total_num_e_visited = 0;
     SizeT    total_num_valid_e   = 0;
     SizeT    total_num_pushes    = 0;
     SizeT    total_num_s_pushes  = 0;
     SizeT    total_num_relabels  = 0;
+    SizeT    num_active_vertices = nodes;
+    SizeT   *s_num_e_visited     = new SizeT[num_threads];
+    SizeT   *s_num_valid_e       = new SizeT[num_threads];
+    SizeT   *s_num_pushes        = new SizeT[num_threads];
+    SizeT   *s_num_s_pushes      = new SizeT[num_threads];
+    SizeT   *s_num_relabels      = new SizeT[num_threads];
 
     // Init
     for (VertexT v = 0; v < nodes; v++)
@@ -617,9 +629,31 @@ double OMP_Reference(
     else
         heights[source] = nodes;
 
+    if (use_active_vertices)
+    {
+        active_vertices     = new VertexT[nodes];
+        next_active_vertices= new VertexT[nodes];
+        active_markers      = new VertexT[nodes];
+        num_active_vertices = src_degree;
+        for (SizeT e = src_offset; e < src_offset + src_degree; e++)
+            active_vertices[e - src_offset] = graph.CsrT::GetEdgeDest(e);
+        for (VertexT v = 0; v < nodes; v++)
+            active_markers[v] = 0;
+    }
+
+    if (merge_push_relabel)
+    {
+        for (VertexT v = 0; v < nodes; v++)
+            next_heights[v] = util::PreDefinedValues<VertexT>::MaxValue;
+    }
+
+    if (iter_stats)
+        util::PrintMsg("Iter\t # active vertices\t #edges visited\t #valid edges\t "
+            "#pushes\t #sturated pushes\t #relabels\t excesses[sink]\t "
+            "#reachable vertices\t sink reachable", !quiet);
+
     iterations  = 0;
     bool  has_update = true;
-    SizeT num_active_vertices = nodes;
     cpu_timer.Start();        
     while (has_update)
     {
@@ -629,114 +663,66 @@ double OMP_Reference(
         SizeT num_pushes    = 0;
         SizeT num_s_pushes  = 0;
         SizeT num_relabels  = 0;
-        #pragma omp parallel for num_threads(num_threads) \
-            reduction(+:num_e_visited, num_valid_e, num_pushes, num_s_pushes, num_relabels)
-        for (SizeT i = 0; i < num_active_vertices; i++)
+        SizeT next_num_active_vertices = 0;
+        //#pragma omp parallel for num_threads(num_threads) \
+        //    reduction(+:num_e_visited, num_valid_e, num_pushes, num_s_pushes, num_relabels)
+        //for (SizeT i = 0; i < num_active_vertices; i++)
+        #pragma omp parallel num_threads(num_threads)
         {
-            VertexT v = (active_vertices == NULL) ? i : active_vertices[i];
-            if (v == source || v == sink)
-                continue;
-            auto excess = excesses[v];
-            if (ToTrack(v))
-                util::PrintMsg(std::to_string(v)
-                    + " : excess = " + std::to_string(excess)
-                    + ", height = " + std::to_string(heights[v]));
-            if (excess < MF_EPSILON)
-                continue;
+            int thread_num = omp_get_thread_num();
+            int num_threads = omp_get_num_threads();
+            SizeT t_num_e_visited = 0;
+            SizeT t_num_valid_e   = 0;
+            SizeT t_num_pushes    = 0;
+            SizeT t_num_s_pushes  = 0;
+            SizeT t_num_relabels  = 0;
+
+            VertexT pos_start = num_active_vertices / num_threads * thread_num;
+            VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
+            if (thread_num == 0)
+                pos_start = 0;
+            if (thread_num + 1 == num_threads)
+                pos_end = num_active_vertices;
+
+            if (use_active_vertices)
+            {
+                for (VertexT pos = pos_start; pos < pos_end; pos++)
+                    active_markers[active_vertices[pos]] = 0;
+            }
+
+            if (merge_push_relabel)
+            {
+                for (VertexT pos = pos_start; pos < pos_end; pos++)
+                {
+                    VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
+                    next_heights[v] 
+                        = util::PreDefinedValues<VertexT>::MaxValue;
+                    //org_excesss[v] = excesses[v];
+                }
+            }
             
-            VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
-            bool pushed = false;
-            SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
-            SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
-            SizeT e_end    = e_start + v_degree;
-            auto  height   = heights[v];
-            for (SizeT e = e_start; e < e_end; e++)
+            #pragma omp barrier
+            //if (thread_num == 0)
+            //    util::PrintMsg(std::to_string(thread_num) + " Barrier 0");
+
+            
+            for (VertexT pos = pos_start; pos < pos_end; pos++)
             {
-                num_e_visited ++;
-                VertexT u = graph.CsrT::GetEdgeDest(e);
-                ValueT move = capacities[e] - flows[e];
-                if (move < MF_EPSILON)
-                    continue;
-
-                num_valid_e ++;
-                
-                auto height_u = heights[u];
-                if (height <= height_u)
-                {
-                    if (min_height > height_u)
-                        min_height = height_u;
-                    continue;
-                }
-
-                if (move > excess)
-                    move = excess;
-                //if (move < MF_EPSILON)
-                //    continue;
-
-                if (ToTrack(v) || ToTrack(u))
-                    util::PrintMsg("Pushing " + std::to_string(move)
-                        + " from " + std::to_string(v) 
-                        + " to " + std::to_string(u));                
-                num_pushes ++; 
-                #pragma omp atomic
-                //{
-                    excesses[v] -= move;
-                //}
-                #pragma omp atomic
-                //{
-                    excesses[u] += move;
-                //}
-                #pragma omp atomic
-                //{
-                    flows[e] += move;
-                //}
-                auto reverse_e = reverses[e];
-                #pragma omp atomic
-                //{
-                    flows[reverse_e] -= move;
-                //}
-                pushed = true;
-                if (capacities[e] - move < MF_EPSILON)
-                    num_s_pushes ++;
-                excess -= move;
-                if (excess < MF_EPSILON)
-                    break;
-            }
-
-            pusheds[v] = pushed;
-            if (pushed)
-            {
-                has_update = true;
-            } else if (merge_push_relabel)
-            {
-                if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
-                    heights[v] <= min_height)
-                {
-                    if (ToTrack(v))
-                        util::PrintMsg("Relabeling " + std::to_string(v)
-                            + " to " + std::to_string(min_height + 1));
-                    heights[v] = min_height + 1;
-                    has_update = true;
-                    num_relabels ++;
-                }
-            }
-        }
-
-        if (!merge_push_relabel)
-        {
-            #pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
-            for (SizeT i = 0; i < num_active_vertices; i++)
-            {
-                VertexT v = (active_vertices == NULL) ? i : active_vertices[i];
+                VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
                 if (v == source || v == sink)
                     continue;
                 auto excess = excesses[v];
-                if (excess < MF_EPSILON)
+                if (merge_push_relabel && !use_active_vertices)
+                    org_excesses[v] = excess;
+                if (ToTrack(v))
+                    util::PrintMsg(std::to_string(thread_num) + " " + std::to_string(v)
+                        + " : excess = " + std::to_string(excess)
+                        + ", height = " + std::to_string(heights[v]));
+                if (!use_active_vertices && excess < MF_EPSILON)
                     continue;
-                if (pusheds[v])
-                    continue;
- 
+                
                 VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
+                bool pushed = false;
                 SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
                 SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
                 SizeT e_end    = e_start + v_degree;
@@ -744,29 +730,321 @@ double OMP_Reference(
                 
                 for (SizeT e = e_start; e < e_end; e++)
                 {
-                    num_e_visited ++;
+                    t_num_e_visited ++;
+                    VertexT u = graph.CsrT::GetEdgeDest(e);
                     ValueT move = capacities[e] - flows[e];
                     if (move < MF_EPSILON)
                         continue;
- 
-                    VertexT u = graph.CsrT::GetEdgeDest(e);
+
+                    t_num_valid_e ++;
+                    
                     auto height_u = heights[u];
-                    if (min_height > height_u)
-                        min_height = height_u; 
-                }
-                if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
-                    min_height >= heights[v])
+                    if (height <= height_u)
+                    {
+                        if (min_height > height_u)
+                            min_height = height_u;
+                        continue;
+                    }
+
+                    if (move > excess)
+                        move = excess;
+                    //if (move < MF_EPSILON)
+                    //    continue;
+
+                    if (ToTrack(v) || ToTrack(u))
+                        util::PrintMsg(std::to_string(thread_num) + " Pushing " + std::to_string(move)
+                            + " from " + std::to_string(v) 
+                            + " to " + std::to_string(u));                
+                    t_num_pushes ++; 
+                    #pragma omp atomic
+                    //{
+                        excesses[v] -= move;
+                    //}
+                    #pragma omp atomic
+                    //{
+                        excesses[u] += move;
+                    //}
+                    #pragma omp atomic
+                    //{
+                        flows[e] += move;
+                    //}
+                    auto reverse_e = reverses[e];
+                    if (merge_push_relabel)
+                    {
+                        ValueT pervious_flow = 0;
+                        #pragma omp atomic capture
+                        {
+                            pervious_flow = flows[reverse_e];
+                            flows[reverse_e] -= move;
+                        }
+                        if (capacities[reverse_e] - pervious_flow < MF_EPSILON)
+                        {
+                            VertexT old_height = 0;
+                            VertexT new_height = height + 1;
+                            do {
+                                #pragma omp atomic capture
+                                {
+                                    old_height = next_heights[u]; 
+                                    next_heights[u] = new_height;
+                                }
+                                if (old_height < new_height)
+                                {
+                                    new_height = old_height;
+                                } else 
+                                    break;
+                            } while (true);
+                        }
+                    } else {
+                        #pragma omp atomic
+                        flows[reverse_e] -= move;
+                    }
+
+                    if (use_active_vertices)
+                    {
+                        VertexT pervious_marker = 0;
+                        #pragma omp atomic capture
+                        {
+                            pervious_marker = active_markers[u];
+                            active_markers[u] ++;
+                        }
+                        if (pervious_marker == 0)
+                        {
+                            VertexT pos_ = 0;
+                            #pragma omp atomic capture
+                            {
+                                pos_ = next_num_active_vertices;
+                                next_num_active_vertices ++;
+                            }
+                            next_active_vertices[pos_] = u;
+                        }
+                    }
+                    pushed = true;
+                    if (capacities[e] - move < MF_EPSILON)
+                        t_num_s_pushes ++;
+                    excess -= move;
+                    if (excess < MF_EPSILON)
+                        break;
+                } // end of for e
+
+                if (excess > MF_EPSILON && use_active_vertices)
                 {
-                    if (ToTrack(v))
-                        util::PrintMsg("Relabeling " + std::to_string(v)
-                            + " to " + std::to_string(min_height + 1));
-                    heights[v] = min_height + 1;
-                    has_update = true;
-                    num_relabels ++;
+                    VertexT pervious_marker = 0;
+                    #pragma omp atomic capture
+                    {
+                        pervious_marker = active_markers[v];
+                        active_markers[v] ++;
+                    }
+                    if (pervious_marker == 0)
+                    {
+                        VertexT pos_ = 0;
+                        #pragma omp atomic capture
+                        {
+                            pos_ = next_num_active_vertices;
+                            next_num_active_vertices ++;
+                        }
+                        next_active_vertices[pos_] = v;
+                    }
                 }
-            }
+
+                pusheds[v] = pushed;
+                if (pushed)
+                {
+                    has_update = true;
+                } else if (merge_push_relabel)
+                {
+                    if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
+                        heights[v] <= min_height)
+                    {
+                        if (ToTrack(v))
+                            util::PrintMsg(std::to_string(thread_num) + " Relabeling0 " + std::to_string(v)
+                                + " to " + std::to_string(min_height + 1));
+                        //heights[v] = min_height + 1;
+                        //#pragma omp atomic
+                            //next_heights[v] = min(next_heights[v], min_height + 1);
+                        VertexT old_height = 0;
+                        VertexT new_height = height + 1;
+                        do {
+                            #pragma omp atomic capture
+                            {
+                                old_height = next_heights[v]; 
+                                next_heights[v] = new_height;
+                            }
+                            if (old_height < new_height)
+                            {
+                                new_height = old_height;
+                            } else 
+                                break;
+                        } while (true);
+
+                        has_update = true;
+                        t_num_relabels ++;
+                    }
+                } 
+            } // end of for pos
+            
+            //#pragma omp atomic
+            //num_e_visited += t_num_e_visited;
+            s_num_e_visited[thread_num] = t_num_e_visited;
+            //#pragma omp atomic
+            //num_valid_e += t_num_valid_e;
+            s_num_valid_e  [thread_num] = t_num_valid_e;
+            //#pragma omp atomic
+            //num_pushes += t_num_pushes;
+            s_num_pushes   [thread_num] = t_num_pushes;
+            //#pragma omp atomic
+            //num_s_pushes += t_num_s_pushes;
+            s_num_s_pushes [thread_num] = t_num_s_pushes;
+            //#pragma omp atomic
+            //num_relabels += t_num_relabels;
+            s_num_relabels [thread_num] = t_num_relabels;
         }
 
+        //util::PrintMsg("Barrier 1");
+        #pragma omp parallel num_threads(num_threads)
+        {
+            int thread_num = omp_get_thread_num();
+            int num_threads = omp_get_num_threads();
+            SizeT t_num_e_visited = 0;
+            SizeT t_num_valid_e   = 0;
+            SizeT t_num_pushes    = 0;
+            SizeT t_num_s_pushes  = 0;
+            SizeT t_num_relabels  = 0;
+
+            VertexT pos_start = num_active_vertices / num_threads * thread_num;
+            VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
+            if (thread_num == 0)
+                pos_start = 0;
+            if (thread_num + 1 == num_threads)
+                pos_end = num_active_vertices;
+
+            //util::PrintMsg(std::to_string(thread_num) + " Waiting 1");
+
+            //#pragma omp barrier
+            //if (thread_num == 0)
+            //    util::PrintMsg(std::to_string(thread_num) + " Barrier 1");
+
+            if (merge_push_relabel)
+            {
+                for (VertexT pos = pos_start; pos < pos_end; pos++)
+                {
+                    VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
+  
+                    if (v == source || v == sink)
+                        continue;
+                    if (!use_active_vertices)
+                    {
+                        auto excess = org_excesses[v];
+                        if (excess < MF_EPSILON)
+                            continue;
+                    }
+                    if (pusheds[v])
+                        continue;
+
+                    heights[v] = next_heights[v];
+                    if (use_active_vertices)
+                    {
+                        active_markers[v] ++;
+                        if (active_markers[v] == 1)
+                        {
+                            VertexT pos_ = 0;
+                            #pragma omp atomic capture
+                            {
+                                pos_ = next_num_active_vertices;
+                                next_num_active_vertices ++;
+                            }
+                            next_active_vertices[pos_] = v;
+                        }
+                    }
+                }
+            } else {
+                //#pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
+                //for (SizeT i = 0; i < num_active_vertices; i++)
+                //{
+                //    VertexT v = (active_vertices == NULL) ? i : active_vertices[i];
+
+                for (VertexT pos = pos_start; pos < pos_end; pos++)
+                {
+                    VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
+  
+                    if (v == source || v == sink)
+                        continue;
+                    auto excess = excesses[v];
+                    if (excess < MF_EPSILON)
+                        continue;
+                    if (pusheds[v])
+                        continue;
+     
+                    VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
+                    SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
+                    SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
+                    SizeT e_end    = e_start + v_degree;
+                    auto  height   = heights[v];
+                    
+                    for (SizeT e = e_start; e < e_end; e++)
+                    {
+                        num_e_visited ++;
+                        ValueT move = capacities[e] - flows[e];
+                        if (move < MF_EPSILON)
+                            continue;
+     
+                        VertexT u = graph.CsrT::GetEdgeDest(e);
+                        auto height_u = heights[u];
+                        if (min_height > height_u)
+                            min_height = height_u; 
+                    }
+                    if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
+                        min_height >= heights[v])
+                    {
+                        if (ToTrack(v))
+                            util::PrintMsg(std::to_string(thread_num) + " Relabeling1 " + std::to_string(v)
+                                + " to " + std::to_string(min_height + 1));
+                        heights[v] = min_height + 1;
+                        has_update = true;
+                        t_num_relabels ++;
+            
+                        if (use_active_vertices)
+                        {            
+                            active_markers[v] ++;
+                            if (active_markers[v] == 1)
+                            {
+                                VertexT pos_ = 0;
+                                #pragma omp atomic capture
+                                {
+                                    pos_ = next_num_active_vertices;
+                                    next_num_active_vertices ++;
+                                }
+                                next_active_vertices[pos_] = v;
+                            }
+                        }
+                    }
+                }
+            }
+
+            //#pragma omp atomic
+            //num_e_visited += t_num_e_visited;
+            s_num_e_visited[thread_num] += t_num_e_visited;
+            //#pragma omp atomic
+            //num_valid_e += t_num_valid_e;
+            s_num_valid_e  [thread_num] += t_num_valid_e;
+            //#pragma omp atomic
+            //num_pushes += t_num_pushes;
+            s_num_pushes   [thread_num] += t_num_pushes;
+            //#pragma omp atomic
+            //num_s_pushes += t_num_s_pushes;
+            s_num_s_pushes [thread_num] += t_num_s_pushes;
+            //#pragma omp atomic
+            //num_relabels += t_num_relabels;
+            s_num_relabels [thread_num] += t_num_relabels;
+        }
+
+        for (int t = 0; t < num_threads; t++)
+        {
+            num_e_visited += s_num_e_visited[t];
+            num_valid_e   += s_num_valid_e  [t];
+            num_pushes    += s_num_pushes   [t];
+            num_s_pushes  += s_num_s_pushes [t];
+            num_relabels  += s_num_relabels [t];
+        }
         if (iter_stats)
         {
             util::PrintMsg(
@@ -786,6 +1064,15 @@ double OMP_Reference(
         total_num_pushes += num_pushes;
         total_num_s_pushes += num_s_pushes;
         total_num_relabels += num_relabels;
+        if (use_active_vertices)
+        {
+            auto temp = next_active_vertices;
+            next_active_vertices = active_vertices;
+            active_vertices = temp;
+            num_active_vertices = next_num_active_vertices;
+            next_num_active_vertices = 0;
+        }
+
         if (util::isValid(max_iter) && iterations > max_iter)
             break;
         if ((iterations % relabeling_interval) == 0)
@@ -803,8 +1090,19 @@ double OMP_Reference(
         + std::to_string(excesses[sink]), !quiet);
 
     maxflow = excesses[sink];
-    delete[] excesses; excesses = NULL;
-    delete[] heights ; heights  = NULL;
+    delete[] excesses       ; excesses        = NULL;
+    delete[] org_excesses   ; org_excesses    = NULL;
+    delete[] heights        ; heights         = NULL;
+    delete[] next_heights   ; next_heights    = NULL;
+    delete[] pusheds        ; pusheds         = NULL;
+    delete[] active_vertices; active_vertices = NULL;
+    delete[] next_active_vertices; next_active_vertices = NULL;
+    delete[] active_markers ; active_markers  = NULL;
+    delete[] s_num_e_visited; s_num_e_visited = NULL;
+    delete[] s_num_valid_e  ; s_num_valid_e   = NULL;
+    delete[] s_num_pushes   ; s_num_pushes    = NULL;
+    delete[] s_num_s_pushes ; s_num_s_pushes  = NULL;
+    delete[] s_num_relabels ; s_num_relabels  = NULL;
     return cpu_timer.ElapsedMillis();
 }
 
