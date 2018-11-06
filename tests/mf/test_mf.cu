@@ -137,7 +137,7 @@ struct main_struct
         }
 
         std::vector<std::string> switches{"advance-mode", "merge-push-relabel", "omp-threads", "max-iter", 
-            "relabeling-interval", "active-vertices", "use-residual", "use-atomic"};
+            "relabeling-interval", "active-vertices", "use-residual", "use-atomic", "neighbor-select"};
         GUARD_CU(app::Switch_Parameters(parameters, u_graph, switches,
         [flow_edge, reverse](util::Parameters &parameters, GraphT &u_graph)
         {

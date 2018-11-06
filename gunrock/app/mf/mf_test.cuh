@@ -618,6 +618,14 @@ double OMP_Reference(
     bool     use_active_vertices = parameters.template Get<bool    >("active-vertices");
     bool     use_residual        = parameters.template Get<bool    >("use-residual");
     bool     use_atomic          = parameters.template Get<bool    >("use-atomic");
+    std::string select_str       = parameters.template Get<std::string>("neighbor-select");
+    SelectFlag select_flag       = ANY;
+    if (select_str == "min-height")
+        select_flag = MIN_HEIGHT;
+    else if (select_str == "any-history")
+        select_flag = ANY_HISTORY;
+    else if (select_str == "max-gain")
+        select_flag = MAX_GAIN;   
 
     util::CpuTimer cpu_timer;
     auto     nodes               = graph.nodes;
@@ -653,6 +661,7 @@ double OMP_Reference(
     VertexT **s_temp_vertices    = NULL;
     VertexT *s_temp_counts       = NULL;
     VertexT *s_temp_offsets      = NULL;
+    SizeT   *current_e           = NULL;
 
     // Init
     if (use_residual)
@@ -740,6 +749,13 @@ double OMP_Reference(
                 s_temp_vertices[t] = new VertexT[nodes];
             }
         }
+    }
+
+    if (select_flag == ANY_HISTORY)
+    {
+        current_e = new SizeT[nodes];
+        for (VertexT v = 0; v < nodes; v++)
+            current_e[v] = graph.CsrT::GetNeighborListOffset(v);
     }
 
     if (iter_stats)
@@ -831,31 +847,12 @@ double OMP_Reference(
                 SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
                 SizeT e_end    = e_start + v_degree;
                 auto  height   = heights[v];
+                SizeT   e_selected = 0;
+                VertexT u_selected = 0;
+                ValueT  max_move   = 0;
 
-                for (SizeT e = e_start; e < e_end; e++)
+                auto push_op = [&] (SizeT e, VertexT u, ValueT move)
                 {
-                    t_num_e_visited ++;
-                    VertexT u = graph.CsrT::GetEdgeDest(e);
-                    ValueT move = (use_residual) ? residuals[e] :
-                        (capacities[e] - flows[e]);
-                    if (move < MF_EPSILON)
-                        continue;
-
-                    t_num_valid_e ++;
-
-                    auto height_u = heights[u];
-                    if (height <= height_u)
-                    {
-                        if (min_height > height_u)
-                            min_height = height_u;
-                        continue;
-                    }
-
-                    if (move > excess)
-                        move = excess;
-                    //if (move < MF_EPSILON)
-                    //    continue;
-
                     t_num_pushes ++;
                     if (!use_atomic)
                     {
@@ -927,24 +924,6 @@ double OMP_Reference(
                         }
                     }
 
-                    excess -= move;
-                    if (ToTrack(v) || ToTrack(u))
-                        util::PrintMsg(std::to_string(thread_num)
-                            + " Pushing " + std::to_string(move)
-                            + " from "    + std::to_string(v) 
-                            + " h("       + std::to_string(height)
-                            + ") to "     + std::to_string(u) 
-                            + " h("       + std::to_string(height_u) 
-                            + ") e("      + std::to_string(e)
-                            + ", "        + std::to_string(capacities[e])
-                            + ", "        + std::to_string((use_residual) ?
-                            capacities[e] - residuals[e] : flows[e])
-                            + ") e`("     + std::to_string(reverse_e)
-                            + ", "        + std::to_string(capacities[reverse_e])
-                            + ", "        + std::to_string((use_residual) ?
-                            capacities[reverse_e] - residuals[reverse_e] : flows[reverse_e])
-                            + ") excess = " + std::to_string(excess));
-
                     pushed = true;
                     if (use_residual)
                     {
@@ -954,9 +933,132 @@ double OMP_Reference(
                         if (capacities[e] - flows[e] < MF_EPSILON)
                             t_num_s_pushes ++;
                     }
+
+                    if (ToTrack(v) || ToTrack(u))
+                        util::PrintMsg(std::to_string(thread_num)
+                            + " Pushing " + std::to_string(move)
+                            + " from "    + std::to_string(v) 
+                            + " h("       + std::to_string(height)
+                            + ") to "     + std::to_string(u) 
+                            + " h("       + std::to_string(heights[u]) 
+                            + ") e("      + std::to_string(e)
+                            + ", "        + std::to_string(capacities[e])
+                            + ", "        + std::to_string((use_residual) ?
+                            capacities[e] - residuals[e] : flows[e])
+                            + ") e`("     + std::to_string(reverse_e)
+                            + ", "        + std::to_string(capacities[reverse_e])
+                            + ", "        + std::to_string((use_residual) ?
+                            capacities[reverse_e] - residuals[reverse_e] : flows[reverse_e])
+                            + ") excess = " + std::to_string(excesses[v]));
+                };
+
+                //for (SizeT e = e_start; e < e_end; e++)
+                SizeT e = e_start;
+                if (select_flag == ANY_HISTORY)
+                    e = current_e[v];
+
+                bool to_continue = true;
+                while (to_continue)
+                {
+                    do
+                    {
+                        t_num_e_visited ++;
+                        VertexT u = graph.CsrT::GetEdgeDest(e);
+                        ValueT move = (use_residual) ? residuals[e] :
+                            (capacities[e] - flows[e]);
+                        if (move < MF_EPSILON)
+                            break;
+
+                        t_num_valid_e ++;
+                        auto height_u = heights[u];
+                        if (select_flag == MIN_HEIGHT)
+                        {
+                            if (min_height > height_u)
+                            {    
+                                min_height = height_u;
+                                e_selected = e;
+                                u_selected = u;
+                            }
+                            break;
+                        }
+                        
+                        if (height <= height_u)
+                        {
+                            if (min_height > height_u)
+                                min_height = height_u;
+                            break;
+                        }
+
+                        if (select_flag == MAX_GAIN)
+                        {
+                            if (move > max_move)
+                            {
+                                max_move = move;
+                                e_selected = e;
+                                u_selected = u;
+                            }
+                            break;
+                        }
+
+                        if (move > excess)
+                            move = excess;
+                        //if (move < MF_EPSILON)
+                        //    continue;
+
+                        push_op(e, u, move);
+                        excess -= move;
+                        if (excess < MF_EPSILON)
+                            break;
+                    } while (false);
+                    
                     if (excess < MF_EPSILON)
                         break;
+                    if (select_flag == ANY_HISTORY)
+                    {
+                        e++;
+                        if (e == e_end)
+                            e = e_start;
+                        if (e == current_e[v])
+                            break;
+                    } else {
+                        e++;
+                        if (e >= e_end)
+                            break;
+                    }
                 } // end of for e
+                if (select_flag == ANY_HISTORY)
+                    current_e[v] = e;
+
+                if (select_flag == MIN_HEIGHT)
+                {
+                    if (height <= min_height)
+                    {
+                        if (ToTrack(v))
+                            util::PrintMsg(std::to_string(thread_num)
+                                + " Relabel2 " + std::to_string(v)
+                                + " from " + std::to_string(heights[v])
+                                + " to " + std::to_string(min_height + 1));
+                        heights[v] = min_height + 1;
+                        t_has_update = true;
+                        t_num_relabels ++;
+                    } else {
+                        ValueT move = (use_residual) ? residuals[e_selected] : 
+                            (capacities[e_selected] - flows[e_selected]);
+                        if (move > excess)
+                            move = excess;
+                        push_op(e_selected, u_selected, move);
+                        excess -= move;
+                    }
+                }
+
+                if (select_flag == MAX_GAIN && max_move > MF_EPSILON)
+                {
+                    ValueT move = max_move;
+                    if (move > excess)
+                        move = excess;
+                    push_op(e_selected, u_selected, move);
+                    excess -= move;
+                }
 
                 if (excess > MF_EPSILON && use_active_vertices)
                 {
@@ -1153,7 +1255,7 @@ double OMP_Reference(
             //if (thread_num == 0)
             //    util::PrintMsg(std::to_string(thread_num) + " Barrier 1");
 
-            if (merge_push_relabel)
+            if (merge_push_relabel && select_flag != MIN_HEIGHT)
             {
                 for (VertexT pos = pos_start; pos < pos_end; pos++)
                 {
@@ -1193,7 +1295,7 @@ double OMP_Reference(
                         }
                     }
                 }
-            } else {
+            } else if (select_flag != MIN_HEIGHT) {
                 //#pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
                 //for (SizeT i = 0; i < num_active_vertices; i++)
                 //{
@@ -1218,26 +1320,47 @@ double OMP_Reference(
                     auto  height   = heights[v];
                     bool  valid    = true;
 
-                    for (SizeT e = e_start; e < e_end; e++)
+                    SizeT e = e_start;
+                    if (select_flag == ANY_HISTORY)
+                    {
+                         e = current_e[v];
+                    }
+
+                    //for (SizeT e = e_start; e < e_end; e++)
+                    while (true)
                     {
                         num_e_visited ++;
                         ValueT move = (use_residual) ? residuals[e] :
                             (capacities[e] - flows[e]);
-                        if (move < MF_EPSILON)
-                            continue;
-
-                        VertexT u = graph.CsrT::GetEdgeDest(e);
-                        auto height_u = heights[u];
-                        if (height_u < height)
+                        if (!(move < MF_EPSILON))
                         {
-                            valid = false;
-                            break;
+                            VertexT u = graph.CsrT::GetEdgeDest(e);
+                            auto height_u = heights[u];
+                            if (height_u < height)
+                            {
+                                valid = false;
+                                break;
+                            }
+                            if (min_height > height_u)
+                                min_height = height_u;
                         }
-                        if (min_height > height_u)
-                            min_height = height_u;
+                        e++;
+                        if (select_flag == ANY_HISTORY)
+                        {
+                            if (e == e_end)
+                                e = e_start;
+                            if (e == current_e[v])
+                                break;
+                        } else {
+                            if (e >= e_end)
+                                break;
+                        }
                     }
+                    if (select_flag == ANY_HISTORY)
+                        current_e[v] = e;
                     if (!valid)
                         continue;
+
                     if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
                         min_height >= height)
                     {
@@ -1394,6 +1517,7 @@ double OMP_Reference(
     maxflow = excesses[sink];
     delete[] excesses       ; excesses        = NULL;
     //delete[] org_excesses   ; org_excesses    = NULL;
+    delete[] residuals      ; residuals       = NULL;
     delete[] heights        ; heights         = NULL;
     delete[] next_heights   ; next_heights    = NULL;
     delete[] pusheds        ; pusheds         = NULL;
@@ -1407,6 +1531,39 @@ double OMP_Reference(
     delete[] s_num_pushes   ; s_num_pushes    = NULL;
     delete[] s_num_s_pushes ; s_num_s_pushes  = NULL;
     delete[] s_num_relabels ; s_num_relabels  = NULL;
+    delete[] s_num_active_vertices; s_num_active_vertices = NULL;
+    delete[] s_temp_counts  ; s_temp_counts   = NULL;
+    delete[] s_temp_offsets ; s_temp_offsets  = NULL;
+    delete[] current_e      ; current_e       = NULL;
+    if (s_excess_changes != NULL)
+    {
+        for (int t = 0; t < num_threads; t++)
+        {
+            delete[] s_excess_changes[t];
+            s_excess_changes[t] = NULL;
+        }
+        delete[] s_excess_changes; s_excess_changes = NULL;
+    }
+
+    if (s_active_vertices != NULL)
+    {
+        for (int t = 0; t < num_threads; t++)
+        {
+            delete[] s_active_vertices[t];
+            s_active_vertices[t] = NULL;
+        }
+        delete[] s_active_vertices; s_active_vertices = NULL;
+    }
+
+    if (s_temp_vertices != NULL)
+    {
+        for (int t = 0; t < num_threads; t++)
+        {
+            delete[] s_temp_vertices[t];
+            s_temp_vertices[t] = NULL;
+        }
+        delete[] s_temp_vertices; s_temp_vertices = NULL;
+    }
     return cpu_timer.ElapsedMillis();
 }
 

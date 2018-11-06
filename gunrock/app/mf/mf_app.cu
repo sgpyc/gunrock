@@ -129,6 +129,13 @@ cudaError_t UseParameters(util::Parameters &parameters)
         "whether to use atomic operations",
         __FILE__, __LINE__));
 
+    GUARD_CU(parameters.Use<std::string>(
+        "neighbor-select",
+        util::REQUIRED_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        "any",
+        "method to select neighbor, <any | any-history | max-gain | min-height>",
+        __FILE__, __LINE__));
+
     return retval;
 }
 
