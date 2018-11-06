@@ -73,6 +73,63 @@ void relabeling(GraphT graph, VertexT source, VertexT sink, VertexT* height,
     return;
 }
 
+template <typename GraphT, typename VertexT, typename ValueT>
+bool Relabeling(
+        GraphT graph,
+        VertexT source,
+        VertexT sink,
+        VertexT *heights,
+        VertexT *reverses,
+        ValueT  *flows,
+        ValueT  *residuals,
+        VertexT *markers,
+        VertexT *queue)
+{
+    typedef typename GraphT::CsrT CsrT;
+    auto &capacities = graph.CsrT::edge_values;
+    for (VertexT v=0; v<graph.nodes; v++)
+        markers[v] = 0;
+
+    VertexT head = 0, tail = 0;
+    queue[head] = sink;
+    head ++;
+    markers[sink] = 1;
+    VertexT height = 0;
+    heights[sink] = height;
+    VertexT num_changes = 0;
+
+    while (tail < head)
+    {
+        auto v = queue[tail];
+        tail ++;
+        markers[v] = 2;
+        auto e_start       = graph.CsrT::GetNeighborListOffset(v);
+        auto num_neighbors = graph.CsrT::GetNeighborListLength(v);
+        auto e_end         = e_start + num_neighbors;
+        height ++;
+        for (auto e = e_start; e < e_end; ++e)
+        {
+            auto u = graph.CsrT::GetEdgeDest(e);
+            auto reverse_e = reverses[e];
+            ValueT residual = (residuals != NULL) ?
+                (residuals[reverse_e]) :
+                (capacities[reverse_e] - flows[reverse_e]);
+            if (markers[u] != 0 || residual < MF_EPSILON)
+                continue;
+            if (heights[u] != height)
+                num_changes++;
+
+            heights[u] = height;
+            markers[u] = 1;
+            queue  [head] = u;
+            head ++;
+        }
+    }
+    heights[source] = graph.nodes;
+    return (markers[source] != 0);
+}
+
+
 template <typename GraphT, typename VertexT>
 __device__ __host__ void InitReverse(GraphT &graph, VertexT* reverse)
 {
@@ -87,7 +144,7 @@ __device__ __host__ void InitReverse(GraphT &graph, VertexT* reverse)
         {
             auto v = graph.CsrT::GetEdgeDest(e);
             auto f_start = graph.CsrT::GetNeighborListOffset(v);
-            auto num_neighbors2 = 
+            auto num_neighbors2 =
                 graph.CsrT::GetNeighborListLength(v);
             auto f_end = f_start + num_neighbors2;
             for (auto f = f_start; f < f_end; ++f)
@@ -107,7 +164,7 @@ __device__ __host__ void InitReverse(GraphT &graph, VertexT* reverse)
 
 template <typename GraphT>
 __device__ __host__ void CorrectCapacity(
-        GraphT &undirected_graph, 
+        GraphT &undirected_graph,
         GraphT &directed_graph)
 {
     typedef typename GraphT::CsrT CsrT;
@@ -119,7 +176,7 @@ __device__ __host__ void CorrectCapacity(
         auto e_start = undirected_graph.CsrT::GetNeighborListOffset(u);
         auto num_neighbors = undirected_graph.CsrT::GetNeighborListLength(u);
         auto e_end = e_start + num_neighbors;
-        debug_aml("vertex %d\nnumber of neighbors %d", u, 
+        debug_aml("vertex %d\nnumber of neighbors %d", u,
                 num_neighbors);
         for (auto e = e_start; e < e_end; ++e)
         {
@@ -127,7 +184,7 @@ __device__ __host__ void CorrectCapacity(
             auto v = undirected_graph.CsrT::GetEdgeDest(e);
             // Looking for edge u->v in directed graph
             auto f_start = directed_graph.CsrT::GetNeighborListOffset(u);
-            auto num_neighbors2 = 
+            auto num_neighbors2 =
                 directed_graph.CsrT::GetNeighborListLength(u);
             auto f_end = f_start + num_neighbors2;
             for (auto f = f_start; f < f_end; ++f)
@@ -135,7 +192,7 @@ __device__ __host__ void CorrectCapacity(
                 auto z = directed_graph.CsrT::GetEdgeDest(f);
                 if (z == v and directed_graph.CsrT::edge_values[f] > 0)
                 {
-                    undirected_graph.CsrT::edge_values[e]  = 
+                    undirected_graph.CsrT::edge_values[e]  =
                         directed_graph.CsrT::edge_values[f];
                     debug_aml("edge (%d, %d) cap = %lf\n", u, v, \
                             undirected_graph.CsrT::edge_values[e]);
@@ -155,5 +212,3 @@ __device__ __host__ void CorrectCapacity(
 // mode:c++
 // c-file-style: "NVIDIA"
 // End:
-
-

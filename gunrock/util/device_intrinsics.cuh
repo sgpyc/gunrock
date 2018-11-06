@@ -259,6 +259,54 @@ T _atomicAdd(T* ptr, const T &val)
 #endif
 }
 
+template <typename T>
+__device__ __host__ __forceinline__
+T _atomicSub(T* ptr, const T &val)
+{
+#ifdef __CUDA_ARCH__
+    return atomicSub(ptr, val);
+#else
+    T retval;
+    #pragma omp atomic capture
+    {
+        retval = ptr[0];
+        ptr[0] -= val;
+    }
+    return retval;
+#endif
+}
+
+template <typename T>
+__device__ __host__ __forceinline__
+T _atomicMin(T* ptr, const T &val)
+{
+#ifdef __CUDA_ARCH__
+    return atomicMin(ptr, val);
+#else
+    T old_val;
+    T new_val = val;
+    bool first = true;
+    T org_val;
+    do {
+        #pragma omp atomic capture
+        {
+            old_val = ptr[0];
+            ptr[0] = old_val;
+        }
+        if (first)
+        {
+            first = false;
+            org_val = old_val;
+        }
+        if (old_val < new_val)
+            new_val = old_val;
+        else
+            break;
+    } while (true);
+    return org_val;
+#endif
+}
+
 namespace gunrock {
 namespace util {
 

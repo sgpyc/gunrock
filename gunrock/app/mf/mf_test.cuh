@@ -43,14 +43,14 @@ namespace mf {
  * @brief Displays the MF result
  *
  * @tparam ValueT     Type of capacity/flow/excess
- * @tparam VertxeT    Type of vertex 
- * 
- * @param[in] h_flow  Flow calculated on edges 
+ * @tparam VertxeT    Type of vertex
+ *
+ * @param[in] h_flow  Flow calculated on edges
  * @param[in] source  Index of source vertex
  * @param[in] nodes   Number of nodes
  */
 template<typename GraphT, typename ValueT, typename VertexT>
-void DisplaySolution(GraphT graph, ValueT* h_flow, VertexT* reverse, 
+void DisplaySolution(GraphT graph, ValueT* h_flow, VertexT* reverse,
 	VertexT sink, VertexT nodes)
 {
     typedef typename GraphT::CsrT CsrT;
@@ -67,26 +67,26 @@ void DisplaySolution(GraphT graph, ValueT* h_flow, VertexT* reverse,
     }
 
     util::PrintMsg("The maximum amount of flow that is feasible to reach \
-	    from source to sink is " + std::to_string(flow_incoming_sink), 
+	    from source to sink is " + std::to_string(flow_incoming_sink),
 	    true, false);
 }
 
 /**
- * @brief For given vertex v, find neighbor which the smallest height.  
+ * @brief For given vertex v, find neighbor which the smallest height.
  *
  * @tparam ValueT	Type of capacity/flow/excess
  * @tparam VertxeT	Type of vertex
  * @tparam GraphT	Type of graph
  * @param[in] graph	Graph
- * @param[in] x		Index of vertex 
- * @param[in] height	Function of height on nodes 
+ * @param[in] x		Index of vertex
+ * @param[in] height	Function of height on nodes
  * @param[in] capacity	Function of capacity on edges
  * @param[in] flow	Function of flow on edges
  *
  * return Index the lowest neighbor of vertex x
  */
 template<typename ValueT, typename VertexT, typename GraphT>
-VertexT find_lowest(GraphT graph, VertexT x, VertexT* height, ValueT* flow, 
+VertexT find_lowest(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
 	VertexT source){
     typedef typename GraphT::SizeT SizeT;
     typedef typename GraphT::CsrT CsrT;
@@ -95,7 +95,7 @@ VertexT find_lowest(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
     auto num_neighbors = graph.CsrT::GetNeighborListLength(x);
     auto e_end = e_start + num_neighbors;
     VertexT lowest;
-    SizeT lowest_id = util::PreDefinedValues<SizeT>::InvalidValue; 
+    SizeT lowest_id = util::PreDefinedValues<SizeT>::InvalidValue;
     for (auto e = e_start; e < e_end; ++e)
     {
         //if (graph.CsrT::edge_values[e] - flow[e] > (ValueT)0){
@@ -125,7 +125,7 @@ VertexT find_lowest(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
   * return True if something changed, false otherwise
   */
 template<typename ValueT, typename VertexT, typename GraphT>
-bool relabel(GraphT graph, VertexT x, VertexT* height, ValueT* flow, 
+bool relabel(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
 	VertexT source){
     typedef typename GraphT::CsrT CsrT;
     auto e = find_lowest(graph, x, height, flow, source);
@@ -133,7 +133,7 @@ bool relabel(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
     if (util::isValid(e)) {
         VertexT y = graph.CsrT::GetEdgeDest(e);
         if (height[y] >= height[x]){
-    	    debug_aml("relabel %d H: %d->%d, res-cap %d-%d: %lf\n", x, height[x], 
+    	    debug_aml("relabel %d H: %d->%d, res-cap %d-%d: %lf\n", x, height[x],
     		    height[y]+1, x, y, graph.CsrT::edge_values[e]-flow[e]);
             height[x] = height[y] + 1;
             return true;
@@ -143,7 +143,7 @@ bool relabel(GraphT graph, VertexT x, VertexT* height, ValueT* flow,
 }
 
 /**
-  * @brief Push: transfers flow from given vertex to neighbors in residual 
+  * @brief Push: transfers flow from given vertex to neighbors in residual
   *	   network which are lower than it.
   *
   * @tparam ValueT	Type of capacity/flow/excess
@@ -173,7 +173,7 @@ bool push(GraphT& graph, VertexT x, ValueT* excess, VertexT* height,
             //if (c - flow[e] > (ValueT) 0 and height[x] > height[y]){
             if (c - flow[e] > MF_EPSILON and height[x] > height[y]){
             auto move = std::min(c - flow[e], excess[x]);
-    //		printf("push %lf from %d (H=%d) to %d (H=%d)\n", 
+    //		printf("push %lf from %d (H=%d) to %d (H=%d)\n",
     //			move, x, height[x], y, height[y]);
             excess[x] -= move;
             excess[y] += move;
@@ -204,7 +204,7 @@ bool push(GraphT& graph, VertexT x, ValueT* excess, VertexT* height,
   * return Value of computed max flow
   */
 template<typename ValueT, typename VertexT, typename GraphT>
-ValueT max_flow(GraphT& graph, ValueT* flow, ValueT* excess, VertexT* height, 
+ValueT max_flow(GraphT& graph, ValueT* flow, ValueT* excess, VertexT* height,
 	VertexT source, VertexT sink, VertexT* reverse){
     bool update = true;
 
@@ -215,12 +215,12 @@ ValueT max_flow(GraphT& graph, ValueT* flow, ValueT* excess, VertexT* height,
         for (VertexT x = 0; x < graph.nodes; ++x){
             //if (x != sink and x != source and excess[x] > (ValueT)0){
             if (x != sink and x != source and excess[x] > MF_EPSILON){
-                if (push(graph, x, excess, height, flow, reverse) or 
+                if (push(graph, x, excess, height, flow, reverse) or
                         relabel(graph, x, height, flow, source))
                 {
                     update = true;
                     if (iter > 0 && iter % 100 == 0)
-                        relabeling(graph, source, sink, height, reverse, flow); 
+                        relabeling(graph, source, sink, height, reverse, flow);
                 }
             }
         }
@@ -243,7 +243,7 @@ ValueT max_flow(GraphT& graph, ValueT* flow, ValueT* excess, VertexT* height,
   *
   */
 template <typename VertexT, typename ValueT, typename GraphT>
-void minCut(GraphT& graph, VertexT  src, ValueT* flow, int* min_cut, 
+void minCut(GraphT& graph, VertexT  src, ValueT* flow, int* min_cut,
 	    bool* vertex_reachabilities, ValueT* residuals)
 {
     typedef typename GraphT::CsrT CsrT;
@@ -311,33 +311,33 @@ double CPU_Reference(
     double elapsed = 0;
 
 #if (BOOST_FOUND==1)
-    
+
     debug_aml("boost found");
     using namespace boost;
 
     // Prepare Boost Datatype and Data structure
     typedef adjacency_list_traits < vecS, vecS, directedS > Traits;
-    typedef adjacency_list < vecS, vecS, directedS, 
+    typedef adjacency_list < vecS, vecS, directedS,
 	    property < vertex_name_t, std::string >,
 	    property < edge_capacity_t, ValueT,
 	    property < edge_residual_capacity_t, ValueT,
 	    property < edge_reverse_t, Traits::edge_descriptor > > > > Graph;
-    
+
     Graph boost_graph;
 
-    typename property_map < Graph, edge_capacity_t >::type 
+    typename property_map < Graph, edge_capacity_t >::type
 	capacity = get(edge_capacity, boost_graph);
 
-    typename property_map < Graph, edge_reverse_t >::type 
+    typename property_map < Graph, edge_reverse_t >::type
 	rev = get(edge_reverse, boost_graph);
 
-    typename property_map < Graph, edge_residual_capacity_t >::type 
+    typename property_map < Graph, edge_residual_capacity_t >::type
 	residual_capacity = get(edge_residual_capacity, boost_graph);
 
     std::vector<Traits::vertex_descriptor> verts;
     for (VertexT v = 0; v < graph.nodes; ++v)
 	verts.push_back(add_vertex(boost_graph));
-    
+
     Traits::vertex_descriptor source = verts[src];
     Traits::vertex_descriptor sink = verts[sin];
     debug_aml("src = %d, sin %d", source, sink);
@@ -365,14 +365,14 @@ double CPU_Reference(
             rev[e2] = e1;
         }
     }
-  
+
     //
     // Perform Boost reference
     //
 
     util::CpuTimer cpu_timer;
     cpu_timer.Start();
-    maxflow = edmonds_karp_max_flow(boost_graph, source, sink); 
+    maxflow = edmonds_karp_max_flow(boost_graph, source, sink);
     cpu_timer.Stop();
     elapsed = cpu_timer.ElapsedMillis();
 
@@ -380,14 +380,14 @@ double CPU_Reference(
     // Extracting results on CPU
     //
 
-    std::vector<std::vector<ValueT>> boost_flow; 
+    std::vector<std::vector<ValueT>> boost_flow;
     boost_flow.resize(graph.nodes);
-    for (auto x = 0; x < graph.nodes; ++x) 
+    for (auto x = 0; x < graph.nodes; ++x)
 	boost_flow[x].resize(graph.nodes, 0.0);
     typename graph_traits<Graph>::vertex_iterator u_it, u_end;
     typename graph_traits<Graph>::out_edge_iterator e_it, e_end;
     for (tie(u_it, u_end) = vertices(boost_graph); u_it != u_end; ++u_it){
-        for (tie(e_it, e_end) = out_edges(*u_it, boost_graph); e_it != e_end; 
+        for (tie(e_it, e_end) = out_edges(*u_it, boost_graph); e_it != e_end;
             ++e_it){
             if (capacity[*e_it] > 0){
             ValueT e_f = capacity[*e_it] - residual_capacity[*e_it];
@@ -411,7 +411,7 @@ double CPU_Reference(
 
     debug_aml("no boost");
 
-    debug_aml("graph nodes %d, edges %d source %d sink %d src %d", 
+    debug_aml("graph nodes %d, edges %d source %d sink %d src %d",
 	    graph.nodes, graph.edges, src, sin);
 
     ValueT*   excess =  (ValueT*)malloc(sizeof(ValueT)*graph.nodes);
@@ -420,7 +420,7 @@ double CPU_Reference(
         excess[v] = (ValueT)0;
         height[v] = (VertexT)0;
     }
-     
+
     for (SizeT e = 0; e < graph.edges; ++e){
         flow[e] = (ValueT) 0;
     }
@@ -514,12 +514,12 @@ double CPU_Reference(
     debug_aml("source excess %lf, sink excess %lf", excess[src], excess[sin]);
     debug_aml("pre flow push from source %lf", preflow);
     debug_aml("source height %d, sink height %d", height[src], height[sin]);
-    
+
     util::CpuTimer cpu_timer;
     cpu_timer.Start();
 
     maxflow = max_flow(graph, flow, excess, height, src, sin, reverse);
-   
+
     cpu_timer.Stop();
     elapsed = cpu_timer.ElapsedMillis();
 
@@ -527,7 +527,7 @@ double CPU_Reference(
     free(height);
 
 #endif
-    
+
     return elapsed;
 }
 
@@ -542,6 +542,30 @@ __forceinline__ bool ToTrack(const T &v)
     //        return true;
     return false;
     //return true;
+}
+
+template <typename VertexT>
+__forceinline__ void SetActive(
+    const VertexT &v,
+    VertexT *active_markers,
+    VertexT *active_vertices,
+    VertexT &num_active_vertices,
+    bool     avoid_atomic = false)
+{
+    if (avoid_atomic)
+    {
+        active_markers[v] ++;
+        if (active_markers[v] != 1)
+            return;
+        active_vertices[num_active_vertices] = v;
+        num_active_vertices ++;
+        return;
+    }
+
+    if (_atomicAdd(active_markers + v, (VertexT)1) != 0)
+        return;
+    active_vertices[_atomicAdd(&num_active_vertices, (VertexT)1)]
+        = v;
 }
 
 /**
@@ -578,22 +602,26 @@ double OMP_Reference(
     int      num_threads         = parameters.template Get<int     >("omp-threads");
     bool     quiet               = parameters.template Get<bool    >("quiet");
     uint64_t max_iter            = parameters.template Get<uint64_t>("max-iter");
-    bool     merge_push_relabel  = parameters.template Get<bool    >("merge-push-relabel"); 
+    bool     merge_push_relabel  = parameters.template Get<bool    >("merge-push-relabel");
     uint64_t relabeling_interval = parameters.template Get<uint64_t>("relabeling-interval");
     bool     use_active_vertices = parameters.template Get<bool    >("active-vertices");
+    bool     use_residual        = parameters.template Get<bool    >("use-residual");
 
     util::CpuTimer cpu_timer;
-    auto     nodes    = graph.nodes;
-    auto     edges    = graph.edges;
-    auto    &capacities = graph.CsrT::edge_values;
+    auto     nodes               = graph.nodes;
+    auto     edges               = graph.edges;
+    auto    &capacities          = graph.CsrT::edge_values;
     ValueT  *excesses            = new ValueT [nodes];
-    ValueT  *org_excesses        = new ValueT [nodes];
-    VertexT *heights             = new VertexT[nodes]; 
-    VertexT *next_heights        = new VertexT[nodes];
-    bool    *pusheds             = new bool   [nodes];   
+    ValueT  *residuals           = NULL;
+    //ValueT  *org_excesses        = NULL;
+    VertexT *heights             = new VertexT[nodes];
+    VertexT *next_heights        = NULL;
+    bool    *pusheds             = new bool   [nodes];
     VertexT *active_vertices     = NULL;
     VertexT *next_active_vertices= NULL;
     VertexT *active_markers      = NULL;
+    VertexT *vertex_markers      = NULL;
+    VertexT *vertex_queue        = NULL;
     SizeT    total_num_active_vertices = 0;
     SizeT    total_num_e_visited = 0;
     SizeT    total_num_valid_e   = 0;
@@ -601,6 +629,7 @@ double OMP_Reference(
     SizeT    total_num_s_pushes  = 0;
     SizeT    total_num_relabels  = 0;
     SizeT    num_active_vertices = nodes;
+    bool     s_has_update        = true;
     SizeT   *s_num_e_visited     = new SizeT[num_threads];
     SizeT   *s_num_valid_e       = new SizeT[num_threads];
     SizeT   *s_num_pushes        = new SizeT[num_threads];
@@ -608,25 +637,44 @@ double OMP_Reference(
     SizeT   *s_num_relabels      = new SizeT[num_threads];
 
     // Init
+    if (use_residual)
+    {
+        residuals = new ValueT[edges];
+        for (SizeT e = 0; e < edges; e++)
+            residuals[e] = capacities[e];
+    } else {
+        for (SizeT e = 0; e < edges; e++)
+            flows[e] = 0;
+    }
     for (VertexT v = 0; v < nodes; v++)
     {
         excesses[v] = 0;
         heights [v] = 0;
     }
-    for (SizeT e = 0; e < edges; e++)
-        flows[e] = 0;
+
     SizeT src_degree = graph.CsrT::GetNeighborListLength(source);
     SizeT src_offset = graph.CsrT::GetNeighborListOffset(source);
     for (SizeT e = src_offset; e < src_offset + src_degree; e++)
     {
         ValueT capacity = capacities[e];
         excesses[graph.CsrT::GetEdgeDest(e)] += capacity;
-        flows[e] = capacity;
-        flows[reverses[e]] = -capacity;
+        if (use_residual)
+        {
+            residuals[e] = 0;
+            residuals[reverses[e]] = capacities[reverses[e]] + capacity;
+        } else {
+            flows[e] = capacity;
+            flows[reverses[e]] = -capacity;
+        }
     }
     if (util::isValid(relabeling_interval))
-        relabeling(graph, source, sink, heights, reverses, flows);
-    else
+    {
+        vertex_markers = new VertexT[nodes];
+        vertex_queue   = new VertexT[nodes];
+        Relabeling(graph, source, sink,
+            heights, reverses, flows, residuals,
+            vertex_markers, vertex_queue);
+    } else
         heights[source] = nodes;
 
     if (use_active_vertices)
@@ -643,8 +691,11 @@ double OMP_Reference(
 
     if (merge_push_relabel)
     {
+        next_heights = new VertexT[nodes];
         for (VertexT v = 0; v < nodes; v++)
             next_heights[v] = util::PreDefinedValues<VertexT>::MaxValue;
+        //if (!use_active_vertices)
+        //    org_excesses = new ValueT[nodes];
     }
 
     if (iter_stats)
@@ -653,11 +704,10 @@ double OMP_Reference(
             "#reachable vertices\t sink reachable", !quiet);
 
     iterations  = 0;
-    bool  has_update = true;
-    cpu_timer.Start();        
-    while (has_update)
+    cpu_timer.Start();
+    while (s_has_update)
     {
-        has_update = false;
+        s_has_update = false;
         SizeT num_e_visited = 0;
         SizeT num_valid_e   = 0;
         SizeT num_pushes    = 0;
@@ -669,13 +719,14 @@ double OMP_Reference(
         //for (SizeT i = 0; i < num_active_vertices; i++)
         #pragma omp parallel num_threads(num_threads)
         {
-            int thread_num = omp_get_thread_num();
-            int num_threads = omp_get_num_threads();
+            int thread_num        = omp_get_thread_num();
+            int num_threads       = omp_get_num_threads();
             SizeT t_num_e_visited = 0;
             SizeT t_num_valid_e   = 0;
             SizeT t_num_pushes    = 0;
             SizeT t_num_s_pushes  = 0;
             SizeT t_num_relabels  = 0;
+            bool  t_has_update    = false;
 
             VertexT pos_start = num_active_vertices / num_threads * thread_num;
             VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
@@ -695,49 +746,52 @@ double OMP_Reference(
                 for (VertexT pos = pos_start; pos < pos_end; pos++)
                 {
                     VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
-                    next_heights[v] 
+                    next_heights[v]
                         = util::PreDefinedValues<VertexT>::MaxValue;
-                    //org_excesss[v] = excesses[v];
                 }
             }
-            
+
             #pragma omp barrier
             //if (thread_num == 0)
             //    util::PrintMsg(std::to_string(thread_num) + " Barrier 0");
 
-            
             for (VertexT pos = pos_start; pos < pos_end; pos++)
             {
                 VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
                 if (v == source || v == sink)
                     continue;
                 auto excess = excesses[v];
-                if (merge_push_relabel && !use_active_vertices)
-                    org_excesses[v] = excess;
+                //if (merge_push_relabel && !use_active_vertices)
+                //    org_excesses[v] = excess;
                 if (ToTrack(v))
-                    util::PrintMsg(std::to_string(thread_num) + " " + std::to_string(v)
+                    util::PrintMsg(std::to_string(thread_num)
+                        + " "            + std::to_string(v)
                         + " : excess = " + std::to_string(excess)
-                        + ", height = " + std::to_string(heights[v]));
-                if (!use_active_vertices && excess < MF_EPSILON)
+                        + ", height = "  + std::to_string(heights[v]));
+                if (excess < MF_EPSILON)
+                {
+                    pusheds[v] = true;
                     continue;
-                
+                }
+
                 VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
                 bool pushed = false;
                 SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
                 SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
                 SizeT e_end    = e_start + v_degree;
                 auto  height   = heights[v];
-                
+
                 for (SizeT e = e_start; e < e_end; e++)
                 {
                     t_num_e_visited ++;
                     VertexT u = graph.CsrT::GetEdgeDest(e);
-                    ValueT move = capacities[e] - flows[e];
+                    ValueT move = (use_residual) ? residuals[e] :
+                        (capacities[e] - flows[e]);
                     if (move < MF_EPSILON)
                         continue;
 
                     t_num_valid_e ++;
-                    
+
                     auto height_u = heights[u];
                     if (height <= height_u)
                     {
@@ -752,163 +806,107 @@ double OMP_Reference(
                     //    continue;
 
                     if (ToTrack(v) || ToTrack(u))
-                        util::PrintMsg(std::to_string(thread_num) + " Pushing " + std::to_string(move)
-                            + " from " + std::to_string(v) 
-                            + " to " + std::to_string(u));                
-                    t_num_pushes ++; 
+                        util::PrintMsg(std::to_string(thread_num)
+                            + " Pushing " + std::to_string(move)
+                            + " from "    + std::to_string(v)
+                            + " to "      + std::to_string(u));
+                    t_num_pushes ++;
                     #pragma omp atomic
-                    //{
-                        excesses[v] -= move;
-                    //}
+                    excesses[v] -= move;
+
                     #pragma omp atomic
-                    //{
-                        excesses[u] += move;
-                    //}
-                    #pragma omp atomic
-                    //{
+                    excesses[u] += move;
+
+                    if (use_residual)
+                    {
+                        #pragma omp atomic
+                        residuals[e] -= move;
+                    } else {
+                        #pragma omp atomic
                         flows[e] += move;
-                    //}
+                    }
+
                     auto reverse_e = reverses[e];
                     if (merge_push_relabel)
                     {
-                        ValueT pervious_flow = 0;
-                        #pragma omp atomic capture
+                        ValueT pervious_residule = (use_residual) ?
+                            (_atomicAdd(residuals + reverse_e, move)) :
+                            (capacities[reverse_e]
+                                - _atomicAdd(flows + reverse_e, -move));
+                        if (pervious_residule < MF_EPSILON)
                         {
-                            pervious_flow = flows[reverse_e];
-                            flows[reverse_e] -= move;
-                        }
-                        if (capacities[reverse_e] - pervious_flow < MF_EPSILON)
-                        {
-                            VertexT old_height = 0;
-                            VertexT new_height = height + 1;
-                            do {
-                                #pragma omp atomic capture
-                                {
-                                    old_height = next_heights[u]; 
-                                    next_heights[u] = new_height;
-                                }
-                                if (old_height < new_height)
-                                {
-                                    new_height = old_height;
-                                } else 
-                                    break;
-                            } while (true);
+                            _atomicMin(next_heights + u, height + 1);
                         }
                     } else {
-                        #pragma omp atomic
-                        flows[reverse_e] -= move;
+                        if (use_residual)
+                        {
+                            #pragma omp atomic
+                            residuals[reverse_e] += move;
+                        } else {
+                            #pragma omp atomic
+                            flows[reverse_e] -= move;
+                        }
                     }
 
                     if (use_active_vertices)
                     {
-                        VertexT pervious_marker = 0;
-                        #pragma omp atomic capture
-                        {
-                            pervious_marker = active_markers[u];
-                            active_markers[u] ++;
-                        }
-                        if (pervious_marker == 0)
-                        {
-                            VertexT pos_ = 0;
-                            #pragma omp atomic capture
-                            {
-                                pos_ = next_num_active_vertices;
-                                next_num_active_vertices ++;
-                            }
-                            next_active_vertices[pos_] = u;
-                        }
+                        SetActive(u, active_markers,
+                            next_active_vertices, next_num_active_vertices);
                     }
                     pushed = true;
-                    if (capacities[e] - move < MF_EPSILON)
-                        t_num_s_pushes ++;
+                    if (use_residual)
+                    {
+                        if (residuals[e] < MF_EPSILON)
+                            t_num_s_pushes ++;
+                    } else {
+                        if (capacities[e] - flows[e] < MF_EPSILON)
+                            t_num_s_pushes ++;
+                    }
                     excess -= move;
                     if (excess < MF_EPSILON)
                         break;
                 } // end of for e
 
-                if (excess > MF_EPSILON && use_active_vertices)
+                if (excess > MF_EPSILON && use_active_vertices && pushed)
                 {
-                    VertexT pervious_marker = 0;
-                    #pragma omp atomic capture
-                    {
-                        pervious_marker = active_markers[v];
-                        active_markers[v] ++;
-                    }
-                    if (pervious_marker == 0)
-                    {
-                        VertexT pos_ = 0;
-                        #pragma omp atomic capture
-                        {
-                            pos_ = next_num_active_vertices;
-                            next_num_active_vertices ++;
-                        }
-                        next_active_vertices[pos_] = v;
-                    }
+                    SetActive(v, active_markers,
+                        next_active_vertices, next_num_active_vertices);
                 }
 
                 pusheds[v] = pushed;
                 if (pushed)
                 {
-                    has_update = true;
+                    t_has_update = true;
                 } else if (merge_push_relabel)
                 {
                     if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
                         heights[v] <= min_height)
                     {
-                        if (ToTrack(v))
-                            util::PrintMsg(std::to_string(thread_num) + " Relabeling0 " + std::to_string(v)
-                                + " to " + std::to_string(min_height + 1));
-                        //heights[v] = min_height + 1;
-                        //#pragma omp atomic
-                            //next_heights[v] = min(next_heights[v], min_height + 1);
-                        VertexT old_height = 0;
-                        VertexT new_height = height + 1;
-                        do {
-                            #pragma omp atomic capture
-                            {
-                                old_height = next_heights[v]; 
-                                next_heights[v] = new_height;
-                            }
-                            if (old_height < new_height)
-                            {
-                                new_height = old_height;
-                            } else 
-                                break;
-                        } while (true);
-
-                        has_update = true;
-                        t_num_relabels ++;
+                        _atomicMin(next_heights + v, min_height + 1);
                     }
-                } 
+                }
             } // end of for pos
-            
-            //#pragma omp atomic
-            //num_e_visited += t_num_e_visited;
+
             s_num_e_visited[thread_num] = t_num_e_visited;
-            //#pragma omp atomic
-            //num_valid_e += t_num_valid_e;
             s_num_valid_e  [thread_num] = t_num_valid_e;
-            //#pragma omp atomic
-            //num_pushes += t_num_pushes;
             s_num_pushes   [thread_num] = t_num_pushes;
-            //#pragma omp atomic
-            //num_s_pushes += t_num_s_pushes;
             s_num_s_pushes [thread_num] = t_num_s_pushes;
-            //#pragma omp atomic
-            //num_relabels += t_num_relabels;
             s_num_relabels [thread_num] = t_num_relabels;
+            if (t_has_update)
+                s_has_update = true;
         }
 
         //util::PrintMsg("Barrier 1");
         #pragma omp parallel num_threads(num_threads)
         {
-            int thread_num = omp_get_thread_num();
-            int num_threads = omp_get_num_threads();
+            int thread_num        = omp_get_thread_num();
+            int num_threads       = omp_get_num_threads();
             SizeT t_num_e_visited = 0;
             SizeT t_num_valid_e   = 0;
             SizeT t_num_pushes    = 0;
             SizeT t_num_s_pushes  = 0;
             SizeT t_num_relabels  = 0;
+            bool  t_has_update    = false;
 
             VertexT pos_start = num_active_vertices / num_threads * thread_num;
             VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
@@ -928,33 +926,28 @@ double OMP_Reference(
                 for (VertexT pos = pos_start; pos < pos_end; pos++)
                 {
                     VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
-  
+
                     if (v == source || v == sink)
                         continue;
-                    if (!use_active_vertices)
-                    {
-                        auto excess = org_excesses[v];
-                        if (excess < MF_EPSILON)
-                            continue;
-                    }
+                    //if (!use_active_vertices)
+                    //{
+                    //    auto excess = org_excesses[v];
+                    //    if (excess < MF_EPSILON)
+                    //        continue;
+                    //}
                     if (pusheds[v])
                         continue;
 
+                    if (ToTrack(v))
+                        util::PrintMsg(std::to_string(thread_num)
+                            + " Relabeling0 " + std::to_string(v)
+                            + " to " + std::to_string(next_heights[v]));
                     heights[v] = next_heights[v];
-                    if (use_active_vertices)
-                    {
-                        active_markers[v] ++;
-                        if (active_markers[v] == 1)
-                        {
-                            VertexT pos_ = 0;
-                            #pragma omp atomic capture
-                            {
-                                pos_ = next_num_active_vertices;
-                                next_num_active_vertices ++;
-                            }
-                            next_active_vertices[pos_] = v;
-                        }
-                    }
+                    t_has_update = true;
+                    t_num_relabels ++;
+
+                    SetActive(v, active_markers,
+                        next_active_vertices, next_num_active_vertices);
                 }
             } else {
                 //#pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
@@ -965,7 +958,7 @@ double OMP_Reference(
                 for (VertexT pos = pos_start; pos < pos_end; pos++)
                 {
                     VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
-  
+
                     if (v == source || v == sink)
                         continue;
                     auto excess = excesses[v];
@@ -973,68 +966,53 @@ double OMP_Reference(
                         continue;
                     if (pusheds[v])
                         continue;
-     
+
                     VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
                     SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
                     SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
                     SizeT e_end    = e_start + v_degree;
                     auto  height   = heights[v];
-                    
+
                     for (SizeT e = e_start; e < e_end; e++)
                     {
                         num_e_visited ++;
-                        ValueT move = capacities[e] - flows[e];
+                        ValueT move = (use_residual) ? residuals[e] :
+                            (capacities[e] - flows[e]);
                         if (move < MF_EPSILON)
                             continue;
-     
+
                         VertexT u = graph.CsrT::GetEdgeDest(e);
                         auto height_u = heights[u];
                         if (min_height > height_u)
-                            min_height = height_u; 
+                            min_height = height_u;
                     }
                     if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
                         min_height >= heights[v])
                     {
                         if (ToTrack(v))
-                            util::PrintMsg(std::to_string(thread_num) + " Relabeling1 " + std::to_string(v)
+                            util::PrintMsg(std::to_string(thread_num)
+                                + " Relabeling1 " + std::to_string(v)
                                 + " to " + std::to_string(min_height + 1));
                         heights[v] = min_height + 1;
-                        has_update = true;
+                        t_has_update = true;
                         t_num_relabels ++;
-            
+
                         if (use_active_vertices)
-                        {            
-                            active_markers[v] ++;
-                            if (active_markers[v] == 1)
-                            {
-                                VertexT pos_ = 0;
-                                #pragma omp atomic capture
-                                {
-                                    pos_ = next_num_active_vertices;
-                                    next_num_active_vertices ++;
-                                }
-                                next_active_vertices[pos_] = v;
-                            }
+                        {
+                            SetActive(v, active_markers,
+                                next_active_vertices, next_num_active_vertices);
                         }
                     }
                 }
             }
 
-            //#pragma omp atomic
-            //num_e_visited += t_num_e_visited;
             s_num_e_visited[thread_num] += t_num_e_visited;
-            //#pragma omp atomic
-            //num_valid_e += t_num_valid_e;
             s_num_valid_e  [thread_num] += t_num_valid_e;
-            //#pragma omp atomic
-            //num_pushes += t_num_pushes;
             s_num_pushes   [thread_num] += t_num_pushes;
-            //#pragma omp atomic
-            //num_s_pushes += t_num_s_pushes;
             s_num_s_pushes [thread_num] += t_num_s_pushes;
-            //#pragma omp atomic
-            //num_relabels += t_num_relabels;
             s_num_relabels [thread_num] += t_num_relabels;
+            if (t_has_update)
+                s_has_update = true;
         }
 
         for (int t = 0; t < num_threads; t++)
@@ -1056,7 +1034,7 @@ double OMP_Reference(
                 + std::to_string(num_s_pushes) + "\t"
                 + std::to_string(num_relabels) + "\t"
                 + std::to_string(excesses[sink]), !quiet);
-        } 
+        }
         iterations ++;
         total_num_active_vertices += num_active_vertices;
         total_num_e_visited += num_e_visited;
@@ -1076,7 +1054,9 @@ double OMP_Reference(
         if (util::isValid(max_iter) && iterations > max_iter)
             break;
         if ((iterations % relabeling_interval) == 0)
-            relabeling(graph, source, sink, heights, reverses, flows);
+            Relabeling(graph, source, sink,
+                heights, reverses, flows, residuals,
+                vertex_markers, vertex_queue);
     }
     cpu_timer.Stop();
     util::PrintMsg(
@@ -1089,15 +1069,23 @@ double OMP_Reference(
         + std::to_string(total_num_relabels) + "\t"
         + std::to_string(excesses[sink]), !quiet);
 
+    if (use_residual)
+    {
+        for (SizeT e = 0; e < edges; e++)
+            flows[e] = capacities[e] - residuals[e];
+        delete residuals; residuals = NULL;
+    }
     maxflow = excesses[sink];
     delete[] excesses       ; excesses        = NULL;
-    delete[] org_excesses   ; org_excesses    = NULL;
+    //delete[] org_excesses   ; org_excesses    = NULL;
     delete[] heights        ; heights         = NULL;
     delete[] next_heights   ; next_heights    = NULL;
     delete[] pusheds        ; pusheds         = NULL;
     delete[] active_vertices; active_vertices = NULL;
     delete[] next_active_vertices; next_active_vertices = NULL;
     delete[] active_markers ; active_markers  = NULL;
+    delete[] vertex_markers ; vertex_markers  = NULL;
+    delete[] vertex_queue   ; vertex_queue    = NULL;
     delete[] s_num_e_visited; s_num_e_visited = NULL;
     delete[] s_num_valid_e  ; s_num_valid_e   = NULL;
     delete[] s_num_pushes   ; s_num_pushes    = NULL;
@@ -1116,7 +1104,7 @@ double OMP_Reference(
  * @param[in]  graph	      Input graph
  * @param[in]  source	      The source vertex
  * @param[in]  sink           The sink vertex
- * @param[in]  h_flow	      Computed flow on edges 
+ * @param[in]  h_flow	      Computed flow on edges
  * @param[in]  ref_flow	      Reference flow on edges
  * @param[in]  verbose	      Whether to output detail comparsions
  *
@@ -1135,7 +1123,7 @@ uint64_t Validate_Results(
     bool		  verbose = true)
 {
     typedef typename GraphT::CsrT   CsrT;
-    typedef typename GraphT::SizeT  SizeT;  
+    typedef typename GraphT::SizeT  SizeT;
 
     uint64_t num_errors = 0;
     bool quiet = parameters.Get<bool>("quiet");
@@ -1182,7 +1170,7 @@ uint64_t Validate_Results(
         {
             ++num_errors;
             util::PrintMsg("FAIL: Min cut " + std::to_string(mincut_flow) +
-                    " and max flow " + std::to_string(flow_incoming_sink) + 
+                    " and max flow " + std::to_string(flow_incoming_sink) +
                     " are not equal", !quiet);
         } else {
             util::PrintMsg("PASS!", !quiet);
@@ -1219,7 +1207,7 @@ uint64_t Validate_Results(
 
         if (num_errors > 0)
         {
-            util::PrintMsg(std::to_string(num_errors) + " errors occurred.", 
+            util::PrintMsg(std::to_string(num_errors) + " errors occurred.",
                     !quiet);
         }else
         {
@@ -1242,7 +1230,7 @@ uint64_t Validate_Results(
             {
                 if (util::isValid(h_flow[e]))
                 {
-                    if (h_flow[e] > 0 && 
+                    if (h_flow[e] > 0 &&
                         h_flow[e] - graph.CsrT::edge_values[e] > MF_EPSILON_VALIDATE)
                     {
                         num_errors ++;
@@ -1250,7 +1238,7 @@ uint64_t Validate_Results(
                             util::PrintMsg("FAIL: edge " + std::to_string(e)
                                 + ", flow = " + std::to_string(h_flow[e])
                                 + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]));
-                    } else 
+                    } else
                         flow_v += h_flow[e];
                 } else {
                     ++num_errors;
@@ -1258,19 +1246,19 @@ uint64_t Validate_Results(
                 }
             }
             if (fabs(flow_v) > MF_EPSILON_VALIDATE){
-                debug_aml("Excess for vertex %d is %lf > %llf\n", 
+                debug_aml("Excess for vertex %d is %lf > %llf\n",
                         v, fabs(flow_v), 1e-12);
             } else
                 continue;
             ++num_errors;
             if (num_errors == 1)
                 util::PrintMsg("FAIL: for vertex " + std::to_string(v) +
-                    " excess " + std::to_string(flow_v) + 
+                    " excess " + std::to_string(flow_v) +
                     " is not equal to 0", !quiet);
         }
         if (num_errors > 0)
         {
-            util::PrintMsg(std::to_string(num_errors) + " errors occurred.", 
+            util::PrintMsg(std::to_string(num_errors) + " errors occurred.",
                     !quiet);
         } else {
             util::PrintMsg("PASS", !quiet);
@@ -1310,7 +1298,7 @@ uint64_t Validate_Results(
             VertexT u = graph.CsrT::GetEdgeDest(e);
             if (vertex_markers[u] == 2)
                 continue;
-            ValueT residue = graph.CsrT::edge_values[e] - h_flow[e]; 
+            ValueT residue = graph.CsrT::edge_values[e] - h_flow[e];
             if (residue > possible_flows[v])
                 residue = possible_flows[v];
             if (residue > possible_flows[u])
@@ -1345,7 +1333,7 @@ uint64_t Validate_Results(
                 + ")- " + std::to_string(v), !quiet, false);
         }
         util::PrintMsg("", !quiet);
-    } else 
+    } else
         util::PrintMsg("PASS", !quiet);
 
     delete[] active_vertices; active_vertices = NULL;
@@ -1378,4 +1366,3 @@ uint64_t Validate_Results(
 // mode:c++
 // c-file-style: "NVIDIA"
 // End:
-
