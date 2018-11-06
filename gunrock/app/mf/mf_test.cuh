@@ -534,8 +534,8 @@ double CPU_Reference(
 template <typename T>
 __forceinline__ bool ToTrack(const T &v)
 {
-    //int num_targets=3;
-    //T targets[] = {9, 3214, 2658};
+    //int num_targets=8;
+    //T targets[] = {0, 1, 1432, 4312, 4752, 5265, 8922, 8923};
 
     //for (auto i = 0; i < num_targets; i++)
     //    if (v == targets[i])
@@ -544,29 +544,40 @@ __forceinline__ bool ToTrack(const T &v)
     //return true;
 }
 
-template <typename VertexT>
+template <typename VertexT, typename MarkerT>
 __forceinline__ void SetActive(
     const VertexT &v,
-    VertexT *active_markers,
+    MarkerT *active_markers,
     VertexT *active_vertices,
     VertexT &num_active_vertices,
     bool     avoid_atomic = false)
 {
     if (avoid_atomic)
     {
-        active_markers[v] ++;
-        if (active_markers[v] != 1)
+        if (active_markers[v] > MF_EPSILON)
             return;
+        //active_markers[v] ++;
+        //if (active_markers[v] != 1)
+        //    return;
         active_vertices[num_active_vertices] = v;
         num_active_vertices ++;
         return;
     }
 
-    if (_atomicAdd(active_markers + v, (VertexT)1) != 0)
+    if (_atomicAdd(active_markers + v, 1) != 0)
         return;
     active_vertices[_atomicAdd(&num_active_vertices, (VertexT)1)]
         = v;
 }
+
+using SelectFlag = uint32_t;
+enum : SelectFlag
+{
+    MIN_HEIGHT = 0x01,
+    ANY        = 0x02,
+    ANY_HISTORY = 0x03,
+    MAX_GAIN   = 0x04,
+};
 
 /**
  * @brief OpenMP based MF implementations
@@ -606,6 +617,7 @@ double OMP_Reference(
     uint64_t relabeling_interval = parameters.template Get<uint64_t>("relabeling-interval");
     bool     use_active_vertices = parameters.template Get<bool    >("active-vertices");
     bool     use_residual        = parameters.template Get<bool    >("use-residual");
+    bool     use_atomic          = parameters.template Get<bool    >("use-atomic");
 
     util::CpuTimer cpu_timer;
     auto     nodes               = graph.nodes;
@@ -635,6 +647,12 @@ double OMP_Reference(
     SizeT   *s_num_pushes        = new SizeT[num_threads];
     SizeT   *s_num_s_pushes      = new SizeT[num_threads];
     SizeT   *s_num_relabels      = new SizeT[num_threads];
+    ValueT **s_excess_changes    = NULL;
+    VertexT **s_active_vertices  = NULL;
+    VertexT *s_num_active_vertices = NULL;
+    VertexT **s_temp_vertices    = NULL;
+    VertexT *s_temp_counts       = NULL;
+    VertexT *s_temp_offsets      = NULL;
 
     // Init
     if (use_residual)
@@ -698,8 +716,34 @@ double OMP_Reference(
         //    org_excesses = new ValueT[nodes];
     }
 
+    if (!use_atomic)
+    {
+        s_excess_changes = new ValueT*[num_threads];
+        for (int t = 0; t < num_threads; t++)
+        {
+            s_excess_changes[t] = new ValueT[nodes];
+            for (VertexT v = 0; v < nodes; v++)
+                s_excess_changes[t][v] = 0;
+        }
+            
+        s_active_vertices = new VertexT*[num_threads];
+        s_num_active_vertices = new VertexT[num_threads];
+        if (use_active_vertices)
+        {
+            s_temp_vertices = new VertexT*[num_threads];
+            s_temp_counts   = new VertexT[num_threads];
+            s_temp_offsets  = new VertexT[num_threads];
+            for (int t = 0; t < num_threads; t++)
+            {
+                s_num_active_vertices[t] = 0;
+                s_active_vertices[t] = new VertexT[nodes];
+                s_temp_vertices[t] = new VertexT[nodes];
+            }
+        }
+    }
+
     if (iter_stats)
-        util::PrintMsg("Iter\t # active vertices\t #edges visited\t #valid edges\t "
+        util::PrintMsg("Time\t Iter\t # active vertices\t #edges visited\t #valid edges\t "
             "#pushes\t #sturated pushes\t #relabels\t excesses[sink]\t "
             "#reachable vertices\t sink reachable", !quiet);
 
@@ -727,6 +771,11 @@ double OMP_Reference(
             SizeT t_num_s_pushes  = 0;
             SizeT t_num_relabels  = 0;
             bool  t_has_update    = false;
+            ValueT *t_excess_changes = NULL;
+            VertexT *t_next_active_vertices = (use_atomic) ? 
+                next_active_vertices : s_active_vertices[thread_num];
+            VertexT &t_next_num_active_vertices = (use_atomic) ?
+                next_num_active_vertices : s_num_active_vertices[thread_num];
 
             VertexT pos_start = num_active_vertices / num_threads * thread_num;
             VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
@@ -735,11 +784,11 @@ double OMP_Reference(
             if (thread_num + 1 == num_threads)
                 pos_end = num_active_vertices;
 
-            if (use_active_vertices)
-            {
-                for (VertexT pos = pos_start; pos < pos_end; pos++)
-                    active_markers[active_vertices[pos]] = 0;
-            }
+            //if (use_active_vertices)
+            //{
+            //    for (VertexT pos = pos_start; pos < pos_end; pos++)
+            //        active_markers[active_vertices[pos]] = 0;
+            //}
 
             if (merge_push_relabel)
             {
@@ -750,6 +799,8 @@ double OMP_Reference(
                         = util::PreDefinedValues<VertexT>::MaxValue;
                 }
             }
+            if (!use_atomic)
+                t_excess_changes = s_excess_changes[thread_num];
 
             #pragma omp barrier
             //if (thread_num == 0)
@@ -805,54 +856,95 @@ double OMP_Reference(
                     //if (move < MF_EPSILON)
                     //    continue;
 
-                    if (ToTrack(v) || ToTrack(u))
-                        util::PrintMsg(std::to_string(thread_num)
-                            + " Pushing " + std::to_string(move)
-                            + " from "    + std::to_string(v)
-                            + " to "      + std::to_string(u));
                     t_num_pushes ++;
-                    #pragma omp atomic
-                    excesses[v] -= move;
+                    if (!use_atomic)
+                    {
+                        if (use_active_vertices)
+                        {
+                            SetActive(u, t_excess_changes,
+                                t_next_active_vertices, t_next_num_active_vertices, true);
+                        }
 
-                    #pragma omp atomic
-                    excesses[u] += move;
+                        excesses[v] -= move;
+                        t_excess_changes[u] += move;
+                    } else {
+                        #pragma omp atomic
+                        excesses[v] -= move;
+
+                        #pragma omp atomic
+                        excesses[u] += move;
+                    
+                        if (use_active_vertices)
+                        {
+                            SetActive(u, active_markers,
+                                t_next_active_vertices, t_next_num_active_vertices, false);
+                        }
+                    }
 
                     if (use_residual)
                     {
-                        #pragma omp atomic
+                        //#pragma omp atomic
                         residuals[e] -= move;
                     } else {
-                        #pragma omp atomic
+                        //#pragma omp atomic
                         flows[e] += move;
                     }
 
                     auto reverse_e = reverses[e];
                     if (merge_push_relabel)
                     {
-                        ValueT pervious_residule = (use_residual) ?
-                            (_atomicAdd(residuals + reverse_e, move)) :
-                            (capacities[reverse_e]
-                                - _atomicAdd(flows + reverse_e, -move));
+                        //ValueT pervious_residule = (use_residual) ?
+                        //    (_atomicAdd(residuals + reverse_e, move)) :
+                        //    (capacities[reverse_e]
+                        //        - _atomicAdd(flows + reverse_e, -move));
+                        ValueT pervious_residule = 0;
+                        if (use_residual)
+                        {
+                            pervious_residule = residuals[reverse_e];
+                            residuals[reverse_e] += move;
+                        } else {
+                            pervious_residule = capacities[reverse_e] - flows[reverse_e];
+                            flows[reverse_e] -= move;
+                        }
+                            
                         if (pervious_residule < MF_EPSILON)
                         {
-                            _atomicMin(next_heights + u, height + 1);
+                            VertexT old_height = _atomicMin(next_heights + u, height + 1);
+                            if (ToTrack(v) || ToTrack(u))
+                                util::PrintMsg(std::to_string(thread_num)
+                                    + " Setting0 n_height[" + std::to_string(u)
+                                    + "] to " + std::to_string(height + 1)
+                                    + " from " + std::to_string(v));
                         }
                     } else {
                         if (use_residual)
                         {
-                            #pragma omp atomic
+                            //#pragma omp atomic
                             residuals[reverse_e] += move;
                         } else {
-                            #pragma omp atomic
+                            //#pragma omp atomic
                             flows[reverse_e] -= move;
                         }
                     }
 
-                    if (use_active_vertices)
-                    {
-                        SetActive(u, active_markers,
-                            next_active_vertices, next_num_active_vertices);
-                    }
+                    excess -= move;
+                    if (ToTrack(v) || ToTrack(u))
+                        util::PrintMsg(std::to_string(thread_num)
+                            + " Pushing " + std::to_string(move)
+                            + " from "    + std::to_string(v) 
+                            + " h("       + std::to_string(height)
+                            + ") to "     + std::to_string(u) 
+                            + " h("       + std::to_string(height_u) 
+                            + ") e("      + std::to_string(e)
+                            + ", "        + std::to_string(capacities[e])
+                            + ", "        + std::to_string((use_residual) ?
+                            capacities[e] - residuals[e] : flows[e])
+                            + ") e`("     + std::to_string(reverse_e)
+                            + ", "        + std::to_string(capacities[reverse_e])
+                            + ", "        + std::to_string((use_residual) ?
+                            capacities[reverse_e] - residuals[reverse_e] : flows[reverse_e])
+                            + ") excess = " + std::to_string(excess));
+
                     pushed = true;
                     if (use_residual)
                     {
@@ -862,15 +954,20 @@ double OMP_Reference(
                         if (capacities[e] - flows[e] < MF_EPSILON)
                             t_num_s_pushes ++;
                     }
-                    excess -= move;
                     if (excess < MF_EPSILON)
                         break;
                 } // end of for e
 
-                if (excess > MF_EPSILON && use_active_vertices && pushed)
+                if (excess > MF_EPSILON && use_active_vertices)
                 {
-                    SetActive(v, active_markers,
-                        next_active_vertices, next_num_active_vertices);
+                    if (use_atomic)
+                    {
+                        SetActive(v, active_markers,
+                            t_next_active_vertices, t_next_num_active_vertices, false);
+                    } else {
+                        SetActive(v, t_excess_changes,
+                            t_next_active_vertices, t_next_num_active_vertices, true);
+                    }
                 }
 
                 pusheds[v] = pushed;
@@ -882,6 +979,10 @@ double OMP_Reference(
                     if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
                         heights[v] <= min_height)
                     {
+                        if (ToTrack(v))
+                            util::PrintMsg(std::to_string(thread_num)
+                                + " Setting1 n_height[" + std::to_string(v)
+                                + "] to " + std::to_string(min_height + 1));
                         _atomicMin(next_heights + v, min_height + 1);
                     }
                 }
@@ -894,6 +995,137 @@ double OMP_Reference(
             s_num_relabels [thread_num] = t_num_relabels;
             if (t_has_update)
                 s_has_update = true;
+        }
+
+        if (use_active_vertices && !merge_push_relabel && use_atomic)
+        {
+            auto temp = next_active_vertices;
+            next_active_vertices = active_vertices;
+            active_vertices = temp;
+            num_active_vertices = next_num_active_vertices;
+            next_num_active_vertices = 0;
+        
+            for (VertexT i = 0; i < num_active_vertices; i++)
+                active_markers[active_vertices[i]] = 0;
+        }
+
+        if (!use_atomic)
+        {
+            if (!use_active_vertices)
+            {
+                #pragma omp parallel num_threads(num_threads)
+                {
+                    int thread_num        = omp_get_thread_num();
+                    int num_threads       = omp_get_num_threads();
+                    VertexT pos_start = num_active_vertices / num_threads * thread_num;
+                    VertexT pos_end   = num_active_vertices / num_threads * (thread_num + 1);
+                    if (thread_num == 0)
+                        pos_start = 0;
+                    if (thread_num + 1 == num_threads)
+                        pos_end = num_active_vertices;
+
+                    for (VertexT pos = pos_start; pos < pos_end; pos++)
+                    {
+                        VertexT v = (use_active_vertices) ? active_vertices[pos] : pos;
+
+                        for (int t = 0; t < num_threads; t++)
+                        {
+                            excesses[v] += s_excess_changes[t][v];
+                            s_excess_changes[t][v] = 0;
+                        }
+                    }
+                }
+            } else if (merge_push_relabel)
+            { // only merge excess
+                #pragma omp parallel num_threads(num_threads)
+                {
+                    int thread_num = omp_get_thread_num();
+                    int num_threads = omp_get_num_threads();
+
+                    VertexT v_start = nodes / num_threads * thread_num;
+                    VertexT v_end   = nodes / num_threads * (thread_num + 1);
+                    if (thread_num == 0)
+                        v_start = 0;
+                    if (thread_num + 1 == num_threads)
+                        v_end = nodes;
+
+                    for (int t = 0; t < num_threads; t++)
+                    {
+                        VertexT num_v = s_num_active_vertices[t];
+                        VertexT *vertices = s_active_vertices[t];
+                        ValueT  *excess_changes = s_excess_changes[t];
+                        for (VertexT i = 0; i < num_v; i++)
+                        {
+                            VertexT v = vertices[i];
+                            if (v < v_start || v_end <= v)
+                                continue;
+
+                            excesses[v] += excess_changes[v];
+                            excess_changes[v] = 0;
+                        }
+                    }
+                }
+            } else { // merge active vertices and excess
+                #pragma omp parallel num_threads(num_threads)
+                {
+                    int thread_num = omp_get_thread_num();
+                    int num_threads = omp_get_num_threads();
+
+                    VertexT v_start = nodes / num_threads * thread_num;
+                    VertexT v_end   = nodes / num_threads * (thread_num + 1);
+                    if (thread_num == 0)
+                        v_start = 0;
+                    if (thread_num + 1 == num_threads)
+                        v_end = nodes;
+
+                    VertexT count = 0;
+                    VertexT *temp_vertices = s_temp_vertices[thread_num];
+                    for (int t = 0; t < num_threads; t++)
+                    {
+                        VertexT num_v = s_num_active_vertices[t];
+                        VertexT *vertices = s_active_vertices[t];
+                        ValueT  *excess_changes = s_excess_changes[t];
+                        for (VertexT i = 0; i < num_v; i++)
+                        {
+                            VertexT v = vertices[i];
+                            if (v < v_start || v_end <= v)
+                                continue;
+
+                            excesses[v] += excess_changes[v];
+                            excess_changes[v] = 0;
+
+                            if (active_markers[v] == 0)
+                            {
+                                active_markers[v] = 1;
+                                temp_vertices[count] = v;
+                                count ++;
+                            }
+                        }
+                    }
+
+                    s_temp_counts[thread_num] = count;
+                    #pragma omp barrier
+                    #pragma omp single
+                    {
+                        VertexT total_count = 0;
+                        for (int t = 0; t < num_threads; t++)
+                        {
+                            s_temp_offsets[t] = total_count;
+                            total_count += s_temp_counts[t];
+                        }
+                        num_active_vertices = total_count;
+                    }
+
+                    VertexT offset = s_temp_offsets[thread_num];
+                    for (VertexT i = 0; i < count; i++)
+                    {
+                        VertexT v = temp_vertices[i];
+                        active_vertices[i + offset] = v;
+                        active_markers[v] = 0;
+                    }
+                    s_num_active_vertices[thread_num] = 0;
+                }
+            }
         }
 
         //util::PrintMsg("Barrier 1");
@@ -937,17 +1169,29 @@ double OMP_Reference(
                     //}
                     if (pusheds[v])
                         continue;
-
+                    if (heights[v] >= next_heights[v])
+                        continue;
+ 
                     if (ToTrack(v))
                         util::PrintMsg(std::to_string(thread_num)
-                            + " Relabeling0 " + std::to_string(v)
+                            + " Relabel0 " + std::to_string(v)
+                            + " from " + std::to_string(heights[v])
                             + " to " + std::to_string(next_heights[v]));
                     heights[v] = next_heights[v];
                     t_has_update = true;
                     t_num_relabels ++;
 
-                    SetActive(v, active_markers,
-                        next_active_vertices, next_num_active_vertices);
+                    if (use_active_vertices)
+                    {
+                        if (use_atomic)
+                        {
+                            SetActive(v, active_markers,
+                                next_active_vertices, next_num_active_vertices, false);
+                        } else {
+                            SetActive(v, s_excess_changes[thread_num],
+                                s_active_vertices[thread_num], s_num_active_vertices[thread_num], true);
+                        }
+                    }
                 }
             } else {
                 //#pragma omp parallel for num_threads(num_threads) reduction(+:num_relabels, num_e_visited)
@@ -964,14 +1208,15 @@ double OMP_Reference(
                     auto excess = excesses[v];
                     if (excess < MF_EPSILON)
                         continue;
-                    if (pusheds[v])
-                        continue;
+                    //if (pusheds[v])
+                    //    continue;
 
                     VertexT min_height = util::PreDefinedValues<VertexT>::MaxValue;
                     SizeT e_start  = graph.CsrT::GetNeighborListOffset(v);
                     SizeT v_degree = graph.CsrT::GetNeighborListLength(v);
                     SizeT e_end    = e_start + v_degree;
                     auto  height   = heights[v];
+                    bool  valid    = true;
 
                     for (SizeT e = e_start; e < e_end; e++)
                     {
@@ -983,11 +1228,18 @@ double OMP_Reference(
 
                         VertexT u = graph.CsrT::GetEdgeDest(e);
                         auto height_u = heights[u];
+                        if (height_u < height)
+                        {
+                            valid = false;
+                            break;
+                        }
                         if (min_height > height_u)
                             min_height = height_u;
                     }
+                    if (!valid)
+                        continue;
                     if (min_height != util::PreDefinedValues<VertexT>::MaxValue &&
-                        min_height >= heights[v])
+                        min_height >= height)
                     {
                         if (ToTrack(v))
                             util::PrintMsg(std::to_string(thread_num)
@@ -997,11 +1249,11 @@ double OMP_Reference(
                         t_has_update = true;
                         t_num_relabels ++;
 
-                        if (use_active_vertices)
-                        {
-                            SetActive(v, active_markers,
-                                next_active_vertices, next_num_active_vertices);
-                        }
+                        //if (use_active_vertices)
+                        //{
+                        //    SetActive(v, active_markers,
+                        //        next_active_vertices, next_num_active_vertices);
+                        //}
                     }
                 }
             }
@@ -1026,7 +1278,8 @@ double OMP_Reference(
         if (iter_stats)
         {
             util::PrintMsg(
-                  std::to_string(iterations) + "\t"
+                  std::to_string(cpu_timer.MillisSinceStart()) + "\t"
+                + std::to_string(iterations) + "\t"
                 + std::to_string(num_active_vertices) + "\t"
                 + std::to_string(num_e_visited) + "\t"
                 + std::to_string(num_valid_e) + "\t"
@@ -1042,13 +1295,76 @@ double OMP_Reference(
         total_num_pushes += num_pushes;
         total_num_s_pushes += num_s_pushes;
         total_num_relabels += num_relabels;
-        if (use_active_vertices)
+        if (use_active_vertices && merge_push_relabel)
         {
-            auto temp = next_active_vertices;
-            next_active_vertices = active_vertices;
-            active_vertices = temp;
-            num_active_vertices = next_num_active_vertices;
-            next_num_active_vertices = 0;
+            if (use_atomic)
+            {
+                auto temp = next_active_vertices;
+                next_active_vertices = active_vertices;
+                active_vertices = temp;
+                num_active_vertices = next_num_active_vertices;
+                next_num_active_vertices = 0;
+        
+                for (VertexT i = 0; i < num_active_vertices; i++)
+                    active_markers[active_vertices[i]] = 0;
+            } else {
+                #pragma omp parallel num_threads(num_threads)
+                {
+                    int thread_num = omp_get_thread_num();
+                    int num_threads = omp_get_num_threads();
+
+                    VertexT v_start = nodes / num_threads * thread_num;
+                    VertexT v_end   = nodes / num_threads * (thread_num + 1);
+                    if (thread_num == 0)
+                        v_start = 0;
+                    if (thread_num + 1 == num_threads)
+                        v_end = nodes;
+
+                    VertexT count = 0;
+                    VertexT *temp_vertices = s_temp_vertices[thread_num];
+                    for (int t = 0; t < num_threads; t++)
+                    {
+                        VertexT num_v = s_num_active_vertices[t];
+                        VertexT *vertices = s_active_vertices[t];
+                        for (VertexT i = 0; i < num_v; i++)
+                        {
+                            VertexT v = vertices[i];
+                            if (v < v_start || v_end <= v)
+                                continue;
+
+                            if (active_markers[v] == 0)
+                            {
+                                active_markers[v] = 1;
+                                temp_vertices[count] = v;
+                                count ++;
+                            }
+                        }
+                    }
+
+                    s_temp_counts[thread_num] = count;
+                    #pragma omp barrier
+                    #pragma omp single
+                    {
+                        VertexT total_count = 0;
+                        for (int t = 0; t < num_threads; t++)
+                        {
+                            s_temp_offsets[t] = total_count;
+                            total_count += s_temp_counts[t];
+                        }
+                        num_active_vertices = total_count;
+                    }
+
+                    VertexT offset = s_temp_offsets[thread_num];
+                    for (VertexT i = 0; i < count; i++)
+                    {
+                        VertexT v = temp_vertices[i];
+                        active_vertices[i + offset] = v;
+                        active_markers[v] = 0;
+                    }
+                
+                    s_num_active_vertices[thread_num] = 0;
+                }
+            }
         }
 
         if (util::isValid(max_iter) && iterations > max_iter)
@@ -1060,7 +1376,7 @@ double OMP_Reference(
     }
     cpu_timer.Stop();
     util::PrintMsg(
-          "Total\t"
+          "Total\t" + std::to_string(iterations) + "\t"
         + std::to_string(total_num_active_vertices) + "\t"
         + std::to_string(total_num_e_visited) + "\t"
         + std::to_string(total_num_valid_e) + "\t"
@@ -1237,7 +1553,7 @@ uint64_t Validate_Results(
                         if (num_errors == 1)
                             util::PrintMsg("FAIL: edge " + std::to_string(e)
                                 + ", flow = " + std::to_string(h_flow[e])
-                                + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]));
+                                + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]), !quiet);
                     } else
                         flow_v += h_flow[e];
                 } else {
@@ -1252,9 +1568,17 @@ uint64_t Validate_Results(
                 continue;
             ++num_errors;
             if (num_errors == 1)
+            {
                 util::PrintMsg("FAIL: for vertex " + std::to_string(v) +
                     " excess " + std::to_string(flow_v) +
                     " is not equal to 0", !quiet);
+                for (auto e = e_start; e < e_end; ++e)
+                    util::PrintMsg(std::to_string(v) 
+                        + " -(" + std::to_string(e)
+                        + ", " + std::to_string(graph.CsrT::edge_values[e])
+                        + ", " + std::to_string(h_flow[e])
+                        + ")-> " + std::to_string(graph.CsrT::GetEdgeDest(e)), !quiet);
+            }
         }
         if (num_errors > 0)
         {

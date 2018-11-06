@@ -114,6 +114,21 @@ cudaError_t UseParameters(util::Parameters &parameters)
         false,
         "whether to mark activer activers and only process them",
         __FILE__, __LINE__));
+    
+    GUARD_CU(parameters.Use<bool>(
+        "use-residual",
+        util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        false,
+        "whether to use residuals instead of flows",
+        __FILE__, __LINE__));
+
+    GUARD_CU(parameters.Use<bool>(
+        "use-atomic",
+        util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
+        true,
+        "whether to use atomic operations",
+        __FILE__, __LINE__));
+
     return retval;
 }
 

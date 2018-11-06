@@ -242,9 +242,9 @@ __device__ __host__ __forceinline__ T _ldg(T* addr)
 #endif
 }
 
-template <typename T>
+template <typename T, typename T2>
 __device__ __host__ __forceinline__
-T _atomicAdd(T* ptr, const T &val)
+T _atomicAdd(T* ptr, const T2 &val)
 {
 #ifdef __CUDA_ARCH__
     return atomicAdd(ptr, val);
@@ -291,7 +291,7 @@ T _atomicMin(T* ptr, const T &val)
         #pragma omp atomic capture
         {
             old_val = ptr[0];
-            ptr[0] = old_val;
+            ptr[0] = new_val;
         }
         if (first)
         {
