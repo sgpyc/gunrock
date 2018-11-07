@@ -748,6 +748,12 @@ double OMP_Reference(
                 s_active_vertices[t] = new VertexT[nodes];
                 s_temp_vertices[t] = new VertexT[nodes];
             }
+        } else {
+            for (int t = 0; t < num_threads; t++)
+            {
+                s_active_vertices[t] = NULL;
+                s_num_active_vertices[t] = NULL;
+            }
         }
     }
 
@@ -1512,7 +1518,7 @@ double OMP_Reference(
     {
         for (SizeT e = 0; e < edges; e++)
             flows[e] = capacities[e] - residuals[e];
-        delete residuals; residuals = NULL;
+        delete[] residuals; residuals = NULL;
     }
     maxflow = excesses[sink];
     delete[] excesses       ; excesses        = NULL;
