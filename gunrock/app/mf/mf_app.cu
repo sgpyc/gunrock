@@ -80,11 +80,25 @@ cudaError_t UseParameters(util::Parameters &parameters)
         "number of runs for OpenMP reference",
         __FILE__, __LINE__));
 
+    GUARD_CU(parameters.Use<int>(
+        "pmpm-runs",
+        util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+        1,
+        "number of runs for PMPM",
+        __FILE__, __LINE__));
+
     GUARD_CU(parameters.Use<bool>(
         "iter-stats",
         util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
         false,
         "whether to show per-iteration stats",
+        __FILE__, __LINE__));
+ 
+    GUARD_CU(parameters.Use<bool>(
+        "pass-stats",
+        util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+        false,
+        "whether to show per-pass stats",
         __FILE__, __LINE__));
     
     GUARD_CU(parameters.Use<uint64_t>(
@@ -219,6 +233,45 @@ cudaError_t RunTests(
         util::PrintMsg(" Max. elapsed: " + std::to_string(max_elapsed) + " ms", !quiet_mode);
     }
 
+    int num_pmpm_runs    = parameters.Get<int>("pmpm-runs");
+    if (num_pmpm_runs > 0)
+    {
+        ValueT *pmpm_flows = new ValueT[graph.edges];
+        ValueT max_flow = 0;
+        SizeT iterations = 0;
+        double min_elapsed = 1e20;
+        double max_elapsed = 0;
+        double sum_elapsed = 0;
+        for (int i = 0; i < num_pmpm_runs; i++)
+        {
+            util::PrintMsg("________PMPM implementation______", !quiet_mode);
+            double elapsed = app::mf::PMPM(
+                parameters, graph, source, sink, max_flow,
+                h_reverse, pmpm_flows, iterations);
+            util::PrintMsg("--------------------------------\n"
+                "Run " + std::to_string(i)
+                + ", elapsed: " + std::to_string(elapsed)
+                + ", max_flow = " + std::to_string(max_flow)
+                + ", #iterations = " + std::to_string(iterations), !quiet_mode);
+            if (min_elapsed > elapsed)
+                min_elapsed = elapsed;
+            if (max_elapsed < elapsed)
+                max_elapsed = elapsed;
+            sum_elapsed += elapsed;
+            if (validation == "each")
+                app::mf::Validate_Results(parameters, graph, source, sink,
+                    pmpm_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false, false);
+        }
+        if (validation == "last")
+        {
+            app::mf::Validate_Results(parameters, graph, source, sink,
+                pmpm_flows, h_reverse, (int*)NULL, (ValueT*)NULL, false, false);
+        }
+        delete[] pmpm_flows; pmpm_flows = NULL;
+        util::PrintMsg(" Avg. elapsed: " + std::to_string(sum_elapsed / num_pmpm_runs) + " ms", !quiet_mode);
+        util::PrintMsg(" Min. elapsed: " + std::to_string(min_elapsed) + " ms", !quiet_mode);
+        util::PrintMsg(" Max. elapsed: " + std::to_string(max_elapsed) + " ms", !quiet_mode);
+    }
     // Allocate host-side array (for both reference and GPU-computed results)
     // ... for function Extract
 

@@ -534,8 +534,9 @@ double CPU_Reference(
 template <typename T>
 __forceinline__ bool ToTrack(const T &v)
 {
-    //int num_targets=8;
-    //T targets[] = {0, 1, 1432, 4312, 4752, 5265, 8922, 8923};
+    //int num_targets=12;
+    //T targets[] = {2849, 2646, 6574, 6576, 5490, 5491, 
+    //    4095, 7061, 7062, 6535, 7145, 7146};
 
     //for (auto i = 0; i < num_targets; i++)
     //    if (v == targets[i])
@@ -1574,6 +1575,458 @@ double OMP_Reference(
 }
 
 /**
+ * @brief OpenMP based MF implementations
+ *
+ * @tparam GraphT   Type of the graph
+ * @tparam VertexT  Type of the vertex
+ * @tparam ValueT   Type of the capacity/flow/excess
+ * @param[in]  parameters Running parameters
+ * @param[in]  graph      Input graph
+ * @param[in]  src        The source vertex
+ * @param[in]  sin        The sink vertex
+ * @param[out] maxflow	  Value of computed maxflow reached sink
+ * @param[out] reverse	  Computed reverse
+ * @param[out] edges_flow Computed flows on edges
+ *
+ * \return     double      Time taken for the MF
+ */
+template <typename VertexT, typename ValueT, typename GraphT>
+double PMPM(
+	util::Parameters &parameters,
+	GraphT  &graph,
+	VertexT  source,
+	VertexT  sink,
+	ValueT  &maxflow,
+	VertexT *reverses,
+	ValueT  *flows,
+    typename GraphT::SizeT &iterations)
+{
+    typedef typename GraphT::SizeT SizeT;
+    typedef typename GraphT::CsrT  CsrT;
+    typedef std::pair<SizeT, ValueT> PairT;
+
+    bool    iter_stats      = parameters.template Get<bool>("iter-stats");
+    bool    pass_stats      = parameters.template Get<bool>("pass-stats");
+    bool    quiet           = parameters.template Get<bool>("quiet");
+
+    auto    nodes           = graph.nodes;
+    auto    edges           = graph.edges;
+    auto    &capacities     = graph.CsrT::edge_values;
+    ValueT *residuals       = new ValueT [edges];
+    VertexT *heights        = new VertexT[nodes];
+    ValueT  *potentials_in  = new ValueT [nodes];
+    ValueT  *potentials_out = new ValueT [edges];
+    PairT   *pairs          = new PairT  [nodes];
+    VertexT *vertex_queue   = new VertexT[nodes];
+    bool    *vertex_active  = new bool   [nodes];
+    ValueT  *drains_in      = new ValueT [nodes];
+    ValueT  *drains_out     = new ValueT [nodes];
+    ValueT  *moves_in       = new ValueT [nodes];
+    ValueT  *moves_out      = new ValueT [nodes];
+    std::vector<VertexT*> V; // vertices at each BFS layer
+    std::vector<SizeT> V_length;
+    util::CpuTimer cpu_timer;
+
+    for (auto e = 0; e < edges; e++)
+        residuals[e] = capacities[e];
+    V.push_back(new VertexT[1]);
+    bool to_continue = true;
+    VertexT  pass_num = 0;
+    ValueT   flow = 0;
+
+    cpu_timer.Start();
+    while (to_continue)
+    {
+        // step 1, BFS
+        VertexT h = 0;
+        V[0][0] = source;
+        VertexT queue_length = 0;
+        for (auto v = 0; v < nodes; v++)
+        {
+            heights[v] = util::PreDefinedValues<VertexT>::InvalidValue;
+            potentials_in [v] = 0;
+            potentials_out[v] = 0;
+            vertex_active [v] = false;
+        }
+        heights      [source] = 0;
+        vertex_active[source] = true;
+        potentials_in[source] = util::PreDefinedValues<ValueT>::MaxValue;
+        
+        bool sink_reachable = false;
+        VertexT num_active_vertices = 0;
+        auto Set_Inactive = [&](const VertexT &v)
+        {
+            vertex_active[v] = false;
+            num_active_vertices --;
+            vertex_queue[queue_length] = v;
+            queue_length ++;
+            potentials_out[v] = 0;
+            potentials_in [v] = 0;
+        };
+
+        V_length.clear();
+        V_length.push_back(1);
+        while (V_length[h] != 0 && !sink_reachable)
+        {
+            auto V_current = V[h];
+            auto h_next = h+1;
+            if (V.size() <= h_next)
+                V.push_back(new VertexT[nodes]);
+            auto V_next = V[h_next];
+            VertexT length_next = 0;
+            auto length_current = V_length[h];
+            for (auto i = 0; i < length_current; i++)
+            {
+                auto v = V_current[i];
+                auto e_start = graph.CsrT::GetNeighborListOffset(v);
+                auto degree  = graph.CsrT::GetNeighborListLength(v);
+                auto e_end   = e_start + degree;
+
+                for (auto e = e_start; e < e_end; e++)
+                {
+                    auto residual = residuals[e];
+                    if (residual < MF_EPSILON)
+                        continue;
+ 
+                    auto u = graph.CsrT::GetEdgeDest(e);
+                    if (util::isValid(heights[u]))
+                    {
+                        if (heights[u] == h_next)
+                        {
+                            potentials_in [u] += residual;
+                            potentials_out[v] += residual;
+                        }
+                        continue;
+                    }
+                    heights[u] = h_next;
+                    potentials_in [u] += residual;
+                    potentials_out[v] += residual;
+                    vertex_active [u] = true;
+                    num_active_vertices ++;
+                    V_next[length_next] = u;
+                    length_next ++;
+                    if (u == sink)
+                    {
+                        sink_reachable = true;
+                        //break;
+                    }                     
+                }
+                if (potentials_out[v] < MF_EPSILON)
+                {
+                    Set_Inactive(v);
+                }
+                //if (sink_reachable)
+                //    break;
+            }
+            
+            if (sink_reachable)
+            {
+                //for (auto i = 0; i < length_current; i++)
+                //{
+                //    auto v = V_current[i];
+                //    potentials_out[v] = 0;
+                //}
+                for (auto i = 0; i < length_next; i++)
+                {
+                    auto v = V_next[i];
+                    if (v != sink)
+                    {
+                        Set_Inactive(v);
+                    }
+                }
+                                
+                //auto e_start = graph.CsrT::GetNeighborListOffset(sink);
+                //auto degree  = graph.CsrT::GetNeighborListLength(sink);
+                //auto e_end   = e_start + degree;
+                //for (auto e = e_start; e < e_end; e++)
+                //{
+                //    auto v = graph.CsrT::GetEdgeDest(e);
+                //    auto u = sink;
+                //    if (heights[v] != h)
+                //        continue;
+                //    auto residual = residuals[reverses[e]];
+                //    if (residual < MF_EPSILON)
+                //        continue;
+                //    potentials_in [u] += residual;
+                //    potentials_out[v] += residual;
+                //}
+                V_next[0] = sink;
+                V_length.push_back(1);
+            } else {
+                V_length.push_back(length_next);
+            }
+            h = h_next;
+        }
+        if (!sink_reachable)
+        {
+            if (iter_stats)
+                util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                    + "\t " + std::to_string(pass_num)
+                    + "\t \t 1\t sink not reachable, h = " + std::to_string(h)
+                    + ", #active_v = " + std::to_string(num_active_vertices), !quiet);
+            to_continue = false; break;
+        }
+        auto h_sink = h;
+        if (iter_stats)
+            util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                + "\t " + std::to_string(pass_num)
+                + "\t \t 1\t sink reachable, h = " + std::to_string(h)
+                + ", #active_v = " + std::to_string(num_active_vertices + queue_length), !quiet);
+
+        bool iteration_continue = true;
+        VertexT iteration_num = 0;
+        while (iteration_continue)
+        {
+            // step 4: remove vertices without potentials
+            VertexT queue_current = 0;
+            while (queue_current < queue_length)
+            {
+                auto v = vertex_queue[queue_current];
+                auto e_start = graph.CsrT::GetNeighborListOffset(v);
+                auto degree  = graph.CsrT::GetNeighborListLength(v);
+                auto e_end   = e_start + degree;
+                for (auto e = e_start; e < e_end; e++)
+                {
+                    auto residual = residuals[e];
+                    if (residual < MF_EPSILON)
+                        continue;
+                    auto u = graph.CsrT::GetEdgeDest(e);
+                    if (!vertex_active[u])
+                        continue;
+                    if (heights[u] != heights[v] + 1)
+                        continue;
+                    
+                    potentials_in[u] -= residual;
+                    if (potentials_in[u] < MF_EPSILON)
+                    {
+                        Set_Inactive(u);
+                        continue;
+                    }
+
+                    auto reverse_e = reverses[e];
+                    residual = residuals[reverse_e];
+                    if (residual < MF_EPSILON)
+                        continue;
+                    potentials_out[u] -= residual;
+                    if (potentials_out[u] < MF_EPSILON)
+                    {
+                        Set_Inactive(u);
+                    }
+                }
+                queue_current ++;
+            }
+            if (iter_stats)
+                util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                    + "\t " + std::to_string(pass_num)
+                    + "\t " + std::to_string(iteration_num)
+                    + "\t 4\t removed " + std::to_string(queue_current)
+                    + " inactive vertices, #active_v = " 
+                    + std::to_string(num_active_vertices), !quiet);
+            queue_length = 0;
+
+            // step 2: t-s sweep
+            for (auto v = 0; v < nodes; v++)
+            {
+                drains_in[v] = 0; drains_out[v] = 0;
+            }
+
+            drains_out[sink] = potentials_in[sink];
+            for (auto h = h_sink; h > 0;)
+            {
+                h--;
+                auto V_current  = V[h];
+                auto length     = V_length[h];
+                for (auto i = 0; i < length; i++)
+                {
+                    auto v = V_current[i];
+                    if (!vertex_active[v])
+                        continue;
+                    auto e_start = graph.CsrT::GetNeighborListOffset(v);
+                    auto degree  = graph.CsrT::GetNeighborListLength(v);
+                    auto e_end   = e_start + degree;
+                    VertexT num_pairs = 0;
+                    for (auto e = e_start; e < e_end; e++)
+                    {
+                        if (residuals[e] < MF_EPSILON)
+                            continue;
+                        auto u = graph.CsrT::GetEdgeDest(e);
+                        if (!vertex_active[u])
+                            continue;
+                        if (heights[u] != h+1)
+                            continue;
+                        
+                        auto drain_u = min(potentials_in[u], drains_out[u]) - drains_in[u];
+                        if (drain_u < MF_EPSILON)
+                            continue;
+                        pairs[num_pairs] = std::make_pair(e, drain_u);
+                        num_pairs ++;
+                    }
+                    //std::sort(pairs, pairs + num_pairs,
+                    //    [](const PairT &a, const PairT &b)
+                    //    {
+                    //        return a.second < b.second;
+                    //    });
+                    auto possible_drain = min(potentials_in[v], potentials_out[v]);
+                    for (auto j = 0; j < num_pairs; j++)
+                    {
+                        auto drain_u = pairs[j].second;
+                        auto e = pairs[j].first;
+                        auto u = graph.CsrT::GetEdgeDest(e);
+                        auto residual = residuals[e];
+                        auto drain = min(min(drain_u, possible_drain), residual);
+                        if (drain < MF_EPSILON)
+                            continue;
+                        drains_out[v] += drain; drains_in[u] += drain;
+                        possible_drain -= drain;
+                        if (possible_drain < MF_EPSILON)
+                            break;
+                    } 
+                }
+            }
+            if (iter_stats)
+                util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                    + "\t " + std::to_string(pass_num)
+                    + "\t " + std::to_string(iteration_num)
+                    + "\t 2\t drains_out[source] = " 
+                    + std::to_string(drains_out[source]), !quiet);
+
+            // step 3: s-t sweep
+            for (auto v = 0; v < nodes; v++)
+            {
+                moves_in[v] = 0; moves_out[v] = 0;
+            }
+            drains_in[source] = drains_out[source];
+            moves_in[source] = drains_out[source];
+
+            iteration_continue = false;
+            queue_length = 0;
+            for (auto h = 0; h < h_sink; h++)
+            {
+                auto V_current = V[h];
+                auto length    = V_length[h];
+                for (auto i = 0; i < length; i++)
+                {
+                    auto v = V_current[i];
+                    if (!vertex_active[v])
+                        continue;
+                    auto e_start = graph.CsrT::GetNeighborListOffset(v);
+                    auto degree  = graph.CsrT::GetNeighborListLength(v);
+                    auto e_end   = e_start + degree;
+                    VertexT num_pairs = 0;
+                    for (auto e = e_start; e < e_end; e++)
+                    {
+                        if (residuals[e] < MF_EPSILON)
+                            continue;
+                        auto u = graph.CsrT::GetEdgeDest(e);
+                        if (!vertex_active[u])
+                            continue;
+                        if (heights[u] != h+1)
+                            continue;
+
+                        auto move_u = min(drains_in[u], drains_out[u]) - moves_in[u];
+                        if (move_u < MF_EPSILON)
+                            continue;
+                        pairs[num_pairs] = std::make_pair(e, move_u);
+                        num_pairs++;
+                    }
+                    //std::sort(pairs, pairs + num_pairs,
+                    //    [](const PairT &a, const PairT &b)
+                    //    {
+                    //        return a.second < b.second;
+                    //    });
+                    auto possible_move = min(min(drains_in[v], drains_out[v]), moves_in[v]);
+                    for (auto j = 0; j < num_pairs; j++)
+                    {
+                        auto move_u = pairs[j].second;
+                        auto e = pairs[j].first;
+                        auto u = graph.CsrT::GetEdgeDest(e);
+                        auto residual = residuals[e];
+                        auto move = min(min(move_u, possible_move), residual);
+                        if (move < MF_EPSILON)
+                            continue;
+                        
+                        if (ToTrack(v) || ToTrack(u))
+                        util::PrintMsg("Pushing " + std::to_string(move)
+                            + " from "   + std::to_string(v)
+                            + " pout "   + std::to_string(potentials_out[v])
+                            + " , dout " + std::to_string(drains_out[v])
+                            + " , mout " + std::to_string(moves_out[v])
+                            + " to "     + std::to_string(u)
+                            + " pin "    + std::to_string(potentials_in[u])
+                            + " , din "  + std::to_string(drains_in[u])
+                            + " , min "  + std::to_string(moves_in[u])
+                            + " e( "     + std::to_string(e)
+                            + " , "      + std::to_string(capacities[e])
+                            + " , "      + std::to_string(residuals[e]) + " )");
+
+                        residuals     [e] -= move;
+                        residuals     [reverses[e]] += move;
+                        potentials_in [u] -= move;
+                        potentials_out[v] -= move;
+                        moves_in      [u] += move;
+                        moves_out     [v] += move;
+                        possible_move     -= move;
+                        //iteration_continue = true;
+                        //if (potentials_in[u] < MF_EPSILON)
+                        //{
+                        //    Set_Inactive(u);
+                        //}
+                    }
+
+                    //if (potentials_out[v] < MF_EPSILON)
+                    //{
+                    //    Set_Inactive(v);
+                    //}
+                }
+            }
+            if (iter_stats)
+                util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                    + "\t " + std::to_string(pass_num)
+                    + "\t " + std::to_string(iteration_num)
+                    + "\t 3\t moves_in[sink] = " 
+                    + std::to_string(moves_in[sink]), !quiet);
+           
+            for (auto v = 0; v < nodes; v++)
+            {
+                if (!vertex_active[v])
+                    continue;
+                if (potentials_in[v] < MF_EPSILON || potentials_out[v] < MF_EPSILON)
+                {
+                    Set_Inactive(v);
+                }
+            }
+            iteration_num ++;
+            //if (iteration_num > 10) break;
+        }
+
+        auto e_start = graph.CsrT::GetNeighborListOffset(source);
+        auto degree  = graph.CsrT::GetNeighborListLength(source);
+        auto e_end   = e_start + degree;
+        flow = 0;
+        for (auto e = e_start; e < e_end; e++)
+            flow += capacities[e] - residuals[e];
+        if (pass_stats)
+            util::PrintMsg(std::to_string(cpu_timer.MillisSinceStart())
+                + "\t " + std::to_string(pass_num)
+                + "\t \t \t flow = " + std::to_string(flow));
+        pass_num ++;
+        //if (pass_num > 10) break;
+    }
+    cpu_timer.Stop();
+    maxflow = flow;
+
+    for (auto e = 0; e < edges; e++)
+        flows[e] = capacities[e] - residuals[e];
+    delete[] residuals; residuals = NULL;
+    for (auto h = 0; h < V.size(); h++)
+    {
+        delete[] V[h]; V[h] = NULL;
+    }
+    V.clear(); V_length.clear();
+    return cpu_timer.ElapsedMillis();
+}
+
+/**
  * @brief Validation of MF results
  *
  * @tparam     GraphT	      Type of the graph
@@ -1599,7 +2052,8 @@ uint64_t Validate_Results(
     VertexT		  *reverse,
     int           *min_cut,
     ValueT		  *ref_flow = NULL,
-    bool		  verbose = true)
+    bool		   verbose = true,
+    bool           is_push_relabel = true)
 {
     typedef typename GraphT::CsrT   CsrT;
     typedef typename GraphT::SizeT  SizeT;
@@ -1695,22 +2149,44 @@ uint64_t Validate_Results(
     }
     else
     {*/
+        SizeT num_flow_errors = 0;
         util::PrintMsg("Flow Validity: ", !quiet, false);
-
+        ValueT *excesses = new ValueT[nodes];
+        for (VertexT v = 0; v < nodes; v++)
+            excesses[v] = 0;
+        
         for (VertexT v = 0; v < nodes; ++v)
         {
-            if (v == source || v == sink)
-                continue;
+            //if (v == source || v == sink)
+            //    continue;
             auto e_start = graph.CsrT::GetNeighborListOffset(v);
             auto num_neighbors = graph.CsrT::GetNeighborListLength(v);
             auto e_end = e_start + num_neighbors;
             ValueT flow_v = (ValueT) 0;
             for (auto e = e_start; e < e_end; ++e)
             {
-                if (util::isValid(h_flow[e]))
-                {
+                //if (util::isValid(h_flow[e]))
+                //{
                     if (h_flow[e] > 0 &&
                         h_flow[e] - graph.CsrT::edge_values[e] > MF_EPSILON_VALIDATE)
+                    {
+                        num_flow_errors ++;
+                        if (num_flow_errors == 1)
+                            util::PrintMsg("FAIL: edge " + std::to_string(e)
+                                + ", flow = " + std::to_string(h_flow[e])
+                                + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]), !quiet);
+                    } //else
+                    //    flow_v += h_flow[e];
+                    if (h_flow[e] > 0)
+                    {
+                        excesses[v] -= h_flow[e];           
+                        excesses[graph.CsrT::GetEdgeDest(e)] += h_flow[e];
+                    }
+                    /*if (is_push_relabel) continue;
+
+                    auto reverse_e = reverse[e];
+                    if (h_flow[reverse_e] > 0 &&
+                        h_flow[reverse_e] - graph.CsrT::edge_values[reverse_e] > MF_EPSILON_VALIDATE)
                     {
                         num_errors ++;
                         if (num_errors == 1)
@@ -1718,17 +2194,20 @@ uint64_t Validate_Results(
                                 + ", flow = " + std::to_string(h_flow[e])
                                 + ", capacity = " + std::to_string(graph.CsrT::edge_values[e]), !quiet);
                     } else
-                        flow_v += h_flow[e];
-                } else {
-                    ++num_errors;
-                    debug_aml("flow for edge %d is invalid\n", e);
-                }
+                        flow_v -= h_flow[reverse_e]; */
+
+                //} else {
+                //    ++num_flow_errors;
+                //    debug_aml("flow for edge %d is invalid\n", e);
+                //}
             }
-            if (fabs(flow_v) > MF_EPSILON_VALIDATE){
-                debug_aml("Excess for vertex %d is %lf > %llf\n",
-                        v, fabs(flow_v), 1e-12);
-            } else
+            /*if ((flow_v < MF_EPSILON_VALIDATE &&
+                flow_v > -MF_EPSILON_VALIDATE) ||
+                v == source || v == sink)
                 continue;
+            debug_aml("Excess for vertex %d is %lf > %llf\n",
+                    v, fabs(flow_v), 1e-12);
+            
             ++num_errors;
             if (num_errors == 1)
             {
@@ -1736,24 +2215,87 @@ uint64_t Validate_Results(
                     " excess " + std::to_string(flow_v) +
                     " is not equal to 0", !quiet);
                 for (auto e = e_start; e < e_end; ++e)
+                {
                     util::PrintMsg(std::to_string(v) 
-                        + " -(" + std::to_string(e)
+                        + " --(" + std::to_string(e)
                         + ", " + std::to_string(graph.CsrT::edge_values[e])
                         + ", " + std::to_string(h_flow[e])
                         + ")-> " + std::to_string(graph.CsrT::GetEdgeDest(e)), !quiet);
-            }
+                    if (is_push_relabel) continue;
+
+                    auto reverse_e = reverse[e];
+                    util::PrintMsg(std::to_string(v)
+                        + " <-(" + std::to_string(reverse_e)
+                        + ", " + std::to_string(graph.CsrT::edge_values[reverse_e])
+                        + ", " + std::to_string(h_flow[reverse_e])
+                        + ")-- " + std::to_string(graph.CsrT::GetEdgeSrc(reverse_e)), !quiet);
+                }
+            }*/
         }
-        if (num_errors > 0)
+        if (num_flow_errors > 0)
         {
             util::PrintMsg(std::to_string(num_errors) + " errors occurred.",
                     !quiet);
         } else {
             util::PrintMsg("PASS", !quiet);
         }
-    //}
+        num_errors += num_flow_errors;
+
+        util::PrintMsg("Excess Validity: ", !quiet, false);
+        SizeT num_excess_errors = 0;
+        for (VertexT v = 0; v < nodes; v++)
+        {
+            if (v == sink || v == source)
+                continue;
+            auto excess = excesses[v];
+            if (excess < MF_EPSILON_VALIDATE &&
+                excess > -MF_EPSILON_VALIDATE)
+                continue;
+            num_excess_errors ++;
+            if (num_excess_errors != 1)
+                continue;
+
+            util::PrintMsg("FAIL: for vertex " + std::to_string(v) + 
+                " excess " + std::to_string(excess) + 
+                " is not equal to 0", !quiet);
+            auto e_start = graph.CsrT::GetNeighborListOffset(v);
+            auto degree  = graph.CsrT::GetNeighborListLength(v);
+            auto e_end   = e_start + degree;
+            for (auto e = e_start; e < e_end; e++)
+                util::PrintMsg(std::to_string(v) 
+                    + " --(" + std::to_string(e)
+                    + ", " + std::to_string(graph.CsrT::edge_values[e])
+                    + ", " + std::to_string(h_flow[e])
+                    + ")-> " + std::to_string(graph.CsrT::GetEdgeDest(e)), !quiet);
+            
+            for (VertexT u = 0; u < nodes; u++)
+            {
+                e_start = graph.CsrT::GetNeighborListOffset(u);
+                degree  = graph.CsrT::GetNeighborListLength(u);
+                e_end   = e_start + degree;
+                for (auto e = e_start; e < e_end; e++)
+                {
+                    if (graph.CsrT::GetEdgeDest(e) != v)
+                        continue;
+                    util::PrintMsg(std::to_string(v) 
+                        + " <-(" + std::to_string(e)
+                        + ", " + std::to_string(graph.CsrT::edge_values[e])
+                        + ", " + std::to_string(h_flow[e])
+                        + ")-- " + std::to_string(u), !quiet);
+                }
+            }
+        }
+        if (num_excess_errors == 0)
+            util::PrintMsg("PASS");
+        num_errors += num_excess_errors;
+        util::PrintMsg("excesses[source] = " + std::to_string(excesses[source])
+            + ", excesses[sink] = " + std::to_string(excesses[sink]), !quiet);
+
+            //}
 
     util::PrintMsg("Max Validity: ", !quiet, false);
-    VertexT *active_vertices = new VertexT[graph.nodes];
+    //VertexT *active_vertices = new VertexT[graph.nodes];
+    std::queue<VertexT> active_vertices;
     char    *vertex_markers  = new char   [graph.nodes];
     ValueT  *possible_flows  = new ValueT [graph.nodes];
     VertexT *vertex_parents  = new VertexT[graph.nodes];
@@ -1764,28 +2306,48 @@ uint64_t Validate_Results(
         possible_flows[v] = 0;
     }
     VertexT head = 0, tail = 0;
-    active_vertices[0] = source;
+    //active_vertices[0] = source;
+    active_vertices.push(source);
     possible_flows[source] = 1e20;
     vertex_markers[source] = 1;
     vertex_parents[source] = util::PreDefinedValues<VertexT>::InvalidValue;
-    while (head >= tail)
+    while (active_vertices.size() != 0)//(head >= tail)
     {
-        VertexT v = active_vertices[tail];
+        VertexT v = active_vertices.front();
+        active_vertices.pop(); 
+        //tail ++;
+        if (vertex_markers[v] == 2)
+            continue;
         vertex_markers[v] = 2;
-        tail ++;
+        //util::PrintMsg("Expanding " + std::to_string(v)
+        //    + " , size = " + std::to_string(active_vertices.size())
+        //    + " , f = " + std::to_string(possible_flows[v]), !quiet);
+
         if (possible_flows[v] < MF_EPSILON_VALIDATE)
             continue;
 
         SizeT edge_start = graph.CsrT::GetNeighborListOffset(v);
-        SizeT degree = graph.CsrT::GetNeighborListLength(v);
-        SizeT edge_end = edge_start + degree;
+        SizeT degree     = graph.CsrT::GetNeighborListLength(v);
+        SizeT edge_end   = edge_start + degree;
 
         for (SizeT e = edge_start; e < edge_end; e++)
         {
             VertexT u = graph.CsrT::GetEdgeDest(e);
             if (vertex_markers[u] == 2)
                 continue;
-            ValueT residue = graph.CsrT::edge_values[e] - h_flow[e];
+            ValueT residue = graph.CsrT::edge_values[e] - (h_flow[e] > 0 ? h_flow[e] : 0);
+            if (residue < MF_EPSILON_VALIDATE)
+                continue;
+            //util::PrintMsg("Residue " + std::to_string(residue)
+            //    + " from " + std::to_string(v)
+            //    + " f("    + std::to_string(possible_flows[v])
+            //    + " ) to " + std::to_string(u)
+            //    + " f("    + std::to_string(possible_flows[u])
+            //    + " ), e(" + std::to_string(e)
+            //    + ", "     + std::to_string(graph.CsrT::edge_values[e])
+            //    + ", "     + std::to_string(h_flow[e])
+            //    + ")");
+            
             if (residue > possible_flows[v])
                 residue = possible_flows[v];
             if (residue > possible_flows[u])
@@ -1793,15 +2355,64 @@ uint64_t Validate_Results(
                 possible_flows[u] = residue;
                 vertex_parents[u] = v;
                 parent_edges  [u] = e;
-                if (vertex_markers[u] == 0)
+                if (vertex_markers[u] != 1)
                 {
                     vertex_markers[u] = 1;
-                    head ++;
-                    active_vertices[head] = u;
+                    //head ++;
+                    //active_vertices[head] = u;
+                    active_vertices.push(u);
+                    //if (u == 161)
+                    //    util::PrintMsg("Enqueued " + std::to_string(u)
+                    //        + " into queue, size = " + std::to_string(active_vertices.size()), !quiet);
                 }
             }
         }
     }
+    ValueT min_cut_flow = 0;
+    for (VertexT v = 0; v < graph.nodes; v++)
+    {
+        if (vertex_markers[v] != 2)// || possible_flows[v] < MF_EPSILON)
+        {
+            //util::PrintMsg("V " + std::to_string(v)
+            //    + " not reachable, f " + std::to_string(possible_flows[v]), !quiet);
+            //continue;
+        }
+
+        auto e_start = graph.CsrT::GetNeighborListOffset(v);
+        auto degree  = graph.CsrT::GetNeighborListLength(v);
+        auto e_end   = e_start + degree;
+        for (auto e = e_start; e < e_end; e++)
+        {
+            if (h_flow[e] > -MF_EPSILON_VALIDATE &&
+                h_flow[e] <  MF_EPSILON_VALIDATE)
+                continue;
+
+            auto u = graph.CsrT::GetEdgeDest(e);
+            if (vertex_markers[v] == 2 && vertex_markers[u] != 2)
+            {
+                //util::PrintMsg("Cut " + std::to_string(v)
+                //    + " --( " + std::to_string(e)
+                //    + " , " + std::to_string(graph.CsrT::edge_values[e])
+                //    + " , " + std::to_string(h_flow[e])
+                //    + " )-> " + std::to_string(u));
+                min_cut_flow += h_flow[e];
+            }
+
+            else if (vertex_markers[v] != 2 && vertex_markers[u] == 2)
+            {
+                if (h_flow[e] < 0)
+                    continue;
+                //util::PrintMsg("RevCut " + std::to_string(v)
+                //    + " --( " + std::to_string(e)
+                //    + " , " + std::to_string(graph.CsrT::edge_values[e])
+                //    + " , " + std::to_string(h_flow[e])
+                //    + " )-> " + std::to_string(u));
+                min_cut_flow -= h_flow[e];
+            }
+        }
+    }
+    util::PrintMsg("Min-cut flow = " + std::to_string(min_cut_flow));
+
     if (possible_flows[sink] > MF_EPSILON_VALIDATE)
     {
         util::PrintMsg("FAIL. Possible extra flow of "
@@ -1820,14 +2431,17 @@ uint64_t Validate_Results(
                 + ")- " + std::to_string(v), !quiet, false);
         }
         util::PrintMsg("", !quiet);
+        num_errors += 1;
     } else
         util::PrintMsg("PASS", !quiet);
 
-    delete[] active_vertices; active_vertices = NULL;
+    //delete[] active_vertices; active_vertices = NULL;
+    //active_vertices.clear();
     delete[] vertex_markers ; vertex_markers  = NULL;
     delete[] possible_flows ; possible_flows  = NULL;
     delete[] vertex_parents ; vertex_parents  = NULL;
     delete[] parent_edges   ; parent_edges    = NULL;
+    delete[] excesses       ; excesses        = NULL;
     if (!quick && verbose)
     {
         // Display Solution
